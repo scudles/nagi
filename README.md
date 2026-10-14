@@ -69,12 +69,17 @@ node scripts/fetch-sample-model.mjs          # 默认 Mao；也可 Hiyori / Haru
 
 应用统一走 **OpenAI 兼容协议**，换 `baseURL + key + model` 即可切换各家模型。
 
-「设置 → 大脑（LLM）」：
+**默认大脑 = 凪云（免密钥）**：应用内置 WorkBuddy 云服务公开键配置（`cloud-config.js`），
+开箱即用无需注册，实测支持 OpenAI 原生 function calling（含混元系列，网关侧做协议转换）。
+云端不可用时自动降级本地 persona 关键词大脑（会提示原因，不会静默装死）。
+
+需要换自己的模型时，「设置 → 大脑（LLM）」：
 
 | 提供商 | Base URL | 备注 |
 |---|---|---|
-| OpenAI ChatGPT（主用） | `https://api.openai.com/v1` | 需海外网络 + 支付 |
-| 腾讯混元 | `https://api.hunyuan.cloud.tencent.com/v1` | hunyuan-chat 无原生 tools，走 JSON 兜底 |
+| 凪云（免密钥，默认） | —（内置） | WorkBuddy 云服务，原生 tools |
+| OpenAI ChatGPT | `https://api.openai.com/v1` | 需海外网络 + 支付 |
+| 腾讯混元 | `https://api.hunyuan.cloud.tencent.com/v1` | 原生 tools |
 | DeepSeek | `https://api.deepseek.com` | 国内直连、便宜 |
 | 通义 Qwen | `https://dashscope.aliyuncs.com/compatible-mode/v1` | |
 | Kimi | `https://api.moonshot.cn/v1` | |
@@ -83,6 +88,18 @@ node scripts/fetch-sample-model.mjs          # 默认 Mao；也可 Hiyori / Haru
 | OpenRouter | `https://openrouter.ai/api/v1` | 多模型聚合 |
 
 API Key 通过 Electron `safeStorage` 加密落盘（`userData/secrets.json`），**渲染进程拿不到明文**。
+
+### 情感系统（合并自桌宠原型，2026-10-14）
+
+- **连续情绪状态机**（`src/core/emotion/mood.js`）：6 离散情绪 + 强度 0~1，同情绪叠加、
+  异情绪粘性接管、每 15s 衰减；环境推力——被冷落 25min 闹别扭、深夜 23-7 点担心、
+  90s 内连聊 4 条开心；强度 ≥0.5 时把情绪写进 LLM 提示保持回复连贯
+- **内心独白日记**（D2 决策：后台静默）：主进程每 42s（50% 概率）把独白连同当时情绪
+  写入 `userData/monologue/diary-日期.md`；工作台侧栏「看看她的日记」或托盘菜单打开
+  日记查看器按需阅读
+- **戳一戳**：点击桌宠 → TapBody 动作 + 气泡台词（闹别扭时 60% 用更冷淡的池），
+  戳她也算互动（刷新冷落计时）
+- **双窗同步**：情绪状态机是主进程单例，桌宠窗和工作台窗看到同一份情绪
 
 ---
 
@@ -205,12 +222,15 @@ unset ELECTRON_RUN_AS_NODE && npm run dev
 
 ## 八、当前状态
 
+> 2026-10-14：桌宠原型（M2 实验场）已合并进本工程，原型目录归档只读。
+> 合并内容：persona 人格台词库、连续情绪状态机、凪云免密钥大脑、戳一戳、独白日记。
+
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
-| M0 形象 | Live2D 模型（Mao 验证通过，Lisette 待放） | ✅ 管线 |
+| M0 形象 | Live2D 模型（**Lisette 已入库**，专属表情 nagi_calm/joy/puzzled/pout 全命中） | ✅ |
 | M1 桌宠原型 | 透明置顶窗 / 托盘 / 双形态 / 戳一戳 | ✅ |
-| M2 情感系统 | 6 情绪 → 表情映射（自测 6/6 命中）+ 情绪标签契约 | ✅ |
-| T7 LLM 适配 | OpenAI 兼容 + 双通道（原生 tools / JSON 兜底） | ✅ |
+| M2 情感系统 | 连续情绪状态机 + 独白日记 + 6/6 情绪映射 + 情绪注入 LLM | ✅ |
+| T7 LLM 适配 | 凪云（默认，免密钥）+ OpenAI 兼容 + 双通道 | ✅ |
 | T8 Agent Loop | 步数上限 / 事件广播 / 工具结果回喂 / 中止 | ✅ |
 | T9 工具集 | 浏览器 / 文件 / 命令 / 截屏 / 剪贴板 / 通知 / 搜索 | ✅ |
 | T10 安全门 | 风险分级 / 高危确认 / 命令黑白名单 / 路径边界 | ✅ |
@@ -218,11 +238,12 @@ unset ELECTRON_RUN_AS_NODE && npm run dev
 | M3 监测与主动行为 | 活动监测（前台窗口/进程） | ⬜ 下一步 |
 | M5 语音全链路 | ASR + TTS | ⬜ 本期不做 |
 
-**验证情况**：单测 37/37 通过；无头端到端已验证——桌宠窗透明置顶定位正确、Mao 模型加载渲染、
-6/6 情绪映射命中真实表情、对话 IPC→Agent→工具执行（file_list 真实列目录）→结果回喂→最终回复全链路通。
-浏览器 CDP 接管与 HA 控制需要真实环境（Chrome 调试端口 / HA 实例）后实测。
+**验证情况**（2026-10-14 合并后全量复验）：单测 59/59；无头端到端全绿——
+假大脑全链路（工具调用→回喂→汇报）、凪云真连（对话 + 原生 function calling 工具闭环 +
+基于真实目录内容汇报）、双窗情绪同步、戳击链路、日记落盘与查看器渲染。
+浏览器 CDP 接管与 HA 控制需要真实环境后实测。
 
-> 声音线（TTS / ASR / GPT-SoVITS 音色训练）整体延后，本期交互为文字气泡 + 表情 + 独白面板。
+> 声音线（TTS / ASR / GPT-SoVITS 音色训练）整体延后，本期交互为文字气泡 + 表情 + 日记。
 
 ---
 
@@ -231,6 +252,7 @@ unset ELECTRON_RUN_AS_NODE && npm run dev
 | 环境变量 | 作用 |
 |---|---|
 | `NAGI_MODE=workbench` | 启动时直接进工作台形态 |
-| `NAGI_SELFTEST=1` | 渲染层 console 转发到主进程 stdout；工作台自动发一条消息；桌宠轮换 6 情绪验证映射 |
-| `NAGI_FAKE_LLM=1` | 用脚本化假大脑（第一轮发 file_list 工具调用、第二轮汇报），不配 Key 也能验证 Agent 全链路 |
+| `NAGI_SELFTEST=1` | 渲染层 console 转发到 stdout；工作台自动发消息 + 情绪/戳击链路自测；桌宠轮换 6 情绪；日记窗（配合 `NAGI_SELFTEST_DIARY=1`）验证日记渲染 |
+| `NAGI_SELFTEST_MSG=<文本>` | 覆盖自测消息内容（如触发工具调用的指令） |
+| `NAGI_FAKE_LLM=1` | 用脚本化假大脑，不配 Key 也能验证 Agent 全链路 |
 | `NAGI_SOFTWARE_GL=0` | 关闭强制软件渲染（真机想用硬件加速时） |
