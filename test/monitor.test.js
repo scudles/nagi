@@ -3,7 +3,10 @@
 // 全部纯逻辑 + 假时钟，无时间依赖 flaky。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { matchPattern, isBlocked, gateSample, redact, DEFAULT_BLACKLIST } from '../src/core/monitor/privacy.js'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+import { matchPattern, isBlocked, gateSample, redact, collectionAllowed, DEFAULT_BLACKLIST } from '../src/core/monitor/privacy.js'
 import { createTracker, classify, CATEGORY } from '../src/core/monitor/tracker.js'
 import { evaluateRules, RULE_PARAMS } from '../src/core/monitor/rules.js'
 import { createThrottle, MIN_GAP_MS } from '../src/core/monitor/throttle.js'
@@ -267,4 +270,55 @@ test('engine：采样失败不抛错，返回 error', async () => {
   })
   const r = await eng.tickOnce()
   assert.equal(r.error, 'sample')
+})
+
+/* ================= 停采：关掉就不看（真机验证沉淀） ================= */
+
+test('collectionAllowed：关闭监测 / 勿扰时不采', () => {
+  assert.equal(collectionAllowed({ monitorEnabled: true }), true)
+  assert.equal(collectionAllowed({ monitorEnabled: true, doNotDisturb: false }), true)
+  assert.equal(collectionAllowed({ monitorEnabled: false }), false)
+  assert.equal(collectionAllowed({ monitorEnabled: true, doNotDisturb: true }), false)
+  assert.equal(collectionAllowed({}), true) // 缺省视为允许（与 gateSample 一致）
+})
+
+test('engine：关闭监测时「不采样」而不是采完丢弃', async () => {
+  let sampled = 0
+  const eng = createMonitorEngine({
+    sampler: { async sample() { sampled++; return { ts: 0, idleSec: 0, app: 'x', title: 'y' } } },
+    getPrivacy: () => ({ monitorEnabled: false })
+  })
+  const r = await eng.tickOnce()
+  assert.equal(r.skipped, 'disabled')
+  assert.equal(sampled, 0, '采样器不该被调用——否则窗口标题仍被读到，只是结果被丢掉')
+})
+
+test('engine：勿扰模式下同样不采样', async () => {
+  let sampled = 0
+  const eng = createMonitorEngine({
+    sampler: { async sample() { sampled++; return { ts: 0, idleSec: 0 } } },
+    getPrivacy: () => ({ monitorEnabled: true, doNotDisturb: true })
+  })
+  const r = await eng.tickOnce()
+  assert.equal(r.skipped, 'dnd')
+  assert.equal(sampled, 0)
+})
+
+/* ================= 采样脚本契约（真机验证沉淀） ================= */
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+test('monitor-sampler.ps1：必须以 UTF-8 带 BOM 保存', () => {
+  const buf = readFileSync(join(__dirname, '..', 'resources', 'monitor-sampler.ps1'))
+  assert.equal(
+    buf.subarray(0, 3).toString('hex'),
+    'efbbbf',
+    '采样脚本必须带 UTF-8 BOM：Windows PowerShell 5.1 无 BOM 时按系统代码页（中文 Windows 为 GBK）解析，' +
+      '中文注释会被拆错字节并吞掉换行，导致后续语句静默失效（实测踩坑）'
+  )
+  const text = buf.toString('utf8')
+  assert.ok(text.includes('GetForegroundWindow'), '应含 P/Invoke 取前台窗口')
+  assert.ok(text.includes('UTF8Encoding'), '须显式以 UTF-8 写 stdout（否则中文标题到达 Node 变乱码、黑名单失效）')
+  assert.ok(text.includes('OpenStandardOutput'), '须直接写标准输出流，不依赖 Console.OutputEncoding')
+  assert.ok(text.includes('while ($true)'), '应为常驻采样循环')
 })

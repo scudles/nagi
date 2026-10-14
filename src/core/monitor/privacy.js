@@ -51,6 +51,16 @@ export function gateSample(sample, privacy) {
 }
 
 /**
+ * 是否允许「采集」本身（而不只是丢弃采集结果）。
+ * 关掉监测 / 打开勿扰时必须为 false —— 否则采样进程仍会继续读取你的窗口标题，
+ * 只是把结果扔掉而已；那不算「停采」。采样前先过这道闸，才是真的不看。
+ */
+export function collectionAllowed(privacy) {
+  const cfg = privacy || {}
+  return cfg.monitorEnabled !== false && cfg.doNotDisturb !== true
+}
+
+/**
  * 脱敏：任何要「离开内存」（写日记 / 打日志 / 喂给 LLM）的样本都必须过这里。
  * 结果只保留她需要知道的最小信息：时间、空闲秒数、应用类别——不含标题原文。
  */

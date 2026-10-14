@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { resourcesDir } from '../paths.js'
 import { createSampler } from './sampler.js'
 import { createMonitorEngine } from '../../core/monitor/engine.js'
+import { collectionAllowed } from '../../core/monitor/privacy.js'
 import { NagiPersona } from '../../core/persona.js'
 import { getSettings } from '../settings-store.js'
 
@@ -40,7 +41,40 @@ export function startMonitor({ onProactive, log = console.log } = {}) {
   sampler = selftest
     ? createFakeSampler()
     : createSampler({ scriptPath: join(resourcesDir, 'monitor-sampler.ps1'), intervalSec: WINDOW_POLL_SEC, log })
-  sampler.start?.()
+
+  // 诊断钩子（NAGI_DEBUG_MONITOR=1）：确认「窗口信息真的到了引擎」。
+  // 只打应用名 + 标题长度 + 类别，不打标题原文——保持「标题不进日志」的隐私原则。
+  if (!selftest && process.env.NAGI_DEBUG_MONITOR === '1') {
+    const inner = sampler
+    sampler = {
+      start: (...a) => inner.start?.(...a),
+      dispose: (...a) => inner.dispose?.(...a),
+      isRunning: () => (inner.isRunning ? inner.isRunning() : false),
+      async sample() {
+        const s = await inner.sample()
+        log(
+          '[monitor:sample] ' +
+            JSON.stringify({
+              idleSec: s?.idleSec ?? null,
+              app: s?.app ?? null,
+              titleLen: s?.title ? String(s.title).length : 0,
+              category: s?.category ?? null
+            })
+        )
+        return s
+      }
+    }
+  }
+
+  /** 采样进程随隐私开关起停：关掉监测 / 勿扰时不该继续读窗口 */
+  function syncSampler() {
+    if (selftest || !sampler) return
+    const live = collectionAllowed(getSettings().privacy || {})
+    if (live && !sampler.isRunning()) sampler.start?.()
+    else if (!live && sampler.isRunning()) sampler.dispose?.()
+  }
+
+  syncSampler() // 启动时若已关闭监测，就不拉起采样进程
 
   engine = createMonitorEngine({
     sampler,
@@ -52,6 +86,7 @@ export function startMonitor({ onProactive, log = console.log } = {}) {
 
   const periodMs = selftest ? 1200 : Math.max(15, Number(cfg.sampleSec) || 20) * 1000
   timer = setInterval(() => {
+    syncSampler()
     engine
       .tickOnce()
       .then((r) => {

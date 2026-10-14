@@ -7,7 +7,7 @@
 //   sampler / 时钟 / 规则表 / 台词选择器全部从外部注入。
 // 主进程用 main/monitor/index.js 把真实实现（powerMonitor + PowerShell + persona）接上。
 
-import { gateSample } from './privacy.js'
+import { gateSample, collectionAllowed } from './privacy.js'
 import { createTracker } from './tracker.js'
 import { createThrottle } from './throttle.js'
 import { evaluateRules, RULES } from './rules.js'
@@ -45,6 +45,12 @@ export function createMonitorEngine({
    */
   async function tickOnce() {
     const privacy = getPrivacy() || {}
+
+    // 采集前先过隐私闸：关闭监测 / 勿扰时不采样。
+    // 若先采样后过闸，窗口标题仍会被读到（只是结果被丢弃），那不算「停采」。
+    if (!collectionAllowed(privacy)) {
+      return { skipped: privacy.monitorEnabled === false ? 'disabled' : 'dnd' }
+    }
 
     let raw = null
     try {

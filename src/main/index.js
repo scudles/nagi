@@ -47,6 +47,14 @@ if (!gotLock) {
     registerHomeAssistantIpc()
     registerPetIpc()
 
+    // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
+    // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
+    // 必须在 startActivityMonitor 之前执行，否则首次升级那一次会话会读到旧值而不采集。
+    const settings = loadSettings()
+    if (!settings.privacy?.noticeShown && settings.privacy?.monitorEnabled === false) {
+      saveSettings({ privacy: { monitorEnabled: true } })
+    }
+
     // 情绪引擎：心跳 + 独白日史（双窗广播，退出时随 disposeAgent 停止）
     startMoodEngine()
 
@@ -54,12 +62,6 @@ if (!gotLock) {
     startActivityMonitor()
 
     // 窗口（NAGI_MODE=workbench 可覆盖初始形态，便于无头验证）
-    const settings = loadSettings()
-    // 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
-    // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
-    if (!settings.privacy?.noticeShown && settings.privacy?.monitorEnabled === false) {
-      saveSettings({ privacy: { monitorEnabled: true } })
-    }
     const envMode = process.env.NAGI_MODE === MODE.WORKBENCH ? MODE.WORKBENCH : null
     createPetWindow()
     createWorkbenchWindow()
