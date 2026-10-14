@@ -36,6 +36,9 @@ export const IPC = {
   MEMORY_ADD: 'memory:add',
   MEMORY_DELETE: 'memory:delete',
   HISTORY_CLEAR: 'history:clear',
+  // 关系层（S4）：熟悉度 + 情绪时间线
+  RELATION_GET: 'relation:get',
+  RELATION_TIMELINE: 'relation:timeline',
   // 智能家居
   HA_TEST: 'ha:test',
   HA_LIST: 'ha:list',

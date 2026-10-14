@@ -59,6 +59,11 @@ const api = {
     remove: (payload) => ipcRenderer.invoke(IPC.MEMORY_DELETE, payload),
     clearHistory: () => ipcRenderer.invoke(IPC.HISTORY_CLEAR)
   },
+  /** 关系层（S4）：熟悉度 + 情绪时间线 */
+  relation: {
+    get: () => ipcRenderer.invoke(IPC.RELATION_GET),
+    timeline: (opts) => ipcRenderer.invoke(IPC.RELATION_TIMELINE, opts || {})
+  },
   /** 订阅主进程事件；返回取消订阅函数 */
   on: (channel, listener) => {
     if (!ALLOWED_EVENTS.has(channel)) {

@@ -55,6 +55,7 @@
         </div>
         <div class="side-note">
           <p class="dim">她的内心独白不实时显示在这里，而是安静地写进日记。</p>
+          <button id="btn-open-relation">看看我们的关系</button>
           <button id="btn-open-diary">看看她的日记</button>
         </div>
         <div class="side-foot">
@@ -103,6 +104,48 @@
       </aside>
       <button id="btn-nagi-panel-expand" class="hidden" title="展开凪面板">‹</button>
     </main>
+
+    <!-- ============ 关系页（S4：熟悉度 + 情绪时间线） ============ -->
+    <div id="relation-overlay" class="overlay hidden">
+      <div id="relation-panel">
+        <header class="sp-head">
+          <span>我们</span>
+          <button id="btn-close-relation">✕</button>
+        </header>
+        <div class="sp-body">
+          <div class="rel-head">
+            <div class="rel-level">
+              <span id="rel-level-label" class="dim">陌生</span>
+              <span id="rel-score" class="dim">0%</span>
+            </div>
+            <div class="rel-bar"><div id="rel-bar-fill" class="rel-bar-fill"></div></div>
+            <div id="rel-next" class="dim"></div>
+          </div>
+
+          <div class="rel-stats">
+            <div class="rel-stat"><b id="rel-days">0</b><span>认识（天）</span></div>
+            <div class="rel-stat"><b id="rel-inter">0</b><span>互动（次）</span></div>
+            <div class="rel-stat"><b id="rel-active">0</b><span>活跃（天）</span></div>
+            <div class="rel-stat"><b id="rel-mem">0</b><span>她记得（条）</span></div>
+          </div>
+
+          <h3>今天的心情</h3>
+          <div id="rel-today" class="rel-tl"></div>
+          <div class="rel-tl-axis"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+          <div id="rel-legend" class="rel-legend"></div>
+
+          <h3>最近 7 天</h3>
+          <div id="rel-week" class="rel-week"></div>
+
+          <p class="dim" id="rel-hint" style="margin:12px 0 0;line-height:1.7"></p>
+
+          <div class="sp-row" style="margin-top:14px">
+            <button id="btn-rel-diary">她的日记</button>
+            <button id="btn-rel-settings">设置</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- ============ 设置页 ============ -->
     <div id="settings-overlay" class="overlay hidden">

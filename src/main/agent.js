@@ -23,7 +23,9 @@ import {
   removeMemory,
   mergeMemoryOps,
   clearHistory,
-  flushPersist
+  flushPersist,
+  loadMoodState,
+  saveMoodState
 } from './persist.js'
 import { TOOL_SCHEMAS, createToolRunner } from '../core/tools/registry.js'
 import { createFileTools } from '../core/tools/files.js'
@@ -36,6 +38,14 @@ import { getSecret, hasSecret } from './keystore.js'
 import { broadcast, getWorkbenchWindow } from './windows.js'
 import { appendDiary } from './diary.js'
 import { startMonitor, stopMonitor } from './monitor/index.js'
+import {
+  initRelation,
+  noteRelationInteraction,
+  relationSummary,
+  recordMoodPoint,
+  readTimeline,
+  pruneTimeline
+} from './relation.js'
 
 /* ---------------- 全局单例 ---------------- */
 const nativeTools = createNativeTools({ getWorkbenchWindow })
@@ -97,6 +107,73 @@ const mood = createMood()
 
 function broadcastMood() {
   broadcast(EVT.MOOD, mood.current())
+}
+
+/* ---------------- S4：情绪与关系跨重启延续 ---------------- */
+
+/** 上次落盘时的状态签名：情绪/强度/互动时间真变了才写盘，否则 15 秒一次心跳会白白写盘 */
+let lastMoodSig = ''
+/** 语义关键位（情绪种类 + 互动时间）：这两位一变必须立刻写盘 */
+let lastMoodKeyPart = ''
+let lastMoodWriteAt = 0
+/** 纯衰减（同情绪、只掉强度）的落盘限流：不必每 15 秒写一次小文件 */
+const MOOD_WRITE_MIN_GAP = 30000
+
+function moodSignature(st) {
+  return st.mood + '|' + st.intensity.toFixed(3) + '|' + st.lastInteraction
+}
+
+// 情绪一变就落盘 + 记一个时间线采样点（采样规则会挡掉无意义的写）
+mood.onChange(() => {
+  const st = mood.serialize()
+  const sig = moodSignature(st)
+  if (sig === lastMoodSig) return
+  lastMoodSig = sig
+
+  const keyPart = st.mood + '|' + st.lastInteraction
+  const important = keyPart !== lastMoodKeyPart // 情绪换脸 / 刚互动过 = 必须落盘
+  lastMoodKeyPart = keyPart
+  const nowMs = Date.now()
+  if (!important && nowMs - lastMoodWriteAt < MOOD_WRITE_MIN_GAP) return
+  lastMoodWriteAt = nowMs
+
+  try {
+    saveMoodState(st)
+  } catch (err) {
+    console.warn('[mood] 情绪落盘失败：', err && err.message)
+  }
+  try {
+    recordMoodPoint({ mood: st.mood, intensity: st.intensity })
+  } catch (err) {
+    console.warn('[timeline] 采样失败：', err && err.message)
+  }
+})
+
+/**
+ * 启动时恢复：情绪（按离线时长自然衰减）+ 关系统计 + 清理过期时间线。
+ * 必须在 app ready 之后调用（要用 userData 路径）。
+ */
+export function restoreState() {
+  try {
+    const saved = loadMoodState()
+    if (saved && mood.restore(saved)) {
+      const snap = mood.current()
+      lastMoodSig = moodSignature(mood.serialize())
+      console.log(`[mood] 已延续上次心情：${snap.label}（${Math.round(snap.intensity * 100)}%）`)
+    }
+  } catch (err) {
+    console.warn('[mood] 恢复失败：', err && err.message)
+  }
+  try {
+    initRelation()
+  } catch (err) {
+    console.warn('[relation] 初始化失败：', err && err.message)
+  }
+  try {
+    pruneTimeline()
+  } catch {
+    /* 清理失败不影响启动 */
+  }
 }
 
 // Agent 事件出口：EMOTION 只记最后一帧（DONE 时才提议情绪，流式中途不翻脸），其余直广播
@@ -228,6 +305,7 @@ function buildMessages(userText, supportsNative) {
     now: Date.now(),
     lastInteractionAt: lastInteractionAt(),
     mood: snap,
+    relation: relationSummary(),
     memories: memoryLines(),
     recentReplies: recentAssistantReplies(history, 4)
   })
@@ -389,6 +467,7 @@ export async function handleChatSend(text) {
   if (busy) return { ok: false, error: '正在处理上一条消息' }
   busy = true
   mood.noteInteraction() // 连聊 burst 统计 + 刷新互动时间
+  noteRelationInteraction() // 关系层记账：认识多久、聊过多少次、活跃几天
   const emit = (e) => emitAgentEvent(e)
   try {
     await runTurn(t, emit)
@@ -413,6 +492,7 @@ export function getMoodSnapshot() {
 /** 戳一戳：返回气泡台词 + 当时表情，并广播 PET 事件 */
 export function handlePoke() {
   mood.noteInteraction() // 戳她也是互动：刷新冷落计时
+  noteRelationInteraction() // 关系层同样记一笔（戳也算搭理她）
   const p = mood.pickPoke()
   broadcastMood()
   broadcast(EVT.PET, { kind: 'poke', text: p.text, expr: p.expr })
@@ -468,6 +548,18 @@ export function historyClear() {
   history = []
   historyLoaded = true
   return { ok: true }
+}
+
+/* ---------------- 关系层 IPC（S4） ---------------- */
+
+/** 关系摘要 + 当前情绪（关系页头部用） */
+export function relationInfo() {
+  return { relation: relationSummary(), mood: mood.current() }
+}
+
+/** 情绪时间线（默认近 7 天） */
+export function timelineData(days) {
+  return readTimeline(Number(days) || 7)
 }
 
 /* ---------------- HA 专用 IPC（设置页的"测试连接 / 列设备"） ---------------- */

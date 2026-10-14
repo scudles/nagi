@@ -29,6 +29,12 @@ const LABELS = { calm: '平静', smile: '微笑', joy: '开心', pout: '闹别�
 // 情绪键 → 独白池键（smile 算轻度开心，共用 joy 池）
 const MONOLOGUE_KEY = { smile: 'joy', joy: 'joy', pout: 'sullen', worry: 'worry', puzzled: 'puzzled', calm: null };
 
+/** 两个时间戳是否落在同一个「本地日」（跨天判断用） */
+function sameLocalDay(a, b) {
+  const x = new Date(a), y = new Date(b);
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
 /**
  * 创建一个情绪状态机实例。
  * @param {{now?: () => number}} [deps] now 可注入（单测用假时钟）；默认 Date.now
@@ -168,6 +174,56 @@ export function createMood({ now = () => Date.now() } = {}) {
 
   function onChange(fn) { listener = fn; }
 
+  /* ---------------- 跨重启延续（S4） ---------------- */
+
+  /** 导出当前状态（落盘用）。savedAt 用来估算离线了多久。 */
+  function serialize() {
+    return {
+      version: 1,
+      mood: state.mood,
+      intensity: state.intensity,
+      lastInteraction: state.lastInteraction,
+      lastIdlePush: state.lastIdlePush,
+      nightWorried: state.nightWorried,
+      lastBurstPush: state.lastBurstPush,
+      chatTimes: state.chatTimes.slice(),
+      savedAt: now()
+    };
+  }
+
+  /**
+   * 从落盘状态恢复（跨重启）。三条设计约定：
+   * 1) **离线按同样的心跳速率衰减** —— 她不在的时候也照常"淡忘"，所以重启后
+   *    不会出现"三天前的闹别扭还挂在脸上"。这比"原样恢复"更符合直觉，也与运行时行为一致。
+   * 2) 开机视作**刚见过一面**：冷落计时重新起算（否则每次重启都会立刻闹别扭，
+   *    那只是技术事件，不是社交事件）。
+   * 3) 跨天则重置深夜标记（"今晚已经担心过"不该跨天继承）；连聊窗口里过期的时间戳丢弃。
+   * 强度衰减到 0.02 以下直接回平静。lastInteraction 保留真实值——
+   * 「此刻」上下文里那句"距离上次和他说话：8 小时前"是真的。
+   * @returns {boolean} 是否成功恢复
+   */
+  function restore(data) {
+    if (!data || typeof data !== 'object') return false;
+    const t = now();
+    const savedAt = Number.isFinite(data.savedAt) ? data.savedAt : t;
+    const steps = Math.max(0, Math.floor((t - savedAt) / MOOD_PARAMS.TICK_MS));
+    let intensity = clamp01((Number(data.intensity) || 0) - steps * MOOD_PARAMS.DECAY);
+    let m = LABELS[data.mood] ? data.mood : 'calm';
+    if (intensity <= 0.02) { m = 'calm'; intensity = 0; }
+
+    state.mood = m;
+    state.intensity = intensity;
+    state.lastInteraction = Number.isFinite(data.lastInteraction) ? data.lastInteraction : t;
+    state.lastIdlePush = t;
+    state.lastBurstPush = Number.isFinite(data.lastBurstPush) ? data.lastBurstPush : 0;
+    state.nightWorried = sameLocalDay(savedAt, t) ? data.nightWorried === true : false;
+    const times = Array.isArray(data.chatTimes) ? data.chatTimes : [];
+    state.chatTimes = times.filter(function (x) { return Number.isFinite(x) && t - x < MOOD_PARAMS.BURST_WINDOW; });
+    logTransition('restore');
+    notify();
+    return true;
+  }
+
   return {
     propose: propose,
     restingExpr: restingExpr,
@@ -178,6 +234,8 @@ export function createMood({ now = () => Date.now() } = {}) {
     pickMonologue: pickMonologue,
     pickPoke: pickPoke,
     hintForLLM: hintForLLM,
-    onChange: onChange
+    onChange: onChange,
+    serialize: serialize,
+    restore: restore
   };
 }

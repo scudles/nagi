@@ -5,6 +5,7 @@
 // 因为是两个渲染进程，模块状态互不干扰。
 
 import { PROVIDER_PRESETS, SECRET_KEYS, MODE, EMOTIONS, EVT } from '../../shared/protocol.js'
+import { toSegments } from '../../core/relation/timeline.js'
 import * as ui from './ui.js'
 import { initChat, sendText } from './chat.js'
 import * as l2d from './live2d.js'
@@ -121,6 +122,7 @@ async function boot() {
 
   wireWindowButtons()
   wireSettingsPage()
+  wireRelationPage()
 
   // 首次启动：活动监测告知（只弹一次，仅桌宠形态）
   if (mode === MODE.PET) maybeShowMonitorNotice()
@@ -809,6 +811,154 @@ function wireSettingsPage() {
   })
 }
 
+/* ---------------- 关系页（S4：熟悉度 + 情绪时间线） ---------------- */
+
+/** 情绪 → 颜色。暗色主题下都要看得清，所以避开高饱和荧光色；平静色也不能太暗，
+ *  否则在深色底上与轨道背景糊在一起（周视图的柱子会像没数据）。 */
+const MOOD_COLORS = {
+  calm: '#5f6884',
+  smile: '#5fa8a0',
+  joy: '#d9a63c',
+  worry: '#8f6fc4',
+  pout: '#c8564f',
+  puzzled: '#4b93b8'
+}
+const MOOD_LABELS = { calm: '平静', smile: '微笑', joy: '开心', worry: '担心', pout: '闹别扭', puzzled: '疑惑' }
+
+function setText(id, value) {
+  const el = document.getElementById(id)
+  if (el) el.textContent = String(value)
+}
+
+function openRelation() {
+  document.getElementById('relation-overlay')?.classList.remove('hidden')
+  renderRelation()
+}
+
+function closeRelation() {
+  document.getElementById('relation-overlay')?.classList.add('hidden')
+}
+
+async function renderRelation() {
+  // 熟悉度与统计
+  try {
+    const info = await window.nagi.relation.get()
+    const r = info && info.relation
+    if (r && r.level) {
+      setText('rel-level-label', r.level.label)
+      setText('rel-score', Math.round(r.score * 100) + '%')
+      const fill = document.getElementById('rel-bar-fill')
+      if (fill) fill.style.width = Math.round(r.score * 100) + '%'
+      setText('rel-next', r.next ? `距离「${r.next.label}」还差 ${Math.round(r.needScore * 100)}%` : '已经是她最熟悉的人了')
+      setText('rel-days', r.daysKnown)
+      setText('rel-inter', r.interactionCount)
+      setText('rel-active', r.activeDays)
+      setText('rel-hint', `她现在的分寸是「${r.level.label}」——${r.level.note}`)
+    }
+    const mem = await window.nagi.memory.list().catch(() => [])
+    setText('rel-mem', (mem || []).length)
+  } catch (err) {
+    console.warn('[relation] 读取失败', err.message)
+  }
+
+  // 情绪时间线
+  try {
+    const tl = await window.nagi.relation.timeline({ days: 7 })
+    const now = Date.now()
+    const dayStart = new Date(now).setHours(0, 0, 0, 0)
+    const todayPts = ((tl && tl.days) || []).find((d) => d.date === localDayKey(dayStart))?.points || []
+    drawTodayBand(todayPts, dayStart, dayStart + 24 * 3600 * 1000)
+    drawWeek((tl && tl.buckets) || [])
+  } catch (err) {
+    console.warn('[relation] 时间线读取失败', err.message)
+  }
+  drawLegend()
+}
+
+function localDayKey(ts) {
+  const d = new Date(ts)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** 今日 24 小时色带：按时间比例铺色段（比例算法与主进程共用 core/relation/timeline.js） */
+function drawTodayBand(points, from, to) {
+  const box = document.getElementById('rel-today')
+  if (!box) return
+  box.innerHTML = ''
+  const segs = toSegments(points, { from, to })
+  if (!segs.length) {
+    const empty = document.createElement('div')
+    empty.className = 'rel-tl-empty'
+    empty.textContent = '今天还没记下什么'
+    box.appendChild(empty)
+    return
+  }
+  for (const s of segs) {
+    const el = document.createElement('div')
+    el.className = 'rel-tl-seg'
+    el.style.left = (s.from * 100).toFixed(2) + '%'
+    el.style.width = ((s.to - s.from) * 100).toFixed(2) + '%'
+    el.style.background = MOOD_COLORS[s.mood] || MOOD_COLORS.calm
+    el.title = `${MOOD_LABELS[s.mood] || s.mood}（强度 ${Math.round(s.i * 100)}%）`
+    box.appendChild(el)
+  }
+}
+
+/** 近 7 天：每天一根小柱，高度=当天采样点数，颜色=当天主情绪 */
+function drawWeek(buckets) {
+  const box = document.getElementById('rel-week')
+  if (!box) return
+  box.innerHTML = ''
+  for (const b of buckets) {
+    const cell = document.createElement('div')
+    cell.className = 'rel-week-day'
+    const bar = document.createElement('div')
+    bar.className = 'rel-week-bar'
+    const fill = document.createElement('div')
+    fill.className = 'rel-week-fill'
+    if (b.count) {
+      fill.style.height = Math.min(100, 32 + b.count * 6) + '%'
+      fill.style.background = MOOD_COLORS[b.dominant] || MOOD_COLORS.calm
+      bar.title = `${b.date}：${b.count} 个采样点，主情绪 ${MOOD_LABELS[b.dominant] || b.dominant}`
+    } else {
+      bar.title = `${b.date}：没有记录`
+    }
+    bar.appendChild(fill)
+    const label = document.createElement('div')
+    label.className = 'rel-week-label'
+    label.textContent = b.date.slice(5).replace('-', '/')
+    cell.append(bar, label)
+    box.appendChild(cell)
+  }
+}
+
+function drawLegend() {
+  const box = document.getElementById('rel-legend')
+  if (!box || box.childElementCount) return
+  for (const [mood, label] of Object.entries(MOOD_LABELS)) {
+    const span = document.createElement('span')
+    const i = document.createElement('i')
+    i.style.background = MOOD_COLORS[mood]
+    span.append(i, document.createTextNode(label))
+    box.appendChild(span)
+  }
+}
+
+function wireRelationPage() {
+  const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn)
+  on('btn-open-relation', openRelation)
+  on('btn-close-relation', closeRelation)
+  on('btn-rel-diary', () => {
+    closeRelation()
+    window.nagi.win.openDiary()
+  })
+  on('btn-rel-settings', () => {
+    closeRelation()
+    openSettings()
+  })
+}
+
 // 调试：暴露情绪触发 / 动作触发
 window.__nagiTestEmotion = (name) => {
   if (!EMOTIONS.includes(name)) return false
@@ -824,3 +974,7 @@ window.__nagiTestExpression = (name) => l2d.setExpressionRaw(name)
 window.__nagiReadParams = (ids) => l2d.readParams(ids)
 window.__nagiRedParams = () => l2d.redParamIds()
 window.__nagiProbeRed = () => l2d.probeRedOnce()
+// 调试：关系页
+window.__nagiRelation = () => window.nagi.relation.get()
+window.__nagiTimeline = (days) => window.nagi.relation.timeline({ days: days || 7 })
+window.__nagiOpenRelation = () => openRelation()

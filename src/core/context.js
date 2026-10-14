@@ -60,6 +60,7 @@ function intensityWord(v) {
  * @param {number}   [o.now]               当前时间戳
  * @param {number}   [o.lastInteractionAt] 上次互动时间戳
  * @param {object}   [o.mood]              情绪快照 { mood, intensity, label }
+ * @param {object}   [o.relation]          关系摘要（core/relation/familiarity.js 的 describeRelation）
  * @param {string[]} [o.memories]          长期记忆条目（关于用户的、值得记住的事实）
  * @param {string[]} [o.recentReplies]     她最近说过的话（要求模型不要重复）
  * @param {string[]} [o.extra]             其他一次性附注
@@ -69,6 +70,7 @@ export function buildContextBlock({
   now = Date.now(),
   lastInteractionAt = null,
   mood = null,
+  relation = null,
   memories = [],
   recentReplies = [],
   extra = []
@@ -85,6 +87,15 @@ export function buildContextBlock({
 
   if (mood && mood.mood && mood.mood !== 'calm' && Number.isFinite(mood.intensity)) {
     lines.push(`- 你此刻的情绪：${mood.label || mood.mood}（强度 ${mood.intensity.toFixed(2)}，${intensityWord(mood.intensity)}）`)
+  }
+
+  // 关系：她得知道自己和你多熟——等级自带的 note 是行为约束，
+  // 落实人格设定里「熟悉度门槛不装亲密」那条护栏（陌生时不许滑向亲昵）
+  if (relation && relation.level && relation.level.label) {
+    const bits = [relation.level.label]
+    if (Number.isFinite(relation.daysKnown) && relation.daysKnown > 0) bits.push(`认识 ${relation.daysKnown} 天`)
+    if (Number.isFinite(relation.interactionCount) && relation.interactionCount > 0) bits.push(`聊过 ${relation.interactionCount} 次`)
+    lines.push(`- 你和他的关系：${bits.join('，')}${relation.level.note ? '——' + relation.level.note : ''}`)
   }
 
   if (memories.length) {

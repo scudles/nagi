@@ -10,8 +10,9 @@ import { registerSettingsIpc } from './ipc/settings.js'
 import { registerChatIpc } from './ipc/chat.js'
 import { registerHomeAssistantIpc } from './ipc/homeassistant.js'
 import { registerPetIpc } from './ipc/pet.js'
+import { registerRelationIpc } from './ipc/relation.js'
 import { loadSettings, saveSettings } from './settings-store.js'
-import { disposeAgent, startMoodEngine, startActivityMonitor } from './agent.js'
+import { disposeAgent, startMoodEngine, startActivityMonitor, restoreState } from './agent.js'
 import { MODE } from '../shared/protocol.js'
 
 // ---- 运行环境开关 ----
@@ -46,6 +47,7 @@ if (!gotLock) {
     registerChatIpc()
     registerHomeAssistantIpc()
     registerPetIpc()
+    registerRelationIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
@@ -54,6 +56,9 @@ if (!gotLock) {
     if (!settings.privacy?.noticeShown && settings.privacy?.monitorEnabled === false) {
       saveSettings({ privacy: { monitorEnabled: true } })
     }
+
+    // 恢复上次的情绪（按离线时长自然衰减）与关系统计，并清理过期时间线
+    restoreState()
 
     // 情绪引擎：心跳 + 独白日史（双窗广播，退出时随 disposeAgent 停止）
     startMoodEngine()

@@ -590,3 +590,77 @@ body[data-mode="workbench"] {
 .d-item .t { color: var(--text-dim); font-size: 11px; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .d-item .tag { flex: 0 0 auto; font-size: 11px; }
 .d-item .s { color: var(--text); flex: 1; }
+
+/* ============ 关系页（S4：熟悉度 + 情绪时间线） ============ */
+#relation-panel {
+  width: 480px;
+  max-width: 92vw;
+  max-height: 88vh;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.rel-head { margin-bottom: 14px; }
+.rel-level { display: flex; align-items: baseline; gap: 10px; }
+#rel-level-label { font-size: 21px; letter-spacing: 2px; color: var(--accent); }
+.rel-bar {
+  height: 6px;
+  margin: 8px 0 6px;
+  border-radius: 3px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.rel-bar-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #3d4c85, var(--accent));
+  transition: width 0.4s ease;
+}
+.rel-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.rel-stat {
+  padding: 8px 4px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+.rel-stat b { display: block; font-size: 16px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.rel-stat span { font-size: 11px; color: var(--text-dim); }
+/* 今日情绪色带：按时间比例铺色段 */
+.rel-tl {
+  position: relative;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+.rel-tl-seg { position: absolute; top: 0; bottom: 0; }
+.rel-tl-empty {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--text-dim);
+}
+.rel-tl-axis {
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: var(--text-dim); margin-top: 3px;
+}
+.rel-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px; font-size: 11px; color: var(--text-dim); }
+.rel-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+.rel-week { display: flex; gap: 6px; }
+.rel-week-day { flex: 1; text-align: center; min-width: 0; }
+.rel-week-bar {
+  position: relative;
+  height: 42px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+.rel-week-fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; }
+.rel-week-label { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
+

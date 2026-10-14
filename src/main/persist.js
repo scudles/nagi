@@ -1,8 +1,10 @@
 // src/main/persist.js
-// 本地持久化：长期记忆（memory.json）与对话历史（history.json）。
+// 本地持久化：长期记忆（memory.json）、对话历史（history.json）、
+// 情绪状态（mood.json，S4 跨重启延续）、关系统计（relation.json，S4 熟悉度）。
 //
 // 为什么要落盘：之前 history 只活在内存里，重启即清零 —— 每次开机凪都是陌生人，
 // 只能说泛泛的话。记忆同样落盘，跨会话累积，才谈得上"认识你"。
+// 情绪与关系同理：不落盘她就没有连续性（见 core/relation/）。
 // 写入用防抖 + 先写临时文件再改名，避免频繁 IO 与半截文件。
 
 import { app } from 'electron'
@@ -59,6 +61,9 @@ export function flushPersist() {
     mkdirSync(app.getPath('userData'), { recursive: true })
     writeFileSync(usersFile('memory.json'), JSON.stringify({ version: 1, entries: memories || [] }, null, 2), 'utf8')
     writeFileSync(usersFile('history.json'), JSON.stringify({ version: 1, messages: history || [], lastAt }, null, 2), 'utf8')
+    // S4：情绪与关系也必须刷——重启后她要认得自己刚才的心情、记得和你多熟
+    if (moodState) writeFileSync(usersFile('mood.json'), JSON.stringify(moodState, null, 2), 'utf8')
+    if (relationStats) writeFileSync(usersFile('relation.json'), JSON.stringify(relationStats, null, 2), 'utf8')
   } catch (err) {
     console.error('[persist] 退出刷盘失败', err.message)
   }
@@ -121,6 +126,57 @@ export function mergeMemoryOps(ops, now = Date.now()) {
   const after = memories.length
   if (after !== before || (ops?.remove || []).length) persistMemories()
   return { before, after, added: (ops?.add || []).slice(0, MEMORY_LIMIT) }
+}
+
+/* ---------------- 情绪状态（S4：跨重启延续） ---------------- */
+
+let moodState = null
+
+/** 上次退出时的情绪快照（无则 null）。恢复逻辑在 core/emotion/mood.js 的 restore() */
+export function loadMoodState() {
+  if (moodState) return moodState
+  const raw = readJson(usersFile('mood.json'), null)
+  moodState = raw && typeof raw === 'object' ? raw : null
+  return moodState
+}
+
+export function saveMoodState(state) {
+  if (!state || typeof state !== 'object') return
+  moodState = state
+  writeJsonSoon(usersFile('mood.json'), state)
+}
+
+/* ---------------- 关系统计（S4：熟悉度） ---------------- */
+
+let relationStats = null
+
+/** 关系统计 { firstMetAt, interactionCount, activeDays[], lastActiveDay }（无则 null） */
+export function loadRelationStats() {
+  if (relationStats) return relationStats
+  const raw = readJson(usersFile('relation.json'), null)
+  relationStats = raw && typeof raw === 'object' ? raw : null
+  return relationStats
+}
+
+export function saveRelationStats(stats) {
+  if (!stats || typeof stats !== 'object') return
+  relationStats = stats
+  writeJsonSoon(usersFile('relation.json'), { version: 1, ...stats })
+}
+
+/** 清空关系与情绪（设置页"重新认识"用；时间线文件由调用方处理） */
+export function resetRelationStats() {
+  relationStats = null
+  moodState = null
+  try {
+    const base = app.getPath('userData')
+    for (const f of ['relation.json', 'mood.json']) {
+      const p = join(base, f)
+      if (existsSync(p)) unlinkSync(p)
+    }
+  } catch (err) {
+    console.error('[persist] 重置关系失败', err.message)
+  }
 }
 
 /* ---------------- 对话历史 ---------------- */

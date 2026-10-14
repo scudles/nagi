@@ -84,3 +84,30 @@ test('recentAssistantReplies 只取最近的 assistant 原话、倒序还原、�
   assert.equal(r[0].endsWith('…'), true)
   assert.equal(r[1], '最后一句')
 })
+
+/* ---------------- 关系行（S4） ---------------- */
+
+test('关系行：把熟悉度等级与行为约束一起下发（落实"不装亲密"护栏）', () => {
+  const s = buildContextBlock({
+    now: new Date(2026, 9, 14, 9, 0).getTime(),
+    relation: { level: { label: '熟悉', note: '可以自然些，不必每句都端着。' }, daysKnown: 12, interactionCount: 340 }
+  })
+  assert.match(s, /你和他的关系：熟悉，认识 12 天，聊过 340 次——可以自然些/)
+})
+
+test('关系行：刚认识时不下发天数与次数（避免"0 天"这种生硬说法）', () => {
+  const s = buildContextBlock({
+    now: new Date(2026, 9, 14, 9, 0).getTime(),
+    relation: { level: { label: '陌生', note: '才刚开始，别装作很熟。' }, daysKnown: 0, interactionCount: 0 }
+  })
+  assert.match(s, /你和他的关系：陌生——才刚开始，别装作很熟。/)
+  assert.doesNotMatch(s, /认识 0 天/)
+  assert.doesNotMatch(s, /聊过 0 次/)
+})
+
+test('关系行：缺失或残缺时静默省略，不产生空行', () => {
+  const none = buildContextBlock({ now: new Date(2026, 9, 14, 9, 0).getTime() })
+  assert.doesNotMatch(none, /你和他的关系/)
+  const broken = buildContextBlock({ now: Date.now(), relation: {} })
+  assert.doesNotMatch(broken, /你和他的关系/)
+})
