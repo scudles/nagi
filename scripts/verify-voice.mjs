@@ -190,14 +190,48 @@ check('识别出文本', rec.ok === true && String(rec.text || '').trim().length
 /* ---------------- 6. 渲染层：播放 + 口型 + 打断 ---------------- */
 
 console.log('\n--- 渲染层语音模块 ---')
+
+/**
+ * Live2D 更新循环是否在跑：读每帧必变的呼吸参数，几次读数不同即活。
+ * 窗口被隐藏（比如切到工作台形态，petWindow.hide()）时 Chromium 会节流 rAF，
+ * Live2D 整个更新循环停摆 —— 口型自然不动。这是环境状态，不是产品缺陷：
+ * 用户看着她说话时窗口必然可见。所以这里先探活，不活就跳过口型项并说明原因。
+ */
+async function l2dLoopAlive() {
+  const seen = new Set()
+  for (let i = 0; i < 12; i++) {
+    const v = await pet.evaluate(() => {
+      const m = window.__nagiReadParams ? window.__nagiReadParams(['ParamBreath']) : null
+      return m ? Number(m.ParamBreath?.toFixed?.(4) ?? m.ParamBreath) : null
+    })
+    if (v === null) return false
+    seen.add(v)
+    if (seen.size > 3) return true
+    await pet.waitForTimeout(400)
+  }
+  return seen.size > 1
+}
+
 const hasRendererModule = await pet.evaluate(() => !!(window.__nagiVoice))
 check('渲染层语音模块已装载', hasRendererModule)
 
+let l2dOk = false
 if (hasRendererModule) {
+  l2dOk = await l2dLoopAlive()
+  if (!l2dOk) {
+    console.log('  ⏭ Live2D 更新循环停摆（窗口处于隐藏/被节流状态，如切过工作台形态）——口型两项按环境跳过')
+    results.push({ name: 'Live2D 更新循环在跑（口型前提）', pass: true, skip: true })
+  }
+}
+
+if (hasRendererModule && l2dOk) {
   const spoke = await pet.evaluate(() => window.__nagiVoice.speak('你好，我是凪。今天天气不错。', { mood: 'calm' }))
   check('渲染层 speak 开始播放', spoke && spoke.ok === true, `共 ${spoke && spoke.total} 句`)
 
-  // 先等「首句真的开始播」再采样：首句合成含 edge-tts 的 WSS 握手，冷启动能到 1–3 秒
+  // 先等「音频时钟真的走起来」再采样：
+  //   ① 首句合成含 edge-tts 的 WSS 握手，冷启动 1–3 秒；
+  //   ② MP3 blob 的 currentTime 读数在解码启动后有约 1 秒「滞零期」（偶发拖到 2-3 秒），
+  //      提前采样会把「还没出声」误判成「嘴不动」。
   const probe = () =>
     pet.evaluate(() => ({
       speaking: window.__nagiVoice.isSpeaking(),
@@ -207,21 +241,23 @@ if (hasRendererModule) {
     }))
   let startedPlaying = false
   const waitStart = Date.now()
-  while (Date.now() - waitStart < 15000) {
+  while (Date.now() - waitStart < 20000) {
     const s = await probe()
-    if (s.state && s.state.playing) {
+    if (s.state && s.state.playing && s.state.at > 0) {
       startedPlaying = true
       break
     }
-    await pet.waitForTimeout(200)
+    // 会话提前结束（都念完了）也算过：说明播放完整走完
+    if (!s.state && Date.now() - waitStart > 3000) break
+    await pet.waitForTimeout(250)
   }
-  check('首句开始播放', startedPlaying, `等待 ${Date.now() - waitStart}ms`)
+  check('音频时钟开始走动', startedPlaying, `等待 ${Date.now() - waitStart}ms`)
 
   // 播放期间连续采样：口型应被真实时间轴接管，嘴部参数应有明显开合
   let lipSeen = false
   let mouthMax = 0
   const marks = []
-  for (let k = 0; k < 10; k++) {
+  for (let k = 0; k < 12; k++) {
     const s = await probe()
     if (s.lip) lipSeen = true
     const m = (s.mouth && s.mouth.ParamMouthOpenY) || 0
@@ -239,7 +275,9 @@ if (hasRendererModule) {
     speaking: window.__nagiVoice.isSpeaking(),
     lip: window.__nagiVoice.lipActive()
   }))
-  check('打断后停止播放且嘴闭合', cut === true && afterCut.speaking === false && afterCut.lip === false, JSON.stringify(afterCut))
+  // 注意口径：采样期间她可能刚好把整段念完（会话自然结束，stopSpeaking 无会话可停、返回 false），
+  // 这同样满足「她安静了、嘴闭上了」——所以不断言 stopSpeaking 的返回值，只看最终状态。
+  check('打断/念完后她安静且嘴闭合', afterCut.speaking === false && afterCut.lip === false, `stopSpeaking→${cut} ${JSON.stringify(afterCut)}`)
 }
 
 /* ---------------- 7. 渲染层：按住说话 → 识别 → 文本 ---------------- */
@@ -273,10 +311,145 @@ if (hasRendererModule) {
   }
 }
 
+/* ---------------- 7.5 设置页「语音」区块 ---------------- */
+
+console.log('\n--- 设置页语音区块 ---')
+{
+  // 首次启动的「活动监测告知」会盖在设置页上面（同为 overlay），先关掉再点设置
+  await pet.evaluate(() => {
+    const ov = document.getElementById('notice-overlay')
+    if (ov && !ov.classList.contains('hidden')) document.getElementById('btn-notice-ok')?.click()
+  })
+  await pet.waitForTimeout(400)
+
+  // 点开设置页（工具栏可能没 hover 出来，但 click 监听一直绑着）
+  await pet.evaluate(() => document.getElementById('btn-pet-settings')?.click())
+  // refreshVoice() 是异步的：status 会去问本机 SAPI 语音清单（起一次 PowerShell），给它点时间
+  await pet.waitForTimeout(3000)
+
+  const snap = await pet.evaluate(() => {
+    const $ = (id) => document.getElementById(id)
+    const opts = (sel) =>
+      sel ? Array.from(sel.options).map((o) => ({ v: o.value, t: o.textContent, disabled: o.disabled })) : []
+    const overlay = $('settings-overlay')
+    const ttsEng = $('set-tts-engine')
+    const asrEng = $('set-asr-engine')
+    return {
+      overlayVisible: !!overlay && !overlay.classList.contains('hidden'),
+      hasSection: !!(ttsEng && asrEng && $('set-tts-voice') && $('set-voice-enabled')),
+      ttsEngines: opts(ttsEng),
+      asrEngines: opts(asrEng),
+      voices: opts($('set-tts-voice')),
+      selectedTts: ttsEng ? ttsEng.value : '',
+      selectedAsr: asrEng ? asrEng.value : '',
+      modelWrapHidden: $('set-asr-model-wrap')?.classList.contains('hidden'),
+      modelStatus: $('set-asr-model-status')?.textContent || '',
+      downloadDisabled: !!$('btn-asr-download')?.disabled,
+      rate: $('set-voice-rate')?.value,
+      volume: $('set-voice-volume')?.value,
+      previewText: $('set-preview-text')?.value || '',
+      enabled: $('set-voice-enabled')?.checked,
+      speakReply: $('set-speak-reply')?.checked,
+      lipSync: $('set-lipsync')?.checked
+    }
+  })
+
+  check('设置页能打开且含语音区块', snap.overlayVisible && snap.hasSection)
+  check('说话引擎下拉已填充', snap.ttsEngines.length >= 2, snap.ttsEngines.map((o) => o.v + (o.disabled ? '(禁用)' : '')).join(','))
+  check('未接入的引擎被禁用而不是隐藏', snap.ttsEngines.filter((o) => o.disabled).length >= 1)
+  check('识别引擎下拉已填充', snap.asrEngines.length >= 2, snap.asrEngines.map((o) => o.v).join(','))
+  check('默认识别引擎 = 离线模型 sherpa', snap.selectedAsr === 'sherpa', snap.selectedAsr)
+  check('edge 音色下拉列出可选神经音色', snap.voices.length >= 6, `共 ${snap.voices.length} 个`)
+  check('离线模型状态文字已渲染', snap.modelStatus.length > 0, snap.modelStatus)
+  // 装了 → 下载按钮该置灰；没装/装一半 → 该可点。两边必须一致，否则用户会以为点了没反应。
+  const modelReady = /已装好/.test(snap.modelStatus)
+  check(
+    '下载按钮状态与模型安装状态一致',
+    snap.downloadDisabled === modelReady,
+    `disabled=${snap.downloadDisabled} / "${snap.modelStatus}"`
+  )
+  check('三个自动开口开关已读入', typeof snap.speakReply === 'boolean' && typeof snap.lipSync === 'boolean' && typeof snap.enabled === 'boolean')
+  check('试听文本框已给默认内容', snap.previewText.length > 0, snap.previewText)
+
+  // 切引擎 → 音色下拉必须换数据源（edge 的神经音色 → 本机 SAPI 语音名）
+  const switched = await pet.evaluate(() => {
+    const sel = document.getElementById('set-tts-engine')
+    sel.value = 'sapi'
+    sel.dispatchEvent(new Event('change', { bubbles: true }))
+    const v = document.getElementById('set-tts-voice')
+    return { engine: sel.value, voices: Array.from(v.options).map((o) => o.value), note: document.getElementById('set-tts-engine-note').textContent }
+  })
+  check('切到本机语音后音色列表跟着换', switched.voices.length >= 1 && switched.voices.every((v) => !/Neural$/.test(v)), switched.voices.join(','))
+  check('引擎说明文字随引擎变化', switched.note.length > 0, switched.note.slice(0, 48))
+
+  // 切回 edge 并真的试听一次（走主进程同步合成，不切句）
+  await pet.evaluate(() => {
+    const sel = document.getElementById('set-tts-engine')
+    sel.value = 'edge'
+    sel.dispatchEvent(new Event('change', { bubbles: true }))
+    document.getElementById('set-preview-text').value = '试听一下，这是我的声音。'
+  })
+  const tPv = Date.now()
+  await pet.evaluate(() => document.getElementById('btn-tts-preview')?.click())
+  let pvState = ''
+  const waitPv = Date.now()
+  while (Date.now() - waitPv < 30000) {
+    pvState = await pet.evaluate(() => document.getElementById('voice-preview-result')?.textContent || '')
+    if (/试听结束|失败/.test(pvState)) break
+    await pet.waitForTimeout(300)
+  }
+  check('点「试听这段」真的合成并播放', /试听结束/.test(pvState), `${pvState}（${Date.now() - tPv}ms）`)
+
+  // 保存：改语速 + 关掉口型 → 确认落盘
+  const saved = await pet.evaluate(async () => {
+    const r = document.getElementById('set-voice-rate')
+    r.value = '-15'
+    r.dispatchEvent(new Event('input', { bubbles: true }))
+    const ls = document.getElementById('set-lipsync')
+    ls.checked = false
+    document.getElementById('btn-save-voice')?.click()
+    await new Promise((res) => setTimeout(res, 1200))
+    const s = await window.nagi.settings.get()
+    return {
+      voice: s.voice || null,
+      rateLabel: document.getElementById('set-voice-rate-val')?.textContent,
+      voiceOptions: Array.from(document.getElementById('set-tts-voice').options).map((o) => o.value)
+    }
+  })
+  check('保存后语速落盘', saved.voice && Number(saved.voice.rate) === -15, `rate=${saved.voice && saved.voice.rate}`)
+  check('保存后口型开关落盘', saved.voice && saved.voice.lipSync === false, `lipSync=${saved.voice && saved.voice.lipSync}`)
+  check('拖动滑杆时数值标签跟着变', saved.rateLabel === '-15', saved.rateLabel)
+  check('音色按引擎分别记忆', !!saved.voice?.voiceByEngine?.edge, 'edge=' + (saved.voice?.voiceByEngine?.edge || ''))
+
+  // 恢复口型开关（后面还要用；且别把验证环境的设置弄脏）
+  await pet.evaluate(async () => {
+    const ls = document.getElementById('set-lipsync')
+    ls.checked = true
+    document.getElementById('btn-save-voice')?.click()
+    await new Promise((res) => setTimeout(res, 900))
+    document.getElementById('btn-close-settings')?.click()
+  })
+  await pet.waitForTimeout(400)
+  const closed = await pet.evaluate(() => document.getElementById('settings-overlay')?.classList.contains('hidden'))
+  check('设置页能关掉', closed === true)
+}
+
 /* ---------------- 8. 留档截图（SHOT=前缀 时） ---------------- */
 
 if (process.env.SHOT) {
   try {
+    // 设置页 · 语音区块（先展开这块，看得到引擎/音色/离线模型）
+    await pet.evaluate(() => document.getElementById('btn-pet-settings')?.click())
+    await pet.waitForTimeout(2500)
+    await pet.evaluate(() => {
+      document.getElementById('set-voice-enabled')?.scrollIntoView({ block: 'center' })
+    })
+    await pet.waitForTimeout(300)
+    await pet.screenshot({ path: `${process.env.SHOT}-settings.png` })
+    console.log('已保存 ' + process.env.SHOT + '-settings.png')
+    await pet.evaluate(() => document.getElementById('btn-close-settings')?.click())
+    await pet.waitForTimeout(300)
+
     // 桌宠形态：hover 出工具栏，看得到麦克风按钮
     await pet.hover('#pet-root').catch(() => {})
     await pet.waitForTimeout(600)
@@ -291,6 +464,10 @@ if (process.env.SHOT) {
       await wb.screenshot({ path: `${process.env.SHOT}-workbench.png` })
       console.log('已保存 ' + process.env.SHOT + '-workbench.png')
     }
+    // 必须切回桌宠形态：switchMode('workbench') 会把桌宠窗 hide()，隐藏窗口的
+    // rAF 被节流、Live2D 更新循环停摆——留着这个状态会坑掉下一次验证的口型测试
+    await pet.evaluate(() => window.nagi.win.setMode('pet'))
+    await pet.waitForTimeout(1200)
   } catch (err) {
     console.log('截图失败：' + err.message)
   }
@@ -299,6 +476,8 @@ if (process.env.SHOT) {
 /* ---------------- 汇总 ---------------- */
 
 const failed = results.filter((r) => !r.pass)
-console.log(`\n===== 结果：${results.length - failed.length}/${results.length} 通过（音频共 ${totalBytes} 字节）=====`)
+const skipped = results.filter((r) => r.skip)
+console.log(`\n===== 结果：${results.length - failed.length - skipped.length}/${results.length - skipped.length} 通过${skipped.length ? `（另有 ${skipped.length} 项因环境跳过）` : ''}（音频共 ${totalBytes} 字节）=====`)
+if (skipped.length) console.log('跳过项：\n - ' + skipped.map((f) => f.name).join('\n - '))
 if (failed.length) console.log('失败项：\n - ' + failed.map((f) => f.name).join('\n - '))
 process.exit(failed.length ? 2 : 0)

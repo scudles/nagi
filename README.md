@@ -890,6 +890,7 @@ JSON 文本，客户端再发 `"Done"`。直接发 WAV 原始字节会被立刻�
 | main | `voice/ps.js` + `resources/voice/*.ps1` | PowerShell 桥（SAPI 合成/识别，纯 ASCII 脚本） |
 | main | `ipc/voice.js` + `shared/voice-protocol.js` | IPC 面 + 通道名/默认设置 |
 | renderer | `js/voice.js` | 播放、口型、按住说话、自动开口、打断 |
+| renderer | `js/main.js`（`wireVoiceSettings`/`refreshVoice`） | 设置页语音区块：引擎/音色/试听/离线模型 |
 | preload | `index.js` | 暴露 `nagi.voice.*` |
 
 ### 验证
@@ -910,10 +911,46 @@ sherpa-onnx CLI（15MB，ghproxy/GitHub 双源）+ Paraformer 中文模型（78M
 进度实时上报。解压用 Windows 自带 bsdtar（**必须**优先用 System32 那份——Git Bash 的 GNU tar
 会把 `C:\` 当远程主机，报 `Cannot connect to C: resolve failed`）。
 
+### 设置页「语音」区块
+
+设置页两块新面板（`wireVoiceSettings`，随 `fillSettingsForm` 每次打开时刷新）：
+
+- **她的声音（语音输出）**：总开关 / 说话引擎（未接入的 cloud、gptsovits 列出但禁用，
+  说明文字交代原因）/ 音色（edge 用 `EDGE_VOICES` 神经音色表，sapi 用本机语音清单，
+  **按引擎分别记忆**互不覆盖）/ 语速（-50..50，叠加在凪基准声线上）/ 音量 /
+  三个自动开口开关 / **试听**（`voice:preview` 一次性合成、不切句，
+  **保存之前**就能听到当前下拉框选择的效果）
+- **听你说话（语音输入）**：识别引擎 + 离线模型状态卡（已装好 → 下载按钮置灰并显示
+  常驻服务端口；未装 → 「下载离线识别（约 98MB）」，进度条实时走 `voice:progress` 广播；
+  另有「停掉离线服务（省内存）」按钮）
+
+### 验证
+
+- 单测 **41 项**（`test/voice.test.js`）：分句 / 口型 / WAV 编解码 / Sec-MS-GEC 回归 /
+  SSML 转义与钳制 / 引擎表与降级链 / sherpa 线协议 / **两个 PS 脚本必须纯 ASCII**
+- 全量 **236/236** 通过
+- **真实 electron 进程**（隔离 `--user-data-dir` + CDP）`node scripts/verify-voice.mjs`，**42/42**：
+  能力快照、按句取音频（MP3 容器头合法）、越界返回 done、试听、打断后旧会话失效、
+  真音频识别出「你好我是今天天气不错」、渲染层播放中口型接管（`ParamMouthOpenY` 峰值 0.85–0.93）、
+  **按住说话 → 解码 → 16k WAV → 识别出「你好我是今天天气」**（Chromium 假音频设备灌入真语音）、
+  **设置页语音区块 18 项**（引擎/音色/开关填充、切引擎换音色源、真试听、保存落盘、
+  模型状态与下载按钮联动、进度条）
+- 离线模型全链路（下载→解压→拉起服务→识别→复用→48k 立体声→停服务）**15/15**
+
+### 语音验证的两个环境坑（脚本里已内建防御）
+
+1. **`switchMode('workbench')` 会把桌宠窗 `hide()`** —— 隐藏窗口的 rAF 被 Chromium 节流，
+   Live2D 整个更新循环停摆（每帧必变的 `ParamBreath` 恒定即可确诊），口型自然不动。
+   **这是环境状态不是产品缺陷**（用户看着她时窗口必然可见）。所以 verify 的截图段
+   截完工作台必须 `setMode('pet')` 切回来；口型测试前先用 `l2dLoopAlive()` 探活，
+   循环没在跑就按环境跳过，不误报。
+2. **MP3 blob 的 `audio.currentTime` 读数在解码启动后有约 1 秒「滞零期」**（偶发拖到
+   2-3 秒），`timeupdate` 事件实际正常推进。口型测试要等 `at > 0`（时钟真的走起来）
+   再采样，提前采样会把「还没出声」误判成「嘴不动」。
+
 ### 待定
 
-设置页「语音」区块（引擎/音色/语速/音量 + 离线模型下载进度）尚未做；TTS 默认引擎待听完
-`docs/voice-samples/` 三份样本后由你定夺。
+TTS 默认引擎待听完 `docs/voice-samples/` 三份样本后由你定夺（当前默认 edge-tts）。
 
 
 

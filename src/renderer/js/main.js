@@ -5,6 +5,8 @@
 // 因为是两个渲染进程，模块状态互不干扰。
 
 import { PROVIDER_PRESETS, SECRET_KEYS, MODE, EMOTIONS, EVT } from '../../shared/protocol.js'
+import { VOICE_EVT, mergeVoiceSettings } from '../../shared/voice-protocol.js'
+import { EDGE_VOICES, TTS_ENGINES, ASR_ENGINES } from '../../core/voice/index.js'
 import { toSegments } from '../../core/relation/timeline.js'
 import * as ui from './ui.js'
 import { initChat, sendText } from './chat.js'
@@ -645,6 +647,7 @@ function fillSettingsForm() {
   refreshSecretStatus()
   refreshModels()
   refreshMemory()
+  refreshVoice()
 }
 
 async function refreshSecretStatus() {
@@ -710,6 +713,336 @@ async function refreshModels() {
   } catch {
     /* ignore */
   }
+}
+
+/* ---------------- 语音设置（设置页 · 语音区块） ---------------- */
+
+/** 试听默认文本：用她的语气，方便判断「像不像她」 */
+const VOICE_PREVIEW_TEXT = '我是凪。不是帮你，是顺手。'
+
+/** 最近一次能力快照（引擎可用性 / 本机语音清单 / 离线模型状态） */
+let voiceSnapshot = null
+/** 试听用的 <audio>（同一时刻只留一个，切歌前先停旧的） */
+let previewAudio = null
+
+/** 引擎可用性的中文备注（挑不到时给个明确原因，而不是静默失败） */
+function engineAvailNote(engine, available, extra = '') {
+  if (available?.[engine] === false) {
+    if (engine === 'cloud' || engine === 'gptsovits') return '（暂未接入）'
+    return '（当前不可用）'
+  }
+  return extra
+}
+
+/** 填充「说话引擎」下拉 */
+function fillTtsEngines(st, current) {
+  const sel = document.getElementById('set-tts-engine')
+  if (!sel) return
+  sel.innerHTML = ''
+  for (const [id, e] of Object.entries(TTS_ENGINES)) {
+    const o = document.createElement('option')
+    o.value = id
+    const bad = st?.tts?.available?.[id] === false
+    o.textContent = e.label + engineAvailNote(id, st?.tts?.available)
+    // 未接入的引擎仍然列出来（让用户知道有这条路），但不可选
+    if (bad && (id === 'cloud' || id === 'gptsovits')) o.disabled = true
+    sel.appendChild(o)
+  }
+  sel.value = TTS_ENGINES[current] ? current : 'edge'
+  fillTtsVoices(st)
+}
+
+/** 按当前引擎填充「音色」下拉 */
+function fillTtsVoices(st) {
+  const sel = document.getElementById('set-tts-voice')
+  const engine = document.getElementById('set-tts-engine')?.value || 'edge'
+  const note = document.getElementById('set-tts-engine-note')
+  if (!sel) return
+
+  const cfg = mergeVoiceSettings(settings?.voice)
+  const picked = cfg.voiceByEngine?.[engine] || ''
+
+  sel.innerHTML = ''
+  if (engine === 'edge') {
+    for (const v of EDGE_VOICES) {
+      const o = document.createElement('option')
+      o.value = v.id
+      o.textContent = `${v.label}${v.note ? ' · ' + v.note : ''}`
+      sel.appendChild(o)
+    }
+    sel.value = EDGE_VOICES.some((v) => v.id === picked) ? picked : EDGE_VOICES[0].id
+  } else if (engine === 'sapi') {
+    const list = st?.sapiVoices || []
+    if (!list.length) {
+      const o = document.createElement('option')
+      o.value = ''
+      o.textContent = '（没找到本机语音）'
+      sel.appendChild(o)
+    } else {
+      for (const v of list) {
+        const o = document.createElement('option')
+        o.value = v.name || v.id || String(v)
+        o.textContent = v.name || v.id || String(v)
+        sel.appendChild(o)
+      }
+      sel.value = list.some((v) => (v.name || v.id) === picked) ? picked : (list[0].name || list[0].id)
+    }
+  } else {
+    const o = document.createElement('option')
+    o.value = ''
+    o.textContent = '（用引擎默认音色）'
+    sel.appendChild(o)
+    sel.value = ''
+  }
+
+  const e = TTS_ENGINES[engine]
+  if (note) {
+    const reason = st?.tts?.engine !== engine && st?.tts?.available?.[engine] === false ? '当前会回退到可用引擎。' : ''
+    if (engine === 'edge' && st?.tts?.edgeError) {
+      note.textContent = `最近一次调用失败：${st.tts.edgeError}。失败会自动回退本机语音。`
+    } else {
+      note.textContent = (e?.note || '') + (reason ? ' ' + reason : '')
+    }
+  }
+}
+
+/** 填充「识别引擎」下拉 + 离线模型状态 */
+function fillAsrEngine(st, current) {
+  const sel = document.getElementById('set-asr-engine')
+  if (!sel) return
+  sel.innerHTML = ''
+  for (const [id, e] of Object.entries(ASR_ENGINES)) {
+    const o = document.createElement('option')
+    o.value = id
+    const note =
+      id === 'sherpa'
+        ? st?.asr?.available?.sherpa
+          ? '（已装好，离线可用）'
+          : '（未安装，装好后更准）'
+        : engineAvailNote(id, st?.asr?.available)
+    o.textContent = e.label + note
+    if (id === 'cloud') o.disabled = true
+    sel.appendChild(o)
+  }
+  sel.value = ASR_ENGINES[current] ? current : 'sapi'
+
+  const noteEl = document.getElementById('set-asr-engine-note')
+  if (noteEl) {
+    const e = ASR_ENGINES[sel.value]
+    const cfg = mergeVoiceSettings(settings?.voice)
+    let extra = ''
+    if (cfg.asrEngine !== sel.value && st?.asr?.engine && st.asr.engine !== sel.value) {
+      extra = ` 保存后实际会用「${ASR_ENGINES[st.asr.engine]?.label || st.asr.engine}」。`
+    }
+    noteEl.textContent = (e?.note || '') + extra
+  }
+
+  const wrap = document.getElementById('set-asr-model-wrap')
+  if (wrap) wrap.classList.toggle('hidden', sel.value !== 'sherpa')
+  renderSherpaStatus(st?.sherpa)
+}
+
+/** 离线模型状态文字 */
+function renderSherpaStatus(sh) {
+  const el = document.getElementById('set-asr-model-status')
+  const btn = document.getElementById('btn-asr-download')
+  if (!el) return
+  if (!sh) {
+    el.textContent = '离线模型状态：未知'
+    return
+  }
+  const server = sh.server?.running ? ` · 服务已常驻（端口 ${sh.server.port}）` : ''
+  if (sh.ready) {
+    el.textContent = `离线模型：已装好，可离线使用${server}`
+  } else if (sh.cliPresent || sh.modelPresent) {
+    el.textContent = `离线模型：不完整（${sh.error || '需要重新下载'}）`
+  } else {
+    el.textContent = '离线模型：未安装（不装也能用系统自带识别）'
+  }
+  if (btn) btn.disabled = !!sh.ready
+}
+
+/** 读一次语音能力快照并刷新整个区块 */
+async function refreshVoice() {
+  const sel = document.getElementById('set-tts-engine')
+  if (!sel) return
+  const cfg = mergeVoiceSettings(settings?.voice)
+
+  let st = null
+  try {
+    st = await window.nagi.voice.status()
+  } catch (err) {
+    console.warn('[voice] 状态读取失败', err.message)
+  }
+  voiceSnapshot = st
+
+  fillTtsEngines(st, cfg.ttsEngine)
+  fillAsrEngine(st, cfg.asrEngine)
+
+  const set = (id, v) => {
+    const el = document.getElementById(id)
+    if (el) el.checked = v
+  }
+  set('set-voice-enabled', cfg.ttsEnabled)
+  set('set-speak-reply', cfg.speakOnReply)
+  set('set-speak-proactive', cfg.speakOnProactive)
+  set('set-lipsync', cfg.lipSync)
+
+  const rate = document.getElementById('set-voice-rate')
+  if (rate) rate.value = String(cfg.rate)
+  document.getElementById('set-voice-rate-val').textContent = String(cfg.rate)
+  const vol = document.getElementById('set-voice-volume')
+  if (vol) vol.value = String(cfg.volume)
+  document.getElementById('set-voice-volume-val').textContent = String(cfg.volume)
+
+  const pt = document.getElementById('set-preview-text')
+  if (pt && !pt.value) pt.value = VOICE_PREVIEW_TEXT
+}
+
+/** 试听当前（尚未保存的）引擎 / 音色 / 语速 */
+async function previewVoice() {
+  const btn = document.getElementById('btn-tts-preview')
+  const out = document.getElementById('voice-preview-result')
+  const text = (document.getElementById('set-preview-text')?.value || '').trim() || VOICE_PREVIEW_TEXT
+  const engine = document.getElementById('set-tts-engine')?.value
+
+  if (out) out.textContent = '合成中…'
+  btn?.classList.add('playing')
+  try {
+    const r = await window.nagi.voice.preview({
+      text,
+      engine,
+      voice: document.getElementById('set-tts-voice')?.value || '',
+      rate: Number(document.getElementById('set-voice-rate')?.value) || 0,
+      volume: Number(document.getElementById('set-voice-volume')?.value ?? 100)
+    })
+    if (!r || !r.ok) {
+      if (out) out.textContent = '试听失败：' + (r?.error || '未知原因')
+      return
+    }
+    if (out) out.textContent = `正在播放（${r.engine || engine}）…`
+    await playPreviewBytes(r.bytes, r.format)
+    if (out) out.textContent = '试听结束。满意就保存设置。'
+  } catch (err) {
+    if (out) out.textContent = '试听失败：' + err.message
+  } finally {
+    btn?.classList.remove('playing')
+  }
+}
+
+/** 放一段试听音频（同时驱动口型，方便一起看效果） */
+function playPreviewBytes(bytes, format) {
+  return new Promise((resolve) => {
+    try {
+      if (previewAudio) {
+        previewAudio.pause()
+        previewAudio = null
+      }
+      const blob = new Blob([bytes], { type: format || 'audio/mpeg' })
+      const url = URL.createObjectURL(blob)
+      const a = new Audio(url)
+      previewAudio = a
+      const done = () => {
+        URL.revokeObjectURL(url)
+        if (previewAudio === a) previewAudio = null
+        resolve()
+      }
+      a.onended = done
+      a.onerror = done
+      a.play().catch(done)
+    } catch {
+      resolve()
+    }
+  })
+}
+
+function wireVoiceSettings(on) {
+  const rate = document.getElementById('set-voice-rate')
+  rate?.addEventListener('input', () => {
+    document.getElementById('set-voice-rate-val').textContent = String(Number(rate.value))
+  })
+  const vol = document.getElementById('set-voice-volume')
+  vol?.addEventListener('input', () => {
+    document.getElementById('set-voice-volume-val').textContent = String(Number(vol.value))
+  })
+
+  // 换引擎 → 音色下拉跟着换数据源
+  document.getElementById('set-tts-engine')?.addEventListener('change', () => fillTtsVoices(voiceSnapshot))
+  document.getElementById('set-asr-engine')?.addEventListener('change', () => fillAsrEngine(voiceSnapshot, document.getElementById('set-asr-engine').value))
+
+  on('btn-tts-preview', previewVoice)
+
+  on('btn-save-voice', async () => {
+    const engine = document.getElementById('set-tts-engine').value
+    const voice = document.getElementById('set-tts-voice').value
+    await window.nagi.settings.set({
+      voice: {
+        ttsEnabled: document.getElementById('set-voice-enabled').checked,
+        ttsEngine: engine,
+        // 每个引擎各自记音色：切来切去不会互相覆盖
+        voiceByEngine: voice ? { [engine]: voice } : {},
+        rate: Number(document.getElementById('set-voice-rate').value) || 0,
+        volume: Number(document.getElementById('set-voice-volume').value ?? 100),
+        speakOnReply: document.getElementById('set-speak-reply').checked,
+        speakOnProactive: document.getElementById('set-speak-proactive').checked,
+        lipSync: document.getElementById('set-lipsync').checked,
+        asrEngine: document.getElementById('set-asr-engine').value
+      }
+    })
+    settings = await window.nagi.settings.get()
+    ui.addToolLog('语音设置已保存')
+    refreshVoice()
+  })
+
+  on('btn-asr-download', async () => {
+    const btn = document.getElementById('btn-asr-download')
+    const out = document.getElementById('set-asr-model-status')
+    if (btn) btn.disabled = true
+    if (out) out.textContent = '正在下载离线识别（约 98MB，首次较慢）…'
+    document.getElementById('asr-progress')?.classList.remove('hidden')
+    try {
+      const r = await window.nagi.voice.downloadModel()
+      if (!r || !r.ok) {
+        ui.addToolLog('离线识别安装失败：' + (r?.error || '未知原因'))
+      } else {
+        ui.addToolLog('离线识别已装好，之后完全离线可用')
+      }
+    } catch (err) {
+      ui.addToolLog('离线识别安装失败：' + err.message)
+    } finally {
+      document.getElementById('asr-progress')?.classList.add('hidden')
+      await refreshVoice()
+    }
+  })
+
+  on('btn-asr-server-stop', async () => {
+    const r = await window.nagi.voice.stopServer()
+    ui.addToolLog(r?.stopped ? '已停掉离线识别服务，内存已释放' : '离线识别服务本来就没在跑')
+    await refreshVoice()
+  })
+
+  // 下载进度（主进程广播）：只在设置页显示，不弹窗打断
+  window.nagi.on(VOICE_EVT.PROGRESS, (p) => {
+    if (!p || p.kind !== 'download') return
+    const wrap = document.getElementById('asr-progress')
+    const bar = document.getElementById('asr-progress-bar')
+    const out = document.getElementById('set-asr-model-status')
+    if (!wrap || !bar) return
+    if (p.done) {
+      bar.style.width = '100%'
+      if (out) out.textContent = p.ok ? '下载完成，正在校验…' : '下载失败：' + (p.error || '未知原因')
+      return
+    }
+    wrap.classList.remove('hidden')
+    const pct = p.total ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0
+    bar.style.width = pct + '%'
+    if (out) {
+      const what = p.stage === 'cli' || (!p.file && !p.stage) ? '识别程序' : '识别模型'
+      out.textContent = `正在下载${what} · ${pct}%`
+    }
+    const btn = document.getElementById('btn-asr-download')
+    if (btn) btn.disabled = true
+  })
 }
 
 function wireSettingsPage() {
@@ -845,6 +1178,9 @@ function wireSettingsPage() {
       .map((e) => `${e.entity_id}  ${e.name} = ${e.state}${e.unit || ''}`)
       .join('\n')
   })
+
+  // 语音（M5）：引擎 / 音色 / 语速音量 / 自动开口 / 离线识别
+  wireVoiceSettings(on)
 }
 
 /* ---------------- 关系页（S4：熟悉度 + 情绪时间线） ---------------- */

@@ -541,6 +541,21 @@ export function initVoice(opts = {}) {
     isRecording: () => !!rec,
     /** 口型是否已被真实语音接管（live2d.setLipTrack 生效中） */
     lipActive: () => l2d.isTalking(),
-    state: () => (speech ? { sessionId: speech.sessionId, index: speech.index, total: speech.total, playing: speech.playing } : null)
+    state: () => {
+      if (!speech) return null
+      // 附带播放进度（调试口型问题必需：lipTrack 的时钟就是 audio.currentTime），
+      // dur 为 NaN/-1 说明元数据没就绪；paused 为 true 说明根本没在放
+      const a = speech.audio
+      return {
+        sessionId: speech.sessionId,
+        index: speech.index,
+        total: speech.total,
+        playing: speech.playing,
+        at: a ? Math.round(a.currentTime * 1000) : -1,
+        dur: a ? (Number.isFinite(a.duration) ? Math.round(a.duration * 1000) : -1) : -1,
+        paused: a ? a.paused : null,
+        readyState: a ? a.readyState : -1
+      }
+    }
   }
 }
