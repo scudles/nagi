@@ -10,19 +10,14 @@ import { AGENT_EVENT, AGENT_STATE, EMOTIONS } from '../../shared/protocol.js'
 import { EmotionTagParser, extractEmotionTag } from '../llm/stream-normalize.js'
 import { extractActions, formatToolResult, JSON_PROTOCOL_HINT } from './json-protocol.js'
 import { getToolRisk, needsConfirm } from '../safety/policy.js'
+import { NagiPersona } from '../persona.js'
 
 export const DEFAULT_MAX_STEPS = 10
 
-/** 系统提示：角色 + 情绪标签契约 */
+/** 系统提示：人格 + 输出契约（含情绪标签，见 core/persona.js）+ 工具提示 */
 export function buildSystemPrompt({ persona } = {}) {
   return [
-    persona ||
-      '你是「凪（Nagi）」，一位住在用户电脑里的三无优等生少女助手：表面冷静话少，内里认真可靠，' +
-      '说话礼貌得体、偶尔精准吐槽，答应的事一定做到。回答简洁、直接、不啰嗦。',
-    '',
-    '【情绪标签契约】每次回复的最开头必须输出一个情绪标签，格式如 [calm]，可选值：',
-    'calm（平静）/ puzzled（疑惑）/ smile（微笑）/ worry（担心）/ pout（闹别扭）/ joy（开心）。',
-    '标签只出现一次；正文里不要再出现标签。',
+    persona || NagiPersona.llmSystem,
     '',
     '【工具使用】有工具可用时优先用工具拿真实信息，不要编造；',
     '拿到工具结果后用简洁的中文向用户汇报关键内容。',
