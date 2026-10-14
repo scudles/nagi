@@ -99,10 +99,16 @@ async function boot() {
     /* 旧版本主进程没有该通道时忽略 */
   }
 
-  // 事件：桌宠交互（戳一戳台词气泡）
+  // 事件：桌宠交互（戳一戳台词气泡 / 活动监测的主动搭话）
   window.nagi.on(EVT.PET, (p) => {
     noteActivity()
-    if (mode === MODE.PET && p && p.text) ui.showBubble(p.text)
+    if (!p || !p.text) return
+    if (mode === MODE.PET) {
+      ui.showBubble(p.text)
+    } else if (p.kind === 'proactive') {
+      // 工作台形态：主动搭话进对话流，别只闪个气泡就没了
+      ui.addMessage('nagi', p.text)
+    }
     // TapBody 动作在 pokeHer() 里已经播了，这里只管说
   })
 
@@ -115,6 +121,9 @@ async function boot() {
 
   wireWindowButtons()
   wireSettingsPage()
+
+  // 首次启动：活动监测告知（只弹一次，仅桌宠形态）
+  if (mode === MODE.PET) maybeShowMonitorNotice()
 
   // 对话
   initChat({
@@ -512,6 +521,26 @@ function runEmotionSelftest() {
   }, 2500)
 }
 
+/* ---------------- 首次启动：活动监测告知 ---------------- */
+function maybeShowMonitorNotice() {
+  const p = settings?.privacy || {}
+  if (p.noticeShown) return
+  const ov = document.getElementById('notice-overlay')
+  if (!ov) return
+  ov.classList.remove('hidden')
+  const done = async (patch) => {
+    ov.classList.add('hidden')
+    try {
+      await window.nagi.settings.set({ privacy: { noticeShown: true, ...patch } })
+      settings = await window.nagi.settings.get()
+    } catch {
+      /* ignore */
+    }
+  }
+  document.getElementById('btn-notice-ok')?.addEventListener('click', () => done({}))
+  document.getElementById('btn-notice-off')?.addEventListener('click', () => done({ monitorEnabled: false }))
+}
+
 /* ---------------- 设置页 ---------------- */
 function openSettings() {
   const overlay = document.getElementById('settings-overlay')
@@ -565,6 +594,15 @@ function fillSettingsForm() {
   }
   const boost = document.getElementById('set-idle-boost')
   if (boost) boost.checked = settings?.live2d?.idleBoost !== false
+
+  // 活动监测
+  const privacy = settings?.privacy || {}
+  const monEl = document.getElementById('set-monitor')
+  if (monEl) monEl.checked = privacy.monitorEnabled !== false
+  const dndEl = document.getElementById('set-dnd')
+  if (dndEl) dndEl.checked = privacy.doNotDisturb === true
+  const blEl = document.getElementById('set-blacklist')
+  if (blEl) blEl.value = (privacy.blacklist || []).join('\n')
 
   refreshSecretStatus()
   refreshModels()
@@ -719,6 +757,24 @@ function wireSettingsPage() {
     settings = await window.nagi.settings.get()
     ui.addToolLog('工具设置已保存')
   })
+
+  // 活动监测：开关 / 勿扰 / 黑名单
+  on('btn-save-monitor', async () => {
+    const blacklist = (document.getElementById('set-blacklist')?.value || '')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    await window.nagi.settings.set({
+      privacy: {
+        monitorEnabled: document.getElementById('set-monitor').checked,
+        doNotDisturb: document.getElementById('set-dnd').checked,
+        blacklist
+      }
+    })
+    settings = await window.nagi.settings.get()
+    ui.addToolLog('监测设置已保存')
+  })
+
   on('btn-save-ha', async () => {
     await window.nagi.settings.set({
       homeassistant: {

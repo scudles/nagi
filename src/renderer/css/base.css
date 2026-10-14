@@ -454,12 +454,14 @@ body[data-mode="workbench"] {
 .sp-body h3 { font-size: 12px; color: var(--accent); margin: 18px 0 8px; font-weight: 600; }
 .sp-body h3:first-child { margin-top: 0; }
 .sp-body label { display: block; margin-bottom: 10px; color: var(--text-dim); font-size: 12px; }
-.sp-body input, .sp-body select {
+.sp-body input, .sp-body select, .sp-body textarea {
   display: block; width: 100%; margin-top: 4px; padding: 7px 10px;
   border-radius: 8px; border: 1px solid var(--line); background: var(--bg-soft);
   color: var(--text); font-size: 13px; outline: none; user-select: text;
+  font-family: inherit;
 }
-.sp-body input:focus, .sp-body select:focus { border-color: var(--accent); }
+.sp-body textarea { resize: vertical; min-height: 64px; line-height: 1.6; }
+.sp-body input:focus, .sp-body select:focus, .sp-body textarea:focus { border-color: var(--accent); }
 .sp-row { display: flex; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .sp-row button {
   padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line);
@@ -478,6 +480,23 @@ body[data-mode="workbench"] {
 }
 .sp-body label.check { display: flex; align-items: center; gap: 8px; }
 .sp-body label.check input { display: inline-block; width: auto; margin: 0; }
+
+/* ============ 首次启动：活动监测告知 ============ */
+#notice-panel {
+  width: 460px;
+  max-width: 92vw;
+  padding: 20px 22px;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.75;
+}
+#notice-panel h3 { margin: 0 0 10px; font-size: 14px; color: var(--accent); }
+#notice-panel p { margin: 0 0 10px; color: var(--text-dim); }
+#notice-panel ul { margin: 0 0 16px; padding-left: 18px; color: var(--text-dim); }
+#notice-panel li { margin-bottom: 5px; }
 
 /* ============ 她的记忆（设置页） ============ */
 .memory-list {

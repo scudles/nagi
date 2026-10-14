@@ -1,0 +1,93 @@
+// src/core/monitor/engine.js
+// 凪 · 活动监测编排引擎（M3，纯逻辑 / 全依赖注入）。
+// 一次 tick 的链路：
+//   采样 → 隐私闸（开关/勿扰/黑名单）→ 统计 → 规则 → 节流 → 开口
+//
+// 这里不碰 Electron、不碰文件、不碰网络，方便单测：
+//   sampler / 时钟 / 规则表 / 台词选择器全部从外部注入。
+// 主进程用 main/monitor/index.js 把真实实现（powerMonitor + PowerShell + persona）接上。
+
+import { gateSample } from './privacy.js'
+import { createTracker } from './tracker.js'
+import { createThrottle } from './throttle.js'
+import { evaluateRules, RULES } from './rules.js'
+
+/**
+ * @param {object} deps
+ * @param {{sample: () => Promise<object|null>}} deps.sampler 采集器
+ * @param {() => object} deps.getPrivacy 读取隐私配置
+ * @param {(payload:{ruleId:string, mood:string, vars:object, text:string, stats:object}) => void} deps.onProactive 触发回调
+ * @param {(poolKey:string, vars:object) => string} deps.pickText 台词选择器（反重复由 persona 负责）
+ * @param {() => number} [deps.now] 时钟
+ * @param {object} [deps.tracker] 统计器（默认自建）
+ * @param {object} [deps.throttle] 节流器（默认自建）
+ * @param {Array} [deps.rules] 规则表（默认 RULES）
+ * @param {(msg:string, ...rest:any[]) => void} [deps.log] 日志
+ */
+export function createMonitorEngine({
+  sampler,
+  getPrivacy = () => ({}),
+  onProactive = () => {},
+  pickText = () => '',
+  now = () => Date.now(),
+  tracker,
+  throttle,
+  rules = RULES,
+  log = () => {}
+} = {}) {
+  const trk = tracker || createTracker({ now })
+  const thr = throttle || createThrottle({ now })
+  let last = null
+
+  /**
+   * 跑一次采样与判断。
+   * @returns {Promise<object>} 结果对象，字段说明见下方各 return 分支
+   */
+  async function tickOnce() {
+    const privacy = getPrivacy() || {}
+
+    let raw = null
+    try {
+      raw = await (sampler ? sampler.sample() : null)
+    } catch (err) {
+      log('[monitor] 采样失败：' + (err && err.message ? err.message : err))
+      return { error: 'sample' }
+    }
+    if (!raw) return { skipped: 'no-sample' }
+
+    const gate = gateSample(raw, privacy)
+    if (gate.skip) return { skipped: gate.reason }
+
+    trk.record(raw)
+    const stats = trk.stats()
+
+    const hit = evaluateRules(stats, rules)
+    if (!hit) return { quiet: true, stats }
+
+    if (!thr.allow(hit.rule)) return { throttled: hit.rule.id, stats }
+
+    let text = ''
+    try {
+      text = pickText(hit.rule.pool, hit.vars) || ''
+    } catch (err) {
+      log('[monitor] 选台词失败：' + (err && err.message ? err.message : err))
+    }
+    if (!text) return { empty: hit.rule.id, stats }
+
+    thr.note(hit.rule)
+    last = { ruleId: hit.rule.id, mood: hit.rule.mood, vars: hit.vars || {}, text, stats, ts: now() }
+    try {
+      onProactive(last)
+    } catch (err) {
+      log('[monitor] 回调失败：' + (err && err.message ? err.message : err))
+    }
+    return last
+  }
+
+  /** 最近一次成功开口的记录（无则 null） */
+  function snapshot() {
+    return last
+  }
+
+  return { tickOnce, snapshot, tracker: trk, throttle: thr }
+}

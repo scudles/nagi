@@ -35,6 +35,7 @@ import { getSettings } from './settings-store.js'
 import { getSecret, hasSecret } from './keystore.js'
 import { broadcast, getWorkbenchWindow } from './windows.js'
 import { appendDiary } from './diary.js'
+import { startMonitor, stopMonitor } from './monitor/index.js'
 
 /* ---------------- 全局单例 ---------------- */
 const nativeTools = createNativeTools({ getWorkbenchWindow })
@@ -141,6 +142,33 @@ export function stopMoodEngine() {
   if (diaryTimer) clearInterval(diaryTimer)
   moodTickTimer = null
   diaryTimer = null
+}
+
+/* ---------------- 活动监测（M3）：她看你在做什么，忍不住主动开口 ---------------- */
+
+/**
+ * 监测触发的主动搭话：提情绪 → 桌宠气泡 → 记进内心独白日记。
+ * 正在对话（busy）时不抢话，只安静记一笔。
+ */
+function handleProactive({ mood: hitMood, text, ruleId }) {
+  if (!text) return
+  console.log(`[monitor] 主动搭话（${ruleId}）：${text}`)
+  if (hitMood) {
+    mood.propose(hitMood, 0.5, 'monitor')
+    broadcastMood()
+  }
+  const snap = mood.current()
+  if (!busy) broadcast(EVT.PET, { kind: 'proactive', text, expr: snap.expr })
+  appendDiary(snap, text)
+}
+
+/** 启动活动监测（app ready 后调用；幂等）。总开关在 settings.privacy.monitorEnabled */
+export function startActivityMonitor() {
+  startMonitor({ onProactive: handleProactive })
+}
+
+export function stopActivityMonitor() {
+  stopMonitor()
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -411,6 +439,7 @@ export function abortChat() {
 /** 退出前清理 */
 export async function disposeAgent() {
   stopMoodEngine()
+  stopActivityMonitor()
   try {
     await browserTools.dispose()
   } catch {

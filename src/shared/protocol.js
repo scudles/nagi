@@ -2,6 +2,8 @@
 // 主进程 / 预加载 / 渲染层共用的常量与默认值。
 // 只放"纯数据"，不放任何 Electron / Node 依赖，方便被 core 单测引用。
 
+import { DEFAULT_BLACKLIST } from '../core/monitor/privacy.js'
+
 /** IPC 通道名（invoke / send） */
 export const IPC = {
   // 设置
@@ -48,7 +50,7 @@ export const EVT = {
   SETTINGS_CHANGED: 'settings:changed',
   HA_EVENT: 'ha:event',
   MOOD: 'mood:change',   // 情绪状态机快照 { mood, intensity, expr, label }
-  PET: 'pet:event'       // 桌宠交互 { kind: 'poke', text, expr }
+  PET: 'pet:event'       // 桌宠交互 { kind: 'poke' | 'proactive', text, expr }
 }
 
 /** 6 种离散情绪（与旧情感系统一致） */
@@ -132,6 +134,10 @@ export const DEFAULT_SETTINGS = {
     browserMode: 'cdp' // 'cdp' | 'managed'
   },
   privacy: {
-    monitorEnabled: false
+    monitorEnabled: true, // 活动监测总开关（首次启动有告知弹窗，可一键关）
+    doNotDisturb: false, // 勿扰模式：临时停采，不落任何样本
+    noticeShown: false, // 「她在观察你在用什么程序」的首次告知是否已展示
+    sampleSec: 20, // 多久看一眼（秒）
+    blacklist: [...DEFAULT_BLACKLIST] // 命中即丢样本（窗口标题/应用名，支持 * 通配）
   }
 }

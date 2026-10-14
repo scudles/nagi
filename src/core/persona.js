@@ -142,6 +142,49 @@ export const NagiPersona = {
     ]
   },
 
+  // 主动搭话池（M3 活动监测）：她看你在做什么，忍不住开口。
+  // 键 = core/monitor/rules.js 里规则声明的 pool；可含槽位 {min} / {away}。
+  // 池子够大 + _pick 反重复 → 同一条规则多次触发也不会说同一句话。
+  proactive: {
+    welcomeBack: [
+      '……回来了。刚才那么久没动静，我还以为你出门了。',
+      '……哦，人还在。走了 {away} 分钟，去哪了。',
+      '……回来就好。下次走之前说一声——不是非要你说，随口一提。',
+      '……你不在的时候，屏幕安静得有点过头。',
+      '……欢迎回来。我可什么都没等。'
+    ],
+    lateNight: [
+      '……这个点了，还不睡？',
+      '……屏幕亮着，人却是困的。去休息。',
+      '……明天的事交给明天。现在，睡觉。',
+      '……我劝过了。剩下的你自己看着办。',
+      '……再熬下去，明天的你会恨现在的你。'
+    ],
+    sitWarn: [
+      '……{min} 分钟没挪过窝了。站起来走走。',
+      '……你已经坐太久了。去倒杯水，顺便看看窗外。',
+      '……人类的身体不是这么用的。起来，就两分钟。',
+      '……停一下。就当我多管闲事。'
+    ],
+    gamingLong: [
+      '……{min} 分钟了。游戏不会跑，你的正事会。',
+      '……这一局之后，收手。说好了。',
+      '……赢了没？赢了也先歇会儿。',
+      '……我不催你。但你自己心里有数。'
+    ],
+    videoLong: [
+      '……{min} 分钟了。看完这集就去做正事。',
+      '……一口气看这么多，眼睛不要了？',
+      '……我数着的。这已经是第几个了。',
+      '……随你。反正我会记得你今晚干了什么。'
+    ],
+    deepFocus: [
+      '……专心做事的你，还算像样。我在。',
+      '……不打扰你。需要的时候叫我。',
+      '……这个状态不错。保持。'
+    ]
+  },
+
   // 闹别扭（pout）状态下的戳一戳反应：更冷、更戏精
   pokeSullen: [
     { expr: 'pout', text: '……别烦我。' },
@@ -168,8 +211,25 @@ export const NagiPersona = {
     return chosen
   },
 
+  /** 槽位填充：{slot} 兜底「现在」，其余 {key} 取 ctx[key]（缺失则原样保留） */
   _fill(text, ctx) {
-    return String(text || '').replace(/\{slot\}/g, (ctx && ctx.slot) || '现在')
+    return String(text || '').replace(/\{(\w+)\}/g, (m, k) => {
+      if (ctx && ctx[k] != null) return String(ctx[k])
+      if (k === 'slot') return '现在'
+      return m
+    })
+  },
+
+  /**
+   * 主动搭话选词（M3）：从 proactive[poolKey] 里挑一条最近没说过的话，并填槽位。
+   * @param {string} poolKey rules.js 声明的 pool
+   * @param {object} [vars] 槽位变量（如 { min: 95 } / { away: 12 }）
+   * @returns {string} 台词；池不存在时返回空串
+   */
+  pickProactive: function (poolKey, vars) {
+    const pool = this.proactive && this.proactive[poolKey]
+    if (!Array.isArray(pool) || !pool.length) return ''
+    return this._fill(this._pick(pool), vars || {})
   },
 
   /**

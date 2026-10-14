@@ -10,8 +10,8 @@ import { registerSettingsIpc } from './ipc/settings.js'
 import { registerChatIpc } from './ipc/chat.js'
 import { registerHomeAssistantIpc } from './ipc/homeassistant.js'
 import { registerPetIpc } from './ipc/pet.js'
-import { loadSettings } from './settings-store.js'
-import { disposeAgent, startMoodEngine } from './agent.js'
+import { loadSettings, saveSettings } from './settings-store.js'
+import { disposeAgent, startMoodEngine, startActivityMonitor } from './agent.js'
 import { MODE } from '../shared/protocol.js'
 
 // ---- 运行环境开关 ----
@@ -50,8 +50,16 @@ if (!gotLock) {
     // 情绪引擎：心跳 + 独白日史（双窗广播，退出时随 disposeAgent 停止）
     startMoodEngine()
 
+    // 活动监测：看你在用什么程序，适时主动开口（M3，受 settings.privacy 控制）
+    startActivityMonitor()
+
     // 窗口（NAGI_MODE=workbench 可覆盖初始形态，便于无头验证）
     const settings = loadSettings()
+    // 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
+    // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
+    if (!settings.privacy?.noticeShown && settings.privacy?.monitorEnabled === false) {
+      saveSettings({ privacy: { monitorEnabled: true } })
+    }
     const envMode = process.env.NAGI_MODE === MODE.WORKBENCH ? MODE.WORKBENCH : null
     createPetWindow()
     createWorkbenchWindow()

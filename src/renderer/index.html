@@ -161,6 +161,20 @@
             <button id="btn-save-tools">保存工具设置</button>
           </div>
 
+          <h3>活动监测</h3>
+          <p class="dim" style="margin:0 0 8px;line-height:1.7">
+            开启后，凪 会在本机偶尔看一眼你正在用什么程序（只看类别，不保存窗口标题原文），
+            好在合适的时候主动关心你——坐太久、深夜还在忙、玩得太久。命中黑名单的窗口一律不采集。
+          </p>
+          <label class="check"><input id="set-monitor" type="checkbox" /> 开启活动监测</label>
+          <label class="check"><input id="set-dnd" type="checkbox" /> 勿扰模式（暂停采集，也不主动开口）</label>
+          <label>黑名单（每行一条，支持 * 通配）
+            <textarea id="set-blacklist" rows="4" placeholder="例如：&#10;*密码*&#10;*银行*&#10;*1password*"></textarea>
+          </label>
+          <div class="sp-row">
+            <button id="btn-save-monitor">保存监测设置</button>
+          </div>
+
           <h3>智能家居（Home Assistant）</h3>
           <label>地址 <input id="set-ha-url" type="text" /></label>
           <label>Token <span id="set-ha-status" class="dim">未配置</span>
@@ -194,6 +208,23 @@
       <div id="diary-list"></div>
       <article id="diary-content"></article>
     </main>
+  </div>
+
+  <!-- ============ 首次启动：活动监测告知（仅桌宠形态弹一次） ============ -->
+  <div id="notice-overlay" class="overlay hidden">
+    <div id="notice-panel">
+      <h3>关于「活动监测」</h3>
+      <p>凪 会偶尔看一眼你正在用什么程序，好在合适的时候主动关心你。</p>
+      <ul>
+        <li>只在本机判断，窗口标题原文不会保存、不会上传；</li>
+        <li>密码、银行等敏感窗口默认在黑名单里，一律不采集；</li>
+        <li>随时可在「设置 → 活动监测」里关闭，或临时开「勿扰」。</li>
+      </ul>
+      <div class="sp-row">
+        <button id="btn-notice-ok">知道了</button>
+        <button id="btn-notice-off" class="danger">先关掉监测</button>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="./js/main.js"></script>
