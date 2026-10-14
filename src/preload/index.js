@@ -4,8 +4,17 @@
 
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, EVT } from '../shared/protocol.js'
+import { VOICE_IPC, VOICE_EVT } from '../shared/voice-protocol.js'
 
-const ALLOWED_EVENTS = new Set([EVT.AGENT, EVT.SETTINGS_CHANGED, EVT.HA_EVENT, EVT.MOOD, EVT.PET])
+const ALLOWED_EVENTS = new Set([
+  EVT.AGENT,
+  EVT.SETTINGS_CHANGED,
+  EVT.HA_EVENT,
+  EVT.MOOD,
+  EVT.PET,
+  VOICE_EVT.PROGRESS,
+  VOICE_EVT.NOTICE
+])
 
 const api = {
   settings: {
@@ -70,6 +79,27 @@ const api = {
     add: (payload) => ipcRenderer.invoke(IPC.REMINDER_ADD, payload),
     remove: (payload) => ipcRenderer.invoke(IPC.REMINDER_REMOVE, payload),
     done: (id) => ipcRenderer.invoke(IPC.REMINDER_DONE, { id })
+  },
+  /** 语音链路（M5）：她既能开口，也能听见 */
+  voice: {
+    /** 能力快照：各引擎可用性 + 本机语音清单 + 离线模型状态 */
+    status: () => ipcRenderer.invoke(VOICE_IPC.STATUS),
+    /** 开一次朗读会话 → 返回 { sessionId, total, engine, sentences } */
+    speak: (payload) => ipcRenderer.invoke(VOICE_IPC.SPEAK, payload || {}),
+    /** 取第 index 句的音频（按句取用，首响 = 首句合成时间） */
+    pull: (sessionId, index) => ipcRenderer.invoke(VOICE_IPC.PULL, { sessionId, index }),
+    /** 打断：丢弃这个朗读会话（不传则全部丢弃） */
+    stop: (sessionId) => ipcRenderer.invoke(VOICE_IPC.STOP, sessionId),
+    /** 试听（设置页用，不切句、可临时指定音色/语速） */
+    preview: (payload) => ipcRenderer.invoke(VOICE_IPC.PREVIEW, payload || {}),
+    /** 把录好的 WAV（16-bit PCM）送去识别 → { text, engine } */
+    listen: (payload) => ipcRenderer.invoke(VOICE_IPC.LISTEN, payload || {}),
+    /** 离线识别安装状态 */
+    modelStatus: () => ipcRenderer.invoke(VOICE_IPC.MODEL_STATUS),
+    /** 下载离线识别程序 + 模型（约 98MB，进度走 VOICE_EVT.PROGRESS） */
+    downloadModel: () => ipcRenderer.invoke(VOICE_IPC.MODEL_DOWNLOAD),
+    /** 停掉常驻的离线识别服务，把内存还回去 */
+    stopServer: () => ipcRenderer.invoke(VOICE_IPC.SERVER_STOP)
   },
   /** 订阅主进程事件；返回取消订阅函数 */
   on: (channel, listener) => {

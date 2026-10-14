@@ -215,6 +215,9 @@ let overrideMap = null
 let talking = false
 let talkPhase = 0
 let talkUntil = 0
+/** M5：真实语音的口型时间轴（由 core/voice/lip.js 生成），有它就优先用它 */
+let lipTrack = null
+let lipClock = null
 
 export function coreAvailable() {
   return typeof window.Live2DCubismCore !== 'undefined'
@@ -323,6 +326,14 @@ export async function load(canvas, url, opts = {}) {
   // 说话口型：挂在 afterMotionUpdate 上——这一帧的动作参数刚写完，
   // 我们写的嘴型不会被动作/表情覆盖（pixi-live2d-display 的更新顺序见 cubism4.js）
   mouthHook = () => {
+    // M5：有真实语音时间轴时以它为准（嘴型跟着她说的话走，而不是随机动）
+    if (lipTrack && lipClock) {
+      const dur = lipTrack.durationMs > 0 ? lipTrack.durationMs : 1
+      const t = lipClock()
+      // 用取模：万一音频时长估短了，包络就循环，总比中途僵住张嘴不动好
+      setMouthOpen(t <= 0 ? 0 : lipTrack.at(t % dur))
+      return
+    }
     if (!talking) return
     const now = performance.now()
     if (now > talkUntil) {
@@ -693,7 +704,29 @@ export function stopTalking() {
 }
 
 export function isTalking() {
-  return talking
+  return talking || !!lipTrack
+}
+
+/**
+ * M5：用真实语音的口型时间轴驱动嘴部。
+ *
+ * 与 startTalking() 的区别：startTalking 只是「嘴随便动动」，用来说「文本正在流」；
+ * 这个用 core/voice/lip.js 按音节数和音频时长算出的包络，嘴型跟着她实际说的话走。
+ * 一旦设置，mouthHook 就优先用它，直到 clearLipTrack()。
+ *
+ * @param {{durationMs:number, at:(t:number)=>number}|null} track createLipTrack() 的产物
+ * @param {() => number} [clock] 返回相对播放起点的毫秒数。
+ *        **一定要传播放器的 currentTime**，别用 performance.now()：
+ *        audio.duration 在有些容器上会短暂给出错值，而 currentTime 是播放进度的唯一真相。
+ */
+export function setLipTrack(track, clock) {
+  lipTrack = track && typeof track.at === 'function' ? track : null
+  lipClock = lipTrack ? (typeof clock === 'function' ? clock : () => performance.now()) : null
+  if (!lipTrack) setMouthOpen(0)
+}
+
+export function clearLipTrack() {
+  setLipTrack(null)
 }
 
 export function destroy() {
@@ -725,4 +758,6 @@ export function destroy() {
   baseW = 0
   baseH = 0
   talking = false
+  lipTrack = null
+  lipClock = null
 }

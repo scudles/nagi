@@ -12,8 +12,10 @@ import { registerHomeAssistantIpc } from './ipc/homeassistant.js'
 import { registerPetIpc } from './ipc/pet.js'
 import { registerRelationIpc } from './ipc/relation.js'
 import { registerReminderIpc } from './ipc/reminders.js'
+import { registerVoiceIpc } from './ipc/voice.js'
 import { loadSettings, saveSettings } from './settings-store.js'
 import { disposeAgent, startMoodEngine, startActivityMonitor, startReminders, restoreState } from './agent.js'
+import { prewarmVoice, disposeVoice } from './voice/index.js'
 import { MODE } from '../shared/protocol.js'
 
 // ---- 运行环境开关 ----
@@ -50,6 +52,7 @@ if (!gotLock) {
     registerPetIpc()
     registerRelationIpc()
     registerReminderIpc()
+    registerVoiceIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
@@ -84,6 +87,13 @@ if (!gotLock) {
     if (process.env.NAGI_SELFTEST && process.env.NAGI_SELFTEST_DIARY === '1') {
       setTimeout(() => openDiaryWindow(), 1200)
     }
+
+    // 语音预热：离线识别服务要 4.3–4.8s 加载模型，等服务就绪后才开始，
+    // 把这段等待从「用户按住说话的那一刻」挪到「应用刚起来、用户还没开口」的时候。
+    // 没装离线模型 / 用户选了别的识别引擎时它会立刻返回，不做无谓的事。
+    prewarmVoice({}).then((r) => {
+      if (r.prewarmed) console.log('[voice] 离线识别已预热')
+    })
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createPetWindow()

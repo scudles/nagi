@@ -24,10 +24,13 @@
       <div class="bubble-inner"></div>
     </div>
     <div id="pet-status" class="pet-status hidden"></div>
+    <!-- 语音提示：录音计时 / 没听清 等 -->
+    <div class="voice-hint hidden"></div>
     <div class="pet-toolbar">
       <button id="btn-pet-grow" title="放大（Ctrl+滚轮）">＋</button>
       <button id="btn-pet-shrink" title="缩小（Ctrl+滚轮）">－</button>
       <button id="btn-pet-action" title="随便动一下">✦</button>
+      <button id="btn-pet-mic" title="按住说话（松手识别）">🎙</button>
       <button id="btn-open-workbench" title="打开工作台">▣</button>
       <button id="btn-pet-settings" title="设置">⚙</button>
       <button id="btn-pet-hide" title="隐藏">✕</button>
@@ -70,9 +73,11 @@
         <div id="confirm-bar" class="confirm-bar hidden"></div>
         <div id="composer">
           <textarea id="input" rows="1" placeholder="和凪说点什么…（回车发送，Shift+回车换行）"></textarea>
+          <button id="btn-wb-mic" title="按住说话（松手识别）">🎙</button>
           <button id="btn-new-chat" title="开始新对话：清空短期上下文，长期记忆与关系保留">新对话</button>
           <button id="btn-send">发送</button>
         </div>
+        <div class="voice-hint hidden"></div>
       </section>
 
       <!-- 拖动改宽（240–460） -->

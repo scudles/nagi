@@ -1,0 +1,775 @@
+// src/main/voice/sherpa.js
+// 离线识别适配器：sherpa-onnx（替代原计划的 Vosk）。
+//
+// 为什么放弃 Vosk：vosk npm 依赖 ffi-napi（原生模块，要 node-gyp 编译），
+// 而且打出来的是 Node ABI 不是 Electron ABI（本工程 Electron 33 = Node 20 ABI 130）。
+// 实测在本机装它卡在 ffi-napi 编译 9 分钟不出结果。于是改用 sherpa-onnx 官方
+// **预编译 Windows 可执行文件** —— 它是独立进程，完全不碰 ABI，和本工程
+// 「不引原生模块、优先预编译可执行文件」的做法一致。
+//
+// 为什么是「常驻 WS 服务」而不是每次跑一遍 CLI：
+//   一次性 CLI 每次都要加载模型，实测 `recognizer created in 6.081 s`——交互不可接受。
+//   官方带一个 sherpa-onnx-offline-websocket-server.exe，模型只加载一次，
+//   之后每次识别只要 ~440ms（含连接 + 传输 + 解码）。所以这里管一个长驻子进程：
+//   惰性拉起（第一次真要用才起）、空闲 5 分钟自动回收（它常驻要吃约 150MB 内存）。
+//
+// 全是「可选增强」：没下载好 / 起不来 / 崩了，status().ready 都是 false，
+// 上层 recognizeAudio() 自动回退本机 SAPI —— 应用绝不会因为少一个可选项而哑掉。
+
+import { spawn } from 'node:child_process'
+import { createConnection, createServer } from 'node:net'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import WebSocket from 'ws'
+import { app } from 'electron'
+import {
+  extractPcm,
+  pcmToFloat32,
+  toAsrWav,
+  buildSherpaFrame,
+  parseSherpaReply,
+  ASR_SAMPLE_RATE,
+  SHERPA_DONE
+} from '../../core/voice/index.js'
+
+/* ---------------- 常量 ---------------- */
+
+/** CLI 版本（与官方 release tag 对应） */
+export const SHERPA_CLI_VERSION = 'v1.13.8'
+/** CLI 压缩包名（shared 构建 = 动态链接 DLL，体积小；no-tts = 不带语音合成） */
+export const SHERPA_CLI_FILE = `sherpa-onnx-${SHERPA_CLI_VERSION}-win-x64-shared-MD-MinSizeRel-no-tts.tar.bz2`
+/** 压缩包标称大小，用来判断下完没有 */
+export const SHERPA_CLI_BYTES = 16168344
+/**
+ * CLI 下载地址，按顺序试。
+ * ghproxy 在国内快得多（实测 GitHub 直连约 68KB/s，代理可到 MB/s 级）。
+ */
+export const SHERPA_CLI_URLS = [
+  `https://ghproxy.net/https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_CLI_VERSION}/${SHERPA_CLI_FILE}`,
+  `https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_CLI_VERSION}/${SHERPA_CLI_FILE}`
+]
+/** 我们要用的那个可执行文件 */
+export const SHERPA_SERVER_EXE = 'sherpa-onnx-offline-websocket-server.exe'
+
+/** 中文 Paraformer small 模型（int8 量化，78MB，识别快且准） */
+export const SHERPA_MODEL_DIR_NAME = 'sherpa-onnx-paraformer-zh-small-2024-03-09'
+export const SHERPA_MODEL_BASES = [
+  `https://hf-mirror.com/csukuangfj/${SHERPA_MODEL_DIR_NAME}/resolve/main`,
+  `https://huggingface.co/csukuangfj/${SHERPA_MODEL_DIR_NAME}/resolve/main`
+]
+/** 模型文件 + 标称大小（校验下载完整性用） */
+export const SHERPA_MODEL_FILES = [
+  { name: 'model.int8.onnx', bytes: 81828675 },
+  { name: 'tokens.txt', bytes: 75352 }
+]
+export const SHERPA_MODEL_TOTAL_BYTES = SHERPA_MODEL_FILES.reduce((a, f) => a + f.bytes, 0)
+
+/** 服务空闲多久自动回收（常驻约 150MB，用户不玩了就该还回去） */
+const IDLE_STOP_MS = 5 * 60 * 1000
+/** 服务启动等待上限（模型加载实测 6s，给足余量） */
+const START_TIMEOUT_MS = 60000
+/** 单次识别超时 */
+const RECOGNIZE_TIMEOUT_MS = 25000
+/** 服务端能识别的音频上限（秒），超过就拒绝而不是把内存吃爆 */
+const MAX_AUDIO_SECONDS = 120
+
+/* ---------------- 路径 ---------------- */
+
+export function sherpaRootDir() {
+  return join(app.getPath('userData'), 'voice', 'sherpa')
+}
+export function sherpaModelDir() {
+  return join(sherpaRootDir(), 'model')
+}
+
+/** 递归找那个可执行文件（解压出来带版本号目录名，不写死层级） */
+export function findServerExe(dir = sherpaRootDir(), depth = 0) {
+  if (depth > 4) return ''
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return ''
+  }
+  for (const e of entries) {
+    const full = join(dir, e.name)
+    if (e.isFile() && e.name.toLowerCase() === SHERPA_SERVER_EXE) return full
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue
+    if (e.name === 'model') continue // 模型目录没什么可找的，省一趟遍历
+    const hit = findServerExe(join(dir, e.name), depth + 1)
+    if (hit) return hit
+  }
+  return ''
+}
+
+function fileSize(path) {
+  try {
+    return statSync(path).size
+  } catch {
+    return 0
+  }
+}
+
+/** 模型是不是齐了（tokens.txt 很小，只做存在性判断；onnx 要求接近标称大小） */
+function modelFilesOk() {
+  const dir = sherpaModelDir()
+  for (const f of SHERPA_MODEL_FILES) {
+    const size = fileSize(join(dir, f.name))
+    const min = f.bytes > 1e6 ? f.bytes * 0.9 : 1000
+    if (size < min) return false
+  }
+  return true
+}
+
+/**
+ * 离线识别现状。
+ * @returns {{cliPresent:boolean, modelPresent:boolean, ready:boolean, exe:string, binDir:string, modelDir:string, rootDir:string, error:string}}
+ */
+export function sherpaStatus() {
+  const exe = findServerExe()
+  const cliPresent = !!exe
+  const modelPresent = modelFilesOk()
+  return {
+    cliPresent,
+    modelPresent,
+    ready: cliPresent && modelPresent,
+    exe,
+    binDir: exe ? dirname(exe) : '',
+    modelDir: sherpaModelDir(),
+    rootDir: sherpaRootDir(),
+    error: !cliPresent
+      ? '识别程序未安装'
+      : !modelPresent
+        ? '离线模型未下载完整'
+        : ''
+  }
+}
+
+/** 当前是否已经拉起服务（设置页/诊断用） */
+export function sherpaServerState() {
+  return { running: !!(serverProc && serverProc.exitCode === null && serverReady), port: serverPort }
+}
+
+/* ---------------- 下载 ---------------- */
+
+function hostOf(url) {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
+/** 轮询目标文件大小报进度（下载器无关，curl / fetch 都适用） */
+function watchProgress(destPath, onProgress, expectBytes) {
+  if (!onProgress) return () => {}
+  const total = expectBytes || 0
+  let stopped = false
+  const timer = setInterval(() => {
+    if (stopped) return
+    const received = fileSize(destPath)
+    if (received > 0) onProgress({ received, total })
+  }, 500)
+  timer.unref?.()
+  return () => {
+    stopped = true
+    clearInterval(timer)
+  }
+}
+
+const isWindows = process.platform === 'win32'
+
+/**
+ * 单文件下载。多路兜底：
+ *   ① Windows 上先试 curl.exe —— 它认系统 http_proxy（很多机器只能靠代理出网），
+ *      自带重试与断点续传，最省心；fetch（undici）不读代理环境变量，直连常常卡死。
+ *   ② 再试 fetch —— 万一没有 curl（老 Windows / 非 Windows）。
+ *   每次尝试前清掉半截文件，避免把上一次的残骸当成续传起点。
+ * @returns {Promise<{ok:boolean, bytes?:number, error?:string}>}
+ */
+async function downloadSmart(url, destPath, opts = {}) {
+  const order = isWindows
+    ? [downloadWithCurl, downloadWithFetch]
+    : [downloadWithFetch, downloadWithCurl]
+  let lastError = ''
+  for (const fn of order) {
+    try {
+      rmSync(destPath, { force: true })
+    } catch {
+      /* ignore */
+    }
+    const stop = watchProgress(destPath, opts.onProgress, opts.expectBytes)
+    let r
+    try {
+      r = await fn(url, destPath, opts)
+    } finally {
+      stop()
+    }
+    if (r.ok) {
+      // 收尾报一次最终进度，免得 UI 停在 99%
+      opts.onProgress?.({ received: r.bytes, total: opts.expectBytes || r.bytes })
+      return r
+    }
+    lastError = r.error
+    opts.log && opts.log(`[voice] ${fn.downloaderName} 下载失败（${hostOf(url)}）：${r.error}`)
+  }
+  return { ok: false, error: lastError || '下载失败' }
+}
+
+async function downloadWithFetch(url, destPath, opts = {}) {
+  const { onProgress, timeoutMs = 15 * 60 * 1000, stallMs = 45000 } = opts
+  void onProgress
+  const ctrl = new AbortController()
+  let stallTimer = null
+  const armStall = () => {
+    if (stallTimer) clearTimeout(stallTimer)
+    // 直连被墙时 fetch 会「连上但不来数据」，光有总超时会白等十几分钟
+    stallTimer = setTimeout(() => ctrl.abort(new Error('下载停滞')), stallMs)
+    stallTimer.unref?.()
+  }
+  const timer = setTimeout(() => ctrl.abort(new Error('下载超时')), timeoutMs)
+  timer.unref?.()
+  let received = 0
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, redirect: 'follow' })
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+    const total = Number(res.headers.get('content-length')) || opts.expectBytes || 0
+    const parts = []
+    armStall()
+    if (res.body && typeof res.body[Symbol.asyncIterator] === 'function') {
+      for await (const chunk of res.body) {
+        parts.push(Buffer.from(chunk))
+        received += chunk.length
+        armStall()
+        onProgress?.({ received, total })
+      }
+    } else {
+      const buf = Buffer.from(await res.arrayBuffer())
+      parts.push(buf)
+      received = buf.length
+      onProgress?.({ received, total })
+    }
+    const buf = Buffer.concat(parts)
+    if (!buf.length) return { ok: false, error: '下载结果为空' }
+    writeFileSync(destPath, buf)
+    return { ok: true, bytes: buf.length }
+  } catch (err) {
+    const reason = ctrl.signal.reason
+    const msg = reason && reason.message ? reason.message : err && err.message ? err.message : String(err)
+    return { ok: false, error: msg }
+  } finally {
+    clearTimeout(timer)
+    if (stallTimer) clearTimeout(stallTimer)
+  }
+}
+downloadWithFetch.downloaderName = 'fetch'
+
+function downloadWithCurl(url, destPath, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 15 * 60 * 1000
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn(
+        'curl.exe',
+        [
+          '-L', // 跟随重定向
+          '--fail', // 4xx/5xx 直接失败，别把错误页当文件
+          '--retry', '3',
+          '--retry-all-errors', // 默认不重试 18/56 这类传输中断，加上这行才真的重试
+          '--retry-delay', '2',
+          '--connect-timeout', '20',
+          '-s',
+          '-o', destPath,
+          url
+        ],
+        { windowsHide: true }
+      )
+    } catch (err) {
+      resolve({ ok: false, error: err.message })
+      return
+    }
+    let err = ''
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try {
+        child.kill()
+      } catch {
+        /* ignore */
+      }
+      resolve({ ok: false, error: '下载超时' })
+    }, timeoutMs)
+    timer.unref?.()
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (d) => (err += d))
+    child.on('error', (e) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ ok: false, error: 'curl 不可用：' + e.message })
+    })
+    child.on('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (code !== 0) {
+        resolve({ ok: false, error: err.trim().slice(0, 200) || 'curl 退出码 ' + code })
+        return
+      }
+      const bytes = fileSize(destPath)
+      resolve(bytes > 0 ? { ok: true, bytes } : { ok: false, error: '下载结果为空' })
+    })
+  })
+}
+downloadWithCurl.downloaderName = 'curl'
+
+/**
+ * 用 Windows 自带的 bsdtar 解 .tar.bz2（Node 的 zlib 不支持 bz2，不引解压依赖）。
+ *
+ * ⚠ 必须优先用 System32 的那份：PATH 上（尤其 Git Bash 环境）常常先撞到 MSYS 的 GNU tar，
+ * 而 GNU tar 会把 `C:\...` 当成「远程主机:路径」，直接报 `Cannot connect to C: resolve failed`。
+ */
+function extractTarBz2(archive, destDir, log) {
+  const systemTar = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+  const candidates = existsSync(systemTar) ? [systemTar, 'tar.exe'] : ['tar.exe']
+  const errors = []
+  log && log('[voice] 正在解压识别程序…')
+
+  const tryOne = (i) =>
+    new Promise((resolve) => {
+      let child
+      try {
+        child = spawn(candidates[i], ['-xjf', archive, '-C', destDir], { windowsHide: true })
+      } catch (err) {
+        errors.push(`${candidates[i]}: ${err.message}`)
+        resolve({ ok: false, retryable: true })
+        return
+      }
+      let err = ''
+      let settled = false
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', (d) => (err += d))
+      child.on('error', (e) => {
+        if (settled) return
+        settled = true
+        errors.push(`${candidates[i]}: ${e.message}`)
+        resolve({ ok: false, retryable: true })
+      })
+      child.on('close', (code) => {
+        if (settled) return
+        settled = true
+        if (code === 0) {
+          resolve({ ok: true })
+          return
+        }
+        const msg = err.trim().slice(0, 200) || 'tar 退出码 ' + code
+        errors.push(`${candidates[i]}: ${msg}`)
+        resolve({ ok: false, retryable: i + 1 < candidates.length })
+      })
+    }).then((r) => {
+      if (r.ok) return r
+      if (!r.retryable) return r
+      if (i + 1 < candidates.length) return tryOne(i + 1)
+      return { ok: false, error: errors.join('；') || '解压失败' }
+    })
+
+  return tryOne(0)
+}
+
+/**
+ * 下载并解压 sherpa-onnx 识别程序（约 15MB）。
+ * @param {{onProgress?:Function, log?:Function}} [opts]
+ */
+export async function downloadSherpaCli(opts = {}) {
+  const log = opts.log
+  const root = sherpaRootDir()
+  mkdirSync(root, { recursive: true })
+  const archive = join(root, SHERPA_CLI_FILE)
+
+  let lastError = ''
+  let got = false
+  for (const url of SHERPA_CLI_URLS) {
+    const r = await downloadSmart(url, archive, { ...opts, expectBytes: SHERPA_CLI_BYTES })
+    if (r.ok) {
+      got = true
+      log && log(`[voice] 识别程序已下载 ${(r.bytes / 1048576).toFixed(1)}MB（${hostOf(url)}）`)
+      break
+    }
+    lastError = r.error
+    log && log(`[voice] 识别程序下载失败（${hostOf(url)}）：${r.error}`)
+  }
+  if (!got) return { ok: false, error: lastError || '下载失败' }
+
+  const ex = await extractTarBz2(archive, root, log)
+  try {
+    rmSync(archive, { force: true })
+  } catch {
+    /* %TEMP% 外偶尔被占用，留着无妨 */
+  }
+  if (!ex.ok) return { ok: false, error: '解压失败：' + ex.error }
+
+  const st = sherpaStatus()
+  if (!st.cliPresent) return { ok: false, error: '解压完成但没找到识别程序，请重试' }
+  return { ok: true, dir: root, exe: st.exe }
+}
+
+/**
+ * 下载中文离线模型（约 78MB）。
+ * @param {{onProgress?:Function, log?:Function}} [opts]
+ */
+export async function downloadSherpaModel(opts = {}) {
+  const log = opts.log
+  const dir = sherpaModelDir()
+  mkdirSync(dir, { recursive: true })
+
+  for (const f of SHERPA_MODEL_FILES) {
+    const dest = join(dir, f.name)
+    const min = f.bytes > 1e6 ? f.bytes * 0.9 : 1000
+    if (fileSize(dest) >= min) {
+      log && log(`[voice] ${f.name} 已存在，跳过`)
+      continue
+    }
+    let lastError = ''
+    let got = false
+    for (const base of SHERPA_MODEL_BASES) {
+      const r = await downloadSmart(`${base}/${f.name}`, dest, {
+        ...opts,
+        expectBytes: f.bytes,
+        onProgress: (p) => opts.onProgress?.({ file: f.name, ...p })
+      })
+      if (r.ok) {
+        got = true
+        break
+      }
+      lastError = r.error
+    }
+    if (!got) {
+      try {
+        rmSync(dest, { force: true }) // 半截文件别留着，否则下次会误判「已存在」
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, error: `${f.name} 下载失败：${lastError}` }
+    }
+  }
+
+  const st = sherpaStatus()
+  if (!st.modelPresent) return { ok: false, error: '模型文件不完整，请删掉重下' }
+  return { ok: true, dir }
+}
+
+/** 一次把程序 + 模型都备齐 */
+export async function downloadSherpa(opts = {}) {
+  const cli = await downloadSherpaCli(opts)
+  if (!cli.ok) return cli
+  const model = await downloadSherpaModel(opts)
+  if (!model.ok) return model
+  return { ok: true, dir: sherpaRootDir() }
+}
+
+/* ---------------- 常驻服务 ---------------- */
+
+/** @type {import('node:child_process').ChildProcess|null} */
+let serverProc = null
+let serverPort = 0
+let serverReady = false
+let lastUsedAt = 0
+let starting = null
+let idleTimer = null
+let tailLog = []
+
+function pushTail(s) {
+  tailLog.push(s)
+  if (tailLog.length > 40) tailLog.shift()
+}
+
+/** 让系统分配一个空闲端口 */
+function findFreePort() {
+  return new Promise((resolve) => {
+    let srv
+    try {
+      srv = createServer()
+    } catch {
+      resolve(0)
+      return
+    }
+    srv.once('error', () => resolve(0))
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address() && srv.address().port
+      srv.close(() => resolve(p || 0))
+    })
+  })
+}
+
+/** 轮询直到端口可连（或超时） */
+function waitForPort(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  return new Promise((resolve) => {
+    const attempt = () => {
+      const sock = createConnection({ host: '127.0.0.1', port })
+      let done = false
+      const finish = (ok) => {
+        if (done) return
+        done = true
+        try {
+          sock.destroy()
+        } catch {
+          /* ignore */
+        }
+        if (ok) resolve(true)
+        else if (Date.now() > deadline) resolve(false)
+        else setTimeout(attempt, 150)
+      }
+      sock.once('connect', () => finish(true))
+      sock.once('error', () => finish(false))
+      sock.setTimeout(600, () => finish(false))
+    }
+    attempt()
+  })
+}
+
+function ensureIdleTimer(log) {
+  if (idleTimer) return
+  idleTimer = setInterval(() => {
+    if (!serverProc || !serverReady) return
+    if (Date.now() - lastUsedAt < IDLE_STOP_MS) return
+    log && log('[voice] 离线识别服务空闲超时，回收内存')
+    stopSherpaServer()
+  }, 60 * 1000)
+  idleTimer.unref?.() // 别因为这个定时器把应用吊住
+}
+
+async function startServer(log, timeoutMs) {
+  const t0 = Date.now()
+  const dbg = process.env.NAGI_SHERPA_DEBUG ? (s) => log && log(`[voice][sherpa] +${Date.now() - t0}ms ${s}`) : () => {}
+  const st = sherpaStatus()
+  if (!st.ready) return { ok: false, error: st.error || '离线识别不可用' }
+
+  const port = await findFreePort()
+  if (!port) return { ok: false, error: '找不到可用端口' }
+  dbg('已选端口 ' + port)
+
+  const args = [
+    `--port=${port}`,
+    // 交互场景一次就一句话，批大小为 1 最直接（不会为了攒批而多等）
+    '--max-batch-size=1',
+    '--num-work-threads=2',
+    `--paraformer=${join(st.modelDir, 'model.int8.onnx')}`,
+    `--tokens=${join(st.modelDir, 'tokens.txt')}`
+  ]
+  log && log('[voice] 拉起离线识别服务：' + port)
+
+  tailLog = []
+  let child
+  try {
+    child = spawn(st.exe, args, {
+      cwd: st.binDir,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    return { ok: false, error: '启动识别服务失败：' + (err && err.message ? err.message : err) }
+  }
+
+  serverProc = child
+  serverPort = port
+  serverReady = false
+
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  child.stdout.on('data', (d) => String(d).split('\n').forEach((l) => { pushTail(l); dbg('[out] ' + l) }))
+  child.stderr.on('data', (d) => String(d).split('\n').forEach((l) => { pushTail(l); dbg('[err] ' + l) }))
+  child.on('error', (err) => {
+    pushTail('spawn error: ' + err.message)
+    serverReady = false
+    serverProc = null
+  })
+  child.on('exit', (code) => {
+    dbg('进程退出 code=' + code)
+    serverReady = false
+    serverProc = null
+    serverPort = 0
+  })
+
+  const startedAt = Date.now()
+  const ok = await waitForPort(port, timeoutMs)
+  if (!ok) {
+    try {
+      child.kill()
+    } catch {
+      /* ignore */
+    }
+    serverProc = null
+    serverPort = 0
+    const tail = tailLog.filter(Boolean).slice(-5).join(' / ')
+    return { ok: false, error: '识别服务启动超时' + (tail ? '：' + tail : '') }
+  }
+
+  serverReady = true
+  lastUsedAt = Date.now()
+  ensureIdleTimer(log)
+  log && log(`[voice] 离线识别服务就绪（端口 ${port}，用时 ${Date.now() - startedAt}ms）`)
+  return { ok: true, port }
+}
+
+/**
+ * 惰性拉起常驻服务，已在跑就直接复用。
+ * @param {{log?:Function, timeoutMs?:number}} [opts]
+ * @returns {Promise<{ok:boolean, port?:number, error?:string}>}
+ */
+export async function ensureSherpaServer(opts = {}) {
+  const log = opts.log
+  const timeoutMs = opts.timeoutMs ?? START_TIMEOUT_MS
+  if (serverProc && serverReady && serverProc.exitCode === null) {
+    return { ok: true, port: serverPort }
+  }
+  if (starting) return starting
+  starting = startServer(log, timeoutMs).finally(() => {
+    starting = null
+  })
+  return starting
+}
+
+/** 停掉常驻服务（应用退出、切换引擎、空闲回收都会用到） */
+export function stopSherpaServer() {
+  const child = serverProc
+  serverProc = null
+  serverReady = false
+  serverPort = 0
+  if (!child) return false
+  try {
+    child.kill()
+  } catch {
+    /* ignore */
+  }
+  return true
+}
+
+/* ---------------- 识别 ---------------- */
+
+/**
+ * 走常驻服务识别一段音频（8 字节头 + float32 样本）。
+ * @returns {Promise<{ok:boolean, text?:string, error?:string}>}
+ */
+function transcribeOverWs(port, frame, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? RECOGNIZE_TIMEOUT_MS
+  const log = opts.log
+  return new Promise((resolve) => {
+    let ws
+    try {
+      ws = new WebSocket(`ws://127.0.0.1:${port}`)
+    } catch (err) {
+      resolve({ ok: false, error: err && err.message ? err.message : String(err) })
+      return
+    }
+    let settled = false
+    const finish = (r) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        ws.close()
+      } catch {
+        /* ignore */
+      }
+      resolve(r)
+    }
+    const timer = setTimeout(() => finish({ ok: false, error: '识别超时' }), timeoutMs)
+    timer.unref?.()
+
+    ws.on('open', () => {
+      // 分块发，避免一条超大消息把服务端打挂
+      const CHUNK = 256 * 1024
+      for (let i = 0; i < frame.length; i += CHUNK) ws.send(frame.subarray(i, i + CHUNK))
+    })
+    ws.on('message', (d) => {
+      const { text } = parseSherpaReply(d.toString())
+      log && log(`[voice] 离线识别结果：${text || '(空)'}`)
+      try {
+        ws.send(SHERPA_DONE)
+      } catch {
+        /* ignore */
+      }
+      finish({ ok: true, text })
+    })
+    ws.on('error', (err) => finish({ ok: false, error: (err && (err.code || err.message)) || 'ws 错误' }))
+    ws.on('close', (code) => finish({ ok: false, error: '识别服务断开了连接（' + code + '）' }))
+  })
+}
+
+/**
+ * 用 sherpa-onnx 离线识别一段 WAV。
+ * @param {Buffer|Uint8Array} wavBytes 任意采样率 / 声道数的 16-bit PCM WAV（内部统一成 16k 单声道）
+ * @param {{log?:Function}} [opts]
+ * @returns {Promise<{ok:boolean, text?:string, engine?:string, error?:string}>}
+ */
+export async function recognizeWithSherpa(wavBytes, opts = {}) {
+  const log = opts.log
+  const st = sherpaStatus()
+  if (!st.ready) return { ok: false, error: st.error || '离线识别不可用' }
+
+  const asr = toAsrWav(wavBytes, ASR_SAMPLE_RATE)
+  if (!asr) return { ok: false, error: '音频数据无法解析（需要 16-bit PCM WAV）' }
+  const parsed = extractPcm(asr.bytes)
+  if (!parsed || !parsed.pcm.length) return { ok: false, error: '音频数据为空' }
+
+  const seconds = parsed.pcm.length / 2 / (parsed.sampleRate || ASR_SAMPLE_RATE)
+  if (seconds > MAX_AUDIO_SECONDS) {
+    return { ok: false, error: `录音过长（${seconds.toFixed(0)}s），请分段说话` }
+  }
+
+  const samples = pcmToFloat32(parsed.pcm)
+  if (!samples.length) return { ok: false, error: '音频数据为空' }
+
+  const srv = await ensureSherpaServer({ log })
+  if (!srv.ok) return { ok: false, error: srv.error }
+  lastUsedAt = Date.now()
+
+  const r = await transcribeOverWs(srv.port, buildSherpaFrame(samples, parsed.sampleRate || ASR_SAMPLE_RATE), { log })
+  if (!r.ok) {
+    // 连接层出错通常是服务挂了，标记不可用逼上层重来 / 回退
+    log && log('[voice] 离线识别失败：' + r.error)
+    if (/断开|ECONN|超时/.test(String(r.error))) stopSherpaServer()
+    return { ok: false, error: r.error }
+  }
+  return { ok: true, text: r.text, engine: 'sherpa' }
+}
+
+/* ---------------- 生命周期 ---------------- */
+
+/**
+ * 预热：在后台悄悄把服务拉起来，这样用户第一次「按住说话」时不用等模型加载。
+ *
+ * 为什么需要：实测服务启动（onnxruntime 加载 Paraformer small 模型）要 4.3–4.8s，
+ * 而服务一旦就绪，单次识别只要 0.3s 左右。把这 4.5s 从「用户按下的那一刻」挪到
+ * 「应用刚启动、用户还没开口」的时候，感知上就是从 4.8s 变成 0.3s。
+ * 代价是约 150MB 内存常驻（空闲 5 分钟会自动回收）。
+ *
+ * @param {{log?:Function, delayMs?:number}} [opts]
+ * @returns {Promise<boolean>} 是否已就绪
+ */
+export async function prewarmSherpa(opts = {}) {
+  if (process.env.NAGI_NO_PREWARM === '1') return false
+  if (!sherpaStatus().ready) return false
+  const delayMs = opts.delayMs ?? 8000
+  if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs))
+  const r = await ensureSherpaServer({ log: opts.log })
+  if (!r.ok) opts.log && opts.log('[voice] 离线识别预热失败（不影响使用）：' + r.error)
+  return r.ok
+}
+
+let quitHookInstalled = false
+/** 应用退出时顺手把子进程收掉（放在本模块里，免得动 main.js） */
+export function installSherpaQuitHook() {
+  if (quitHookInstalled) return
+  quitHookInstalled = true
+  try {
+    app.on('will-quit', () => stopSherpaServer())
+  } catch {
+    /* 非 Electron 环境（单测）忽略 */
+  }
+}
+installSherpaQuitHook()

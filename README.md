@@ -826,4 +826,94 @@ S4 补的正是这一环：她记得自己刚才的心情，也记得和你多�
   非法时间被拒 / 删除生效），工具卡片与「新对话」**11/11**（卡片生成 / 展开参数 / 结果摘要 /
   状态标记 / 新对话清空消息流但不清记忆 / 日程列表与空态切换）
 
+## 十六、语音全链路（M5，2026-10-15）
+
+她能**开口说话**，也能**听得见你说话**。TTS / ASR 引擎全部抽象可替换（NFR 硬要求），默认走免密钥路线，开箱即用。
+
+### 引擎与降级
+
+| 方向 | 引擎 | 是否离线 | 说明 |
+|---|---|---|---|
+| TTS | **edge-tts**（默认） | 否 | 微软神经音色（晓晓等 8 个），免密钥；**非官方接口，会抽风** |
+| TTS | Windows SAPI | 是 | 系统自带，最稳，音质偏「机器朗读」，作为 edge 失效时的兜底 |
+| TTS | 云端 / GPT-SoVITS | – | 接口已预留（云端需 Key；GPT-SoVITS 用凪的语音样本训练专属音色） |
+| ASR | **sherpa-onnx**（默认偏好） | 是 | Paraformer 中文小模型，长句/数字/标点明显更好；首次需下载约 98MB |
+| ASR | Windows SAPI | 是 | 零依赖开机可用，精度一般，sherpa 未装时自动兜底 |
+| ASR | 云端 | – | 需 Key |
+
+**降级链**：edge → sapi（TTS）；sherpa → sapi（ASR）。连续失败 2 次熔断 90 秒，恢复后自动回来——她不会因为一个接口抽风就变成哑巴。
+
+### 首响优化（按句流水）
+
+回复的 token 流按标点**分句**，首句成形即送合成，渲染层「播第 1 句的同时预取第 2 句」。
+首响 = **首句合成时间**，而不是整段合成时间。打断 = 丢掉会话 + 停播放器，一步到位。
+
+### 口型：跟着她实际说的话走
+
+拿到音频时长后，用 `core/voice/lip.js` 按音节数生成**确定性包络**（同句同嘴型），经
+`live2d.setLipTrack()` 挂在 `afterMotionUpdate` 上驱动 `ParamMouthOpenY`。
+**时钟用 `audio.currentTime` 而不是 `performance.now()`** —— `audio.duration` 在部分容器
+会短暂给出错值，`currentTime` 才是播放进度的唯一真相。
+
+### 按住说话
+
+桌宠工具栏与工作台输入框各有一个 🎙 按钮，**按住**开始、**松手**识别并自动送进对话
+（按太短当误触丢弃；峰值过低提示「没听到」）。录音走 MediaRecorder → 解码 →
+静音裁剪 → 重采样 16k 单声道 → `encodeWav`，识别走 `voice:listen`。
+
+### 关键协议（踩过的坑，已锁进单测）
+
+sherpa-onnx 的 offline-websocket-server 线协议：二进制流**首 8 字节** = int32 LE 采样率 +
+int32 LE **样本总字节数**（不是样本个数），其后是 **float32** 归一化样本；服务端回一条
+JSON 文本，客户端再发 `"Done"`。直接发 WAV 原始字节会被立刻以 1006 断开。
+见 `core/voice/sherpa-frame.js`。
+
+### 交互与预热
+
+- **回复完自动开口 / 主动搭话也开口**（设置 `voice.speakOnReply` / `speakOnProactive`，可关）
+- 离线识别服务**常驻**（模型只加载一次），空闲 5 分钟自动回收内存；应用启动后 8 秒**预热**，
+  把 4.3–4.8s 的模型加载从「按下的那一刻」挪到后台
+- 预热日志：`[voice] 离线识别已预热`；`NAGI_NO_PREWARM=1` 可禁用
+- 渲染层调试钩子：`__nagiVoice.speak/stopSpeaking/startRecording/stopRecording/isSpeaking/isRecording/lipActive/state`
+
+### 涉及文件
+
+| 层 | 文件 | 作用 |
+|---|---|---|
+| core | `voice/segmenter.js` | 分句缓冲（min/maxChars、软硬标点）+ 朗读文本清洗 |
+| core | `voice/lip.js` | 口型时间轴（音节数 → 确定性包络） |
+| core | `voice/wav.js` | WAV 编解码 / 重采样 / 静音裁剪 / PCM↔Float32 |
+| core | `voice/engines.js` | 引擎注册表 + 降级链 + 凪的声线预设（情绪→语速微调） |
+| core | `voice/sherpa-frame.js` | sherpa WS 线协议（建帧/解头/解析回复） |
+| main | `voice/edge.js` / `sapi.js` / `sherpa.js` | 三个引擎适配器（edge 含 Sec-MS-GEC 签名） |
+| main | `voice/index.js` | 编排：按句会话、熔断降级、参数合成、能力快照 |
+| main | `voice/ps.js` + `resources/voice/*.ps1` | PowerShell 桥（SAPI 合成/识别，纯 ASCII 脚本） |
+| main | `ipc/voice.js` + `shared/voice-protocol.js` | IPC 面 + 通道名/默认设置 |
+| renderer | `js/voice.js` | 播放、口型、按住说话、自动开口、打断 |
+| preload | `index.js` | 暴露 `nagi.voice.*` |
+
+### 验证
+
+- 单测 **41 项**（`test/voice.test.js`）：分句 / 口型 / WAV 编解码 / Sec-MS-GEC 回归 /
+  SSML 转义与钳制 / 引擎表与降级链 / sherpa 线协议 / **两个 PS 脚本必须纯 ASCII**
+- 全量 **236/236** 通过
+- **真实 electron 进程**（隔离 `--user-data-dir` + CDP）`node scripts/verify-voice.mjs`，**24/24**：
+  能力快照、按句取音频（MP3 容器头合法）、越界返回 done、试听、打断后旧会话失效、
+  真音频识别出「你好我是今天天气不错」、渲染层播放中口型接管（`ParamMouthOpenY` 峰值 0.87）、
+  **按住说话 → 解码 → 16k WAV → 识别出「你好我是今天天气」**（Chromium 假音频设备灌入真语音）
+- 离线模型全链路（下载→解压→拉起服务→识别→复用→48k 立体声→停服务）**15/15**
+
+### 下载离线模型（可选）
+
+sherpa-onnx CLI（15MB，ghproxy/GitHub 双源）+ Paraformer 中文模型（78MB，hf-mirror/HF 双源），
+自动落盘到 `userData/voice/sherpa/`。下载器优先 `curl.exe`（认系统 http_proxy），失败退 `fetch`；
+进度实时上报。解压用 Windows 自带 bsdtar（**必须**优先用 System32 那份——Git Bash 的 GNU tar
+会把 `C:\` 当远程主机，报 `Cannot connect to C: resolve failed`）。
+
+### 待定
+
+设置页「语音」区块（引擎/音色/语速/音量 + 离线模型下载进度）尚未做；TTS 默认引擎待听完
+`docs/voice-samples/` 三份样本后由你定夺。
+
+
 

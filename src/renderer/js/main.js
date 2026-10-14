@@ -10,6 +10,7 @@ import * as ui from './ui.js'
 import { initChat, sendText } from './chat.js'
 import * as l2d from './live2d.js'
 import { initDiary } from './diary.js'
+import { initVoice } from './voice.js'
 
 const params = new URLSearchParams(location.search)
 const mode = params.get('mode') === MODE.WORKBENCH ? MODE.WORKBENCH : params.get('mode') === 'diary' ? 'diary' : MODE.PET
@@ -156,6 +157,9 @@ async function boot() {
     ui.setBrain(brainLabel())
     wireWorkbenchPanel()
   }
+
+  // 语音链路（M5）：她回复完自动开口 + 「按住说话」送进对话 + 说话时的口型
+  initVoice({ mode, getSettings: () => settings })
 
   // 桌宠：加载模型 + 尺寸控制 + 待机加成
   if (mode === MODE.PET) {
