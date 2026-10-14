@@ -125,6 +125,9 @@ export const DEFAULT_SETTINGS = {
     modelPath: 'Lisette/Lisette.model3.json',
     scale: 1,
     mirror: false,
+    // 取景：'bust' = 只显示胸像（上半身），'full' = 全身。
+    // 默认胸像 —— 形象永不越界、也不会盖到 UI 上（详见 core/frame.js）
+    frame: 'bust',
     eyeBlink: true,
     focusFollow: true,
     petWidth: 400, // 桌宠窗口尺寸（可用右下角手柄/Ctrl+滚轮自由调）

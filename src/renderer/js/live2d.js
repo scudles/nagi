@@ -8,6 +8,7 @@
 //
 // 依赖：vendor/live2dcubismcore.min.js（在 index.html 中先加载）+ pixi.js v7 + pixi-live2d-display/cubism4
 import { pickRedParams, shouldRemoveRedGlow } from '../../core/redform.js'
+import { DEFAULT_FRAME, fitBand, frameBand, framePreset } from '../../core/frame.js'
 
 let app = null
 let model = null
@@ -18,6 +19,17 @@ let disposed = false
 let mouthHook = null
 let redGuard = null
 let redIds = []
+let frameMode = DEFAULT_FRAME
+/**
+ * 模型的稳定基准尺寸（模型单位）。
+ *
+ * 必须在 load() 时缓存一次 —— 否则 layout() 每次去读 internalModel.originalHeight
+ * 都可能拿到被污染的值（实测有窗口会返回画布原点 Y = 高度的一半 2232.5），
+ * 于是算出 2 倍缩放、形象变成大特写。缓存后与调用时机无关。
+ */
+let baseW = 0
+let baseH = 0
+let resizer = null
 
 /* ------------------------------------------------------------------ *
  * 红色形态（红色辉光）裁剪
@@ -34,6 +46,107 @@ let redIds = []
 /** 当前模型被裁剪掉的红色参数（调试/测试用） */
 export function redParamIds() {
   return redIds.slice()
+}
+
+/**
+ * 确定性抓帧：在同一帧内"先渲染、再读回"，得到画布真实像素。
+ * 用途是验证取景/对齐——Playwright 对 WebGL 画布的截图常常是空白（缓冲被清空），
+ * 而 toDataURL 在 render 之后同步调用就一定是这一帧的画面。
+ * 返回 data:image/png;base64,… ；未就绪返回 null。
+ */
+export function snapshotDataURL() {
+  if (!app?.view) return null
+  try {
+    app.render?.()
+    return app.view.toDataURL('image/png')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 量出「这一帧里真正画出来的像素范围」（画布像素坐标）。
+ *
+ * 为什么不能只信数学矩形：该模型的美术画到了声明的 moc 画布之外（头发往上、往右都出界），
+ * 所以按声明画布算出来的取景带**不等于**实际画面范围 —— 实测窄窗口下头发会顶到画布边缘被切、
+ * 宽窗口下还会钻进右侧工具条的保留区。这里直接读回这一帧的像素、按 alpha 求包围盒，
+ * 让「有没有越界」这件事由真实数据回答。
+ *
+ * 返回 { x0, y0, x1, y1, w, h }；画面全空时返回 { empty:true, w, h }。
+ */
+export async function measureArtBox() {
+  const url = snapshotDataURL()
+  if (!url) return null
+  const img = new Image()
+  img.src = url
+  await img.decode()
+  const c = document.createElement('canvas')
+  c.width = img.naturalWidth
+  c.height = img.naturalHeight
+  const g = c.getContext('2d', { willReadFrequently: true })
+  g.drawImage(img, 0, 0)
+  const { data } = g.getImageData(0, 0, c.width, c.height)
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  for (let y = 0; y < c.height; y++) {
+    const row = y * c.width * 4
+    for (let x = 0; x < c.width; x++) {
+      if (data[row + x * 4 + 3] > 8) {
+        if (x < x0) x0 = x
+        if (x > x1) x1 = x
+        if (y < y0) y0 = y
+        if (y > y1) y1 = y
+      }
+    }
+  }
+  if (!Number.isFinite(x0)) return { empty: true, w: c.width, h: c.height }
+  return { x0, y0, x1, y1, w: c.width, h: c.height }
+}
+export function probeArtBounds() {
+  // 已废弃：Cubism Core 的 getDrawableVertexPositions 在该构建里返回的是归一化缓冲
+  // （实测并集恒为 [-1,-1]~[1,1]），量不出真实画面范围。改用 measureArtBox() 读像素。
+  return null
+}
+
+/** 取景/布局诊断：画布尺寸、模型原始尺寸、取景带、以及形象在画布里的实际落位 */
+export function frameInfo() {
+  if (!app || !model) return null
+  const { width, height } = app.screen
+  const band = frameBand(frameMode, baseW, baseH)
+  const fit = fitBand({ band, boxW: width, boxH: height, scale: userScale, pad: readPads() })
+  let bounds = null
+  try {
+    const b = model.getBounds()
+    bounds = { x: b.x, y: b.y, w: b.width, h: b.height }
+  } catch {
+    /* ignore */
+  }
+  return {
+    frame: frameMode,
+    preset: framePreset(frameMode),
+    band,
+    fit,
+    base: { w: baseW, h: baseH },
+    canvas: { w: width, h: height },
+    viewPx: { w: app.view?.width, h: app.view?.height },
+    resolution: app.renderer?.resolution,
+    modelSize: { w: model.width, h: model.height },
+    original: { w: model.internalModel?.originalWidth, h: model.internalModel?.originalHeight },
+    mocCanvas: (() => {
+      try {
+        const ci = model.internalModel?.coreModel?._model?.canvasinfo
+        return ci ? { w: ci.CanvasWidth, h: ci.CanvasHeight, ppu: ci.PixelsPerUnit } : null
+      } catch {
+        return null
+      }
+    })(),
+    scale: { x: model.scale.x, y: model.scale.y },
+    anchor: { x: model.anchor.x, y: model.anchor.y },
+    pos: { x: model.x, y: model.y },
+    bounds
+  }
 }
 
 /** 调试用：在"裁剪已生效、网格尚未计算"的瞬间采样红色参数，验证裁剪真的在生效 */
@@ -249,27 +362,101 @@ export async function load(canvas, url, opts = {}) {
 
   userScale = opts.scale || 1
   mirrorOn = !!opts.mirror
+  // 取景模式：模型目录的 nagi-emotion.json 可覆盖，其次调用方，最后默认（胸像）
+  frameMode = overrideMap?.frame || opts.frame || DEFAULT_FRAME
+  // 缓存稳定基准尺寸，之后 layout() 只认这两个数
+  const m0 = readBaseSize(m)
+  baseW = m0.w
+  baseH = m0.h
+
   layout(userScale, mirrorOn)
   // 缩放/尺寸变化时重新布局（跟随窗口大小）
   app.renderer.on('resize', () => layout(userScale, mirrorOn))
+  // 容器尺寸变化也要重排：pixi 的 resizeTo 只在 window resize 时触发，
+  // 而工作台面板的容器高度会随「动作列表展开/收起」变化 —— 不重排就会
+  // 出现画布比容器高、溢出去盖住下方控件的问题（2026-10-15 实测）。
+  observeContainer(canvas)
   return m
 }
 
-export function layout(scale = userScale, mirror = mirrorOn) {
+/** 读模型基准尺寸：优先 moc 画布信息（load 时读一次即稳定），回退 originalWidth/Height */
+function readBaseSize(m) {
+  try {
+    const ci = m?.internalModel?.coreModel?._model?.canvasinfo
+    if (ci && ci.CanvasWidth > 0 && ci.CanvasHeight > 0) {
+      return { w: ci.CanvasWidth, h: ci.CanvasHeight }
+    }
+  } catch {
+    /* ignore */
+  }
+  const w = Number(m?.internalModel?.originalWidth) || Number(m?.width) || 1
+  const h = Number(m?.internalModel?.originalHeight) || Number(m?.height) || 1
+  return { w: w > 0 ? w : 1, h: h > 0 ? h : 1 }
+}
+
+/** 监听画布容器的尺寸变化 → 同步 pixi 渲染尺寸并重排（尺寸永不失配） */
+function observeContainer(canvas) {
+  try {
+    resizer?.disconnect?.()
+  } catch {
+    /* ignore */
+  }
+  const target = canvas?.parentElement
+  if (!target || typeof ResizeObserver === 'undefined') return
+  resizer = new ResizeObserver(() => {
+    try {
+      app?.resize?.()
+    } catch {
+      /* ignore */
+    }
+    layout(userScale, mirrorOn)
+  })
+  resizer.observe(target)
+}
+
+/**
+ * 画布内的安全边距：从容器的 CSS 变量读，这样"要避开哪些画布内 UI"
+ * 交给样式表声明（桌宠要避开右侧工具条与底部状态行，工作台不用）。
+ */
+function readPads() {
+  const el = app?.view?.parentElement
+  if (!el || typeof getComputedStyle !== 'function') return {}
+  try {
+    const cs = getComputedStyle(el)
+    const get = (n) => Number.parseFloat(cs.getPropertyValue(n)) || 0
+    return { top: get('--safe-top'), right: get('--safe-right'), bottom: get('--safe-bottom'), left: get('--safe-left') }
+  } catch {
+    return {}
+  }
+}
+
+export function layout(scale = userScale, mirror = mirrorOn, frame = frameMode) {
   userScale = scale
   mirrorOn = !!mirror
+  if (frame) frameMode = frame
   if (!app || !model) return
+
   const { width, height } = app.screen
-  const bounds = model.internalModel?.originalWidth
-    ? { w: model.internalModel.originalWidth, h: model.internalModel.originalHeight }
-    : { w: model.width, h: model.height }
-  // 等比缩放到窗口高度
-  baseScale = height / bounds.h
-  model.scale.set(baseScale * userScale)
-  model.anchor.set(0.5, 1) // 底部中心为锚点
-  model.x = width / 2
-  model.y = height
+  const band = frameBand(frameMode, baseW, baseH)
+  const fit = fitBand({ band, boxW: width, boxH: height, scale: userScale, pad: readPads() })
+
+  baseScale = fit.scale
+  model.anchor.set(0.5, fit.anchorY)
+  model.x = fit.x
+  model.y = fit.y
+  model.scale.set(fit.scale)
   model.scale.x = Math.abs(model.scale.x) * (mirrorOn ? -1 : 1)
+}
+
+/** 当前取景模式（bust / full） */
+export function getFrame() {
+  return frameMode
+}
+
+/** 切换取景模式：runtime 调（设置页 / 调试用） */
+export function setFrame(frame) {
+  frameMode = frame || DEFAULT_FRAME
+  layout(userScale, mirrorOn)
 }
 
 /** 运行时改缩放（设置页滑杆 / 待机加成用），保持镜像状态 */
@@ -514,6 +701,12 @@ export function destroy() {
   disposed = true
   window.removeEventListener('pointermove', onPointerMove)
   try {
+    resizer?.disconnect?.()
+  } catch {
+    /* ignore */
+  }
+  resizer = null
+  try {
     if (model) {
       if (mouthHook) model.internalModel?.off?.('afterMotionUpdate', mouthHook)
       if (redGuard) model.internalModel?.off?.('beforeModelUpdate', redGuard)
@@ -529,5 +722,7 @@ export function destroy() {
   mouthHook = null
   redGuard = null
   redIds = []
+  baseW = 0
+  baseH = 0
   talking = false
 }

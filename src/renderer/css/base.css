@@ -58,6 +58,12 @@ body[data-mode="workbench"] {
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  /* 形象永远不许越出舞台：容器裁剪 + 取景侧的确定性装框，双保险 */
+  overflow: hidden;
+  /* 画布内的安全边距（live2d.js 会读这几个变量）：
+     右侧留给工具条（宽 30 + 右边距 8），底部留给状态行 */
+  --safe-right: 44px;
+  --safe-bottom: 26px;
 }
 #live2d-canvas {
   width: 100%;
@@ -231,7 +237,15 @@ body[data-mode="workbench"] {
   font-size: 14px;
 }
 .np-head button:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
-.np-stage { flex: 1; min-height: 0; position: relative; }
+.np-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  /* 关键：pixi 会把画布的 inline 高度写成某个具体像素值。当面板高度变化
+     （动作列表展开/收起、拖宽、折叠再展开）而画布来不及重排时，画布会比
+     容器高，从而溢出并盖住下方「尺寸 / 动作」控件栏——这里用容器裁剪兜底。 */
+  overflow: hidden;
+}
 #wb-live2d-canvas { width: 100%; height: 100%; display: block; }
 #wb-live2d-placeholder {
   position: absolute;

@@ -169,6 +169,9 @@ async function boot() {
   if (mode === MODE.WORKBENCH) {
     await tryLoadLive2D(document.getElementById('wb-live2d-canvas'), document.getElementById('wb-live2d-placeholder'))
     renderMotionPanel()
+    // 动作列表把面板撑高后容器尺寸变了，立刻重排一次，
+    // 免得画布沿用旧高度溢出到下方控件栏上
+    if (l2dReady) l2d.resize()
   }
 
   // 无头自测：自动发一条消息验证 对话 IPC → 事件广播 → UI 渲染 全链路
@@ -505,6 +508,8 @@ async function tryLoadLive2D(canvas, placeholder) {
     await l2d.load(canvas, url, {
       scale: cfg.scale || 1,
       mirror: !!cfg.mirror,
+      // 取景：默认「胸像」（只显示上半身）。模型目录 nagi-emotion.json 里的 frame 优先级更高
+      frame: cfg.frame || undefined,
       eyeBlink: cfg.eyeBlink !== false,
       focusFollow: cfg.focusFollow !== false
     })
@@ -512,7 +517,16 @@ async function tryLoadLive2D(canvas, placeholder) {
     placeholder?.classList.add('hidden')
     // 模型就位后立刻同步当前情绪（初始拉取发生在模型加载前）
     if (currentMood) l2d.setEmotion(currentMood.expr, { motion: false })
-    console.log('[live2d] 已加载模型：', rel, '表情：', l2d.listExpressions().length, '动作组：', l2d.listMotionGroups().join('/'))
+    console.log(
+      '[live2d] 已加载模型：',
+      rel,
+      '取景：',
+      l2d.getFrame(),
+      '表情：',
+      l2d.listExpressions().length,
+      '动作组：',
+      l2d.listMotionGroups().join('/')
+    )
   } catch (err) {
     console.error('[live2d] 加载失败：', err)
     if (mode === MODE.PET) ui.showBubble('模型加载失败：' + err.message)
@@ -1091,6 +1105,16 @@ window.__nagiTestExpression = (name) => l2d.setExpressionRaw(name)
 window.__nagiReadParams = (ids) => l2d.readParams(ids)
 window.__nagiRedParams = () => l2d.redParamIds()
 window.__nagiProbeRed = () => l2d.probeRedOnce()
+// 调试：取景/布局诊断（画布尺寸、模型尺寸、锚点、实际包围盒）
+window.__nagiFrame = () => l2d.frameInfo()
+// 调试：确定性抓帧（同帧渲染后读回，绕开 WebGL 截图空白问题）
+window.__nagiSnapshot = () => l2d.snapshotDataURL()
+// 调试：运行时改缩放/取景，便于验证在不同尺寸下的对齐
+window.__nagiSetScale = (v) => l2d.setScale(v)
+window.__nagiSetMirror = (v) => l2d.setMirror(v)
+window.__nagiSetFrame = (f) => l2d.setFrame(f)
+// 调试：探测画面实际范围（读回这一帧像素求 alpha 包围盒，比数学矩形可信）
+window.__nagiArtBox = () => l2d.measureArtBox()
 // 调试：关系页
 window.__nagiRelation = () => window.nagi.relation.get()
 window.__nagiTimeline = (days) => window.nagi.relation.timeline({ days: days || 7 })
