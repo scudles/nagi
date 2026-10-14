@@ -39,6 +39,15 @@ import { broadcast, getWorkbenchWindow } from './windows.js'
 import { appendDiary } from './diary.js'
 import { startMonitor, stopMonitor } from './monitor/index.js'
 import {
+  startReminderEngine,
+  stopReminderEngine,
+  reminderTools,
+  listReminders,
+  addReminder,
+  removeReminder,
+  completeReminder
+} from './reminders.js'
+import {
   initRelation,
   noteRelationInteraction,
   relationSummary,
@@ -224,19 +233,27 @@ export function stopMoodEngine() {
 /* ---------------- 活动监测（M3）：她看你在做什么，忍不住主动开口 ---------------- */
 
 /**
- * 监测触发的主动搭话：提情绪 → 桌宠气泡 → 记进内心独白日记。
- * 正在对话（busy）时不抢话，只安静记一笔。
+ * 她说一句主动的话（活动监测 / 日程提醒共用）：提情绪 → 广播 → 记进内心独白日记。
+ * force=true 用于日程提醒这类「不能错过」的事——正在对话时也要开口；
+ * 活动监测的主动搭话不带 force，正在对话时不抢话，只安静记一笔。
  */
-function handleProactive({ mood: hitMood, text, ruleId }) {
-  if (!text) return
-  console.log(`[monitor] 主动搭话（${ruleId}）：${text}`)
+function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monitor', force = false } = {}) {
+  if (!text) return false
   if (hitMood) {
-    mood.propose(hitMood, 0.5, 'monitor')
+    mood.propose(hitMood, 0.5, source)
     broadcastMood()
   }
   const snap = mood.current()
-  if (!busy) broadcast(EVT.PET, { kind: 'proactive', text, expr: snap.expr })
+  if (force || !busy) broadcast(EVT.PET, { kind, text, expr: snap.expr })
   appendDiary(snap, text)
+  return true
+}
+
+/** 活动监测触发：她看你在做什么，忍不住开口（正在对话时不抢话） */
+function handleProactive({ mood: hitMood, text, ruleId }) {
+  if (!text) return
+  console.log(`[monitor] 主动搭话（${ruleId}）：${text}`)
+  saySomething({ mood: hitMood, text, kind: 'proactive', source: 'monitor' })
 }
 
 /** 启动活动监测（app ready 后调用；幂等）。总开关在 settings.privacy.monitorEnabled */
@@ -246,6 +263,24 @@ export function startActivityMonitor() {
 
 export function stopActivityMonitor() {
   stopMonitor()
+}
+
+/* ---------------- 日程提醒（M4）：她替你记着的事，到点由她开口 ---------------- */
+
+/**
+ * 到点提醒：优先用她自己想好的话（say），否则从 proactive.reminder 池临场挑一句。
+ * 这是「不能错过」的事，force=true —— 正在对话时也开口。
+ */
+function handleReminderDue(item) {
+  if (!item || !item.text) return
+  const line = item.say || NagiPersona.pickProactive('reminder', { what: item.text }) || `……提醒你：${item.text}。`
+  console.log(`[reminder] 到点：${item.text}`)
+  saySomething({ mood: 'smile', text: line, kind: 'reminder', source: 'reminder', force: true })
+}
+
+/** 启动日程提醒调度器（app ready 后调用；幂等） */
+export function startReminders() {
+  startReminderEngine({ onDue: handleReminderDue })
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -295,6 +330,19 @@ function fakeCallModel() {
   }
 }
 
+/** 即将到点的提醒（最多 3 条），拼成「此刻」里的一行注记；没有则返回空数组 */
+function upcomingReminderLines(now = Date.now()) {
+  try {
+    const list = listReminders(now)
+      .filter((x) => !x.doneAt && x.at > now)
+      .slice(0, 3)
+      .map((x) => `${x.when} ${x.text}`)
+    return list.length ? [`你替他记着的提醒（到点你会主动开口）：${list.join('；')}`] : []
+  } catch {
+    return []
+  }
+}
+
 function buildMessages(userText, supportsNative) {
   ensureHistory()
   const snap = mood.current()
@@ -307,7 +355,9 @@ function buildMessages(userText, supportsNative) {
     mood: snap,
     relation: relationSummary(),
     memories: memoryLines(),
-    recentReplies: recentAssistantReplies(history, 4)
+    recentReplies: recentAssistantReplies(history, 4),
+    // 她替你记着的提醒：让她知道「有这几件事等着」，别把答应过的事忘了
+    extra: upcomingReminderLines()
   })
   return [
     { role: 'system', content: buildSystemPrompt({ nativeTools: supportsNative, context }) },
@@ -409,7 +459,14 @@ export async function runTurn(userText, emit) {
   const files = createFileTools({ fileRoot })
   const system = createSystemTools({ cwd: app.getPath('home') })
   const ha = getHa()
-  const executeTool = createToolRunner({ files, system, browser: browserTools, ha, native: nativeTools })
+  const executeTool = createToolRunner({
+    files,
+    system,
+    browser: browserTools,
+    ha,
+    native: nativeTools,
+    reminders: reminderTools()
+  })
 
   const messages = buildMessages(userText, supportsNative)
   currentAbort = new AbortController()
@@ -520,6 +577,7 @@ export function abortChat() {
 export async function disposeAgent() {
   stopMoodEngine()
   stopActivityMonitor()
+  stopReminderEngine()
   try {
     await browserTools.dispose()
   } catch {
@@ -560,6 +618,23 @@ export function relationInfo() {
 /** 情绪时间线（默认近 7 天） */
 export function timelineData(days) {
   return readTimeline(Number(days) || 7)
+}
+
+/* ---------------- 日程提醒 IPC（M4） ---------------- */
+export function reminderList() {
+  return listReminders()
+}
+export function reminderAdd(payload) {
+  const r = addReminder(payload || {})
+  return r.ok ? { ok: true, item: r.item, items: listReminders() } : { ok: false, error: r.error }
+}
+export function reminderRemove(payload) {
+  const r = removeReminder(payload || {})
+  return r.ok ? { ok: true, removed: r.removed, items: listReminders() } : { ok: false, error: r.error }
+}
+export function reminderDone(id) {
+  const r = completeReminder(id)
+  return r.ok ? { ok: true, items: listReminders() } : { ok: false, error: r.error }
 }
 
 /* ---------------- HA 专用 IPC（设置页的"测试连接 / 列设备"） ---------------- */

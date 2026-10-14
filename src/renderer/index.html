@@ -55,6 +55,7 @@
         </div>
         <div class="side-note">
           <p class="dim">她的内心独白不实时显示在这里，而是安静地写进日记。</p>
+          <button id="btn-open-reminder">她的日程</button>
           <button id="btn-open-relation">看看我们的关系</button>
           <button id="btn-open-diary">看看她的日记</button>
         </div>
@@ -69,6 +70,7 @@
         <div id="confirm-bar" class="confirm-bar hidden"></div>
         <div id="composer">
           <textarea id="input" rows="1" placeholder="和凪说点什么…（回车发送，Shift+回车换行）"></textarea>
+          <button id="btn-new-chat" title="开始新对话：清空短期上下文，长期记忆与关系保留">新对话</button>
           <button id="btn-send">发送</button>
         </div>
       </section>
@@ -143,6 +145,39 @@
             <button id="btn-rel-diary">她的日记</button>
             <button id="btn-rel-settings">设置</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 她的日程（M4：日程提醒） ============ -->
+    <div id="reminder-overlay" class="overlay hidden">
+      <div id="reminder-panel">
+        <header class="sp-head">
+          <span>她的日程</span>
+          <button id="btn-close-reminder">✕</button>
+        </header>
+        <div class="sp-body">
+          <p class="dim" style="margin:0 0 10px;line-height:1.7">
+            她替你记着的事。到点她会自己开口提醒你——桌宠形态弹气泡，工作台里进对话流，也会写进她的日记。
+            最快的方式是直接对她说「10 分钟后提醒我喝水」。
+          </p>
+          <div id="reminder-list" class="rm-list"></div>
+          <div id="reminder-empty" class="dim hidden">还没有日程。对她说一声，或在下面手动加一条。</div>
+
+          <h3>手动加一条</h3>
+          <label>提醒内容 <input id="rm-text" type="text" placeholder="例如：开会 / 吃药 / 交作业" /></label>
+          <label>什么时候 <input id="rm-when" type="text" placeholder="例如：10分钟后 / 明天9:00 / 下午3点半" /></label>
+          <label>重复
+            <select id="rm-repeat">
+              <option value="none">不重复</option>
+              <option value="daily">每天</option>
+              <option value="weekly">每周</option>
+            </select>
+          </label>
+          <div class="sp-row">
+            <button id="btn-rm-add">记下</button>
+          </div>
+          <div id="rm-result" class="dim"></div>
         </div>
       </div>
     </div>

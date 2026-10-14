@@ -2,9 +2,12 @@
 // 工具注册表与文件边界的纯逻辑单测。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { planHomeService } from '../src/core/tools/registry.js'
+import { planHomeService, TOOL_SCHEMAS, createToolRunner } from '../src/core/tools/registry.js'
 import { resolveWithin } from '../src/core/tools/files.js'
 import { summarizeHaEvent } from '../src/core/homeassistant/ha.js'
+import { getToolRisk } from '../src/core/safety/policy.js'
+import { RISK } from '../src/shared/protocol.js'
+import { describeToolCall } from '../src/core/agent/loop.js'
 
 /* ---------------- home_set → HA 服务 ---------------- */
 test('home_set：开关灯', () => {
@@ -62,4 +65,48 @@ test('summarizeHaEvent：只挑值得说的事', () => {
   )
   // 非状态事件 → null
   assert.equal(summarizeHaEvent({ event_type: 'zha_event', data: {} }), null)
+})
+
+/* ---------------- 日程提醒工具接线（M4） ---------------- */
+
+test('工具表含日程提醒三件套，且风险为 low', () => {
+  const names = TOOL_SCHEMAS.map((s) => s.function.name)
+  for (const n of ['reminder_add', 'reminder_list', 'reminder_cancel']) {
+    assert.ok(names.includes(n), `工具表缺 ${n}`)
+    assert.equal(getToolRisk(n), RISK.LOW, `${n} 应为 low 风险（不弹确认）`)
+  }
+  // schema 必填字段：add 至少要 text
+  const add = TOOL_SCHEMAS.find((s) => s.function.name === 'reminder_add')
+  assert.deepEqual(add.function.parameters.required, ['text'])
+})
+
+test('describeToolCall：提醒类工具给人话', () => {
+  assert.ok(describeToolCall('reminder_add', { text: '开会', when: '10分钟后' }).includes('开会'))
+  assert.ok(describeToolCall('reminder_cancel', { text: '开会' }).includes('开会'))
+})
+
+test('createToolRunner：把 reminder_* 派发给注入的 deps.reminders', async () => {
+  const calls = []
+  const run = createToolRunner({
+    files: {},
+    system: {},
+    browser: {},
+    native: {},
+    reminders: {
+      add: async (a) => (calls.push(['add', a]), { ok: true, summary: 'ok' }),
+      list: async () => (calls.push(['list']), { ok: true, summary: 'ok' }),
+      cancel: async (a) => (calls.push(['cancel', a]), { ok: true, summary: 'ok' })
+    }
+  })
+  await run('reminder_add', { text: '喝水', when: '10分钟后' })
+  await run('reminder_list', {})
+  await run('reminder_cancel', { text: '喝水' })
+  assert.deepEqual(calls.map((c) => c[0]), ['add', 'list', 'cancel'])
+  assert.equal(calls[0][1].text, '喝水')
+})
+
+test('createToolRunner：没有 reminders 依赖时按未知工具处理', async () => {
+  const run = createToolRunner({ files: {}, system: {}, browser: {}, native: {} })
+  const r = await run('reminder_add', { text: 'x', when: '10分钟后' })
+  assert.equal(r.ok, false)
 })

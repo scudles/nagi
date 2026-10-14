@@ -102,6 +102,64 @@ export function addToolLog(text) {
   els.toolLog.scrollTop = els.toolLog.scrollHeight
 }
 
+/** 正在进行的工具调用卡片：id → { card, meta }，结果回来时按 id 更新 */
+const toolCards = new Map()
+
+/**
+ * 工具执行卡片（M4）：调用时建一张可展开的卡（看参数），结果回来时更新状态与摘要。
+ * 比一行纯文本更容易看清「她到底调了什么、成没成」。
+ */
+export function addToolCard({ id, phase, name, args, risk, ok, ms, summary }) {
+  const box = els.toolLog
+  if (!box) return
+  if (phase === 'call') {
+    const card = document.createElement('details')
+    card.className = 'tl-card running'
+    const sum = document.createElement('summary')
+    const nm = document.createElement('span')
+    nm.className = 'tl-name'
+    nm.textContent = name
+    sum.appendChild(nm)
+    if (risk && risk !== 'low') {
+      const rg = document.createElement('span')
+      rg.className = 'tl-risk tl-risk-' + risk
+      rg.textContent = risk
+      sum.appendChild(rg)
+    }
+    const meta = document.createElement('span')
+    meta.className = 'tl-meta'
+    meta.textContent = '执行中…'
+    sum.appendChild(meta)
+    const pre = document.createElement('pre')
+    pre.className = 'tl-args'
+    pre.textContent = JSON.stringify(args || {}, null, 2)
+    card.append(sum, pre)
+    box.appendChild(card)
+    if (id) toolCards.set(id, { card, meta })
+    box.scrollTop = box.scrollHeight
+    return
+  }
+
+  const rec = id ? toolCards.get(id) : null
+  if (!rec) {
+    // 没配上调用卡（事件丢失/重放）——补一条纯文本，别把结果吞了
+    addToolLog(`${ok ? '✔' : '✘'} ${name} ${ms != null ? ms + 'ms' : ''} ${summary || ''}`)
+    return
+  }
+  toolCards.delete(id)
+  rec.card.classList.remove('running')
+  rec.card.classList.add(ok ? 'ok' : 'fail')
+  rec.meta.textContent = `${ok ? '完成' : '失败'}${ms != null ? ' · ' + ms + 'ms' : ''}`
+  if (summary) {
+    const pre = document.createElement('pre')
+    pre.className = 'tl-result'
+    pre.textContent = String(summary)
+    rec.card.appendChild(pre)
+    if (String(summary).length > 60) rec.card.open = true
+  }
+  box.scrollTop = box.scrollHeight
+}
+
 /* ---------------- 确认条 ---------------- */
 export function showConfirm({ name, description, risk }) {
   return new Promise((resolve) => {

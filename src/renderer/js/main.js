@@ -100,15 +100,20 @@ async function boot() {
     /* 旧版本主进程没有该通道时忽略 */
   }
 
-  // 事件：桌宠交互（戳一戳台词气泡 / 活动监测的主动搭话）
+  // 事件：桌宠交互（戳一戳台词气泡 / 活动监测的主动搭话 / 日程提醒）
   window.nagi.on(EVT.PET, (p) => {
     noteActivity()
     if (!p || !p.text) return
     if (mode === MODE.PET) {
-      ui.showBubble(p.text)
-    } else if (p.kind === 'proactive') {
-      // 工作台形态：主动搭话进对话流，别只闪个气泡就没了
+      // 提醒是她答应过的事，气泡多停一会儿
+      ui.showBubble(p.text, { autoHide: p.kind === 'reminder' ? 12000 : 6000 })
+    } else if (p.kind === 'proactive' || p.kind === 'reminder') {
+      // 工作台形态：主动搭话/提醒进对话流，别只闪个气泡就没了
       ui.addMessage('nagi', p.text)
+      if (p.kind === 'reminder') {
+        ui.addToolLog('⏰ 日程提醒：' + p.text)
+        if (!document.getElementById('reminder-overlay')?.classList.contains('hidden')) renderReminders()
+      }
     }
     // TapBody 动作在 pokeHer() 里已经播了，这里只管说
   })
@@ -123,6 +128,7 @@ async function boot() {
   wireWindowButtons()
   wireSettingsPage()
   wireRelationPage()
+  wireReminderPage()
 
   // 首次启动：活动监测告知（只弹一次，仅桌宠形态）
   if (mode === MODE.PET) maybeShowMonitorNotice()
@@ -230,6 +236,18 @@ function wireWindowButtons() {
   on('btn-wb-close', () => window.nagi.win.close())
   on('btn-open-settings', () => openSettings())
   on('btn-close-settings', () => closeSettings())
+
+  // 新对话：清空短期上下文（长期记忆、关系、日程都保留）
+  on('btn-new-chat', async () => {
+    try {
+      await window.nagi.memory.clearHistory()
+    } catch {
+      /* ignore */
+    }
+    const box = document.getElementById('messages')
+    if (box) box.innerHTML = ''
+    ui.addToolLog('已开始新对话（短期上下文清空，长期记忆与关系保留）')
+  })
 }
 
 /* ---------------- 桌宠：尺寸自由调节 + 待机加成 ---------------- */
@@ -959,6 +977,105 @@ function wireRelationPage() {
   })
 }
 
+/* ---------------- 她的日程（M4：日程提醒） ---------------- */
+
+function openReminder() {
+  document.getElementById('reminder-overlay')?.classList.remove('hidden')
+  renderReminders()
+}
+
+function closeReminder() {
+  document.getElementById('reminder-overlay')?.classList.add('hidden')
+}
+
+async function renderReminders() {
+  const box = document.getElementById('reminder-list')
+  const empty = document.getElementById('reminder-empty')
+  if (!box || !window.nagi.reminders) return
+  try {
+    const r = await window.nagi.reminders.list()
+    const items = (r && r.items) || []
+    box.innerHTML = ''
+    if (!items.length) {
+      empty?.classList.remove('hidden')
+      return
+    }
+    empty?.classList.add('hidden')
+    for (const it of items) {
+      const row = document.createElement('div')
+      row.className = 'rm-item' + (it.doneAt ? ' done' : '') + (!it.doneAt && it.firedAt ? ' fired' : '')
+      const when = document.createElement('span')
+      when.className = 'rm-when'
+      when.textContent = it.doneAt ? '已完成' : it.when
+      const text = document.createElement('span')
+      text.className = 'rm-text'
+      text.textContent = it.text
+      row.append(when, text)
+      if (it.repeat && it.repeat !== 'none') {
+        const rep = document.createElement('span')
+        rep.className = 'rm-rep'
+        rep.textContent = it.repeatLabel
+        row.appendChild(rep)
+      }
+      if (!it.doneAt) {
+        const remain = document.createElement('span')
+        remain.className = 'rm-remain'
+        remain.textContent = it.remain
+        row.appendChild(remain)
+        const done = document.createElement('button')
+        done.textContent = '✓'
+        done.title = '标记完成'
+        done.addEventListener('click', async () => {
+          await window.nagi.reminders.done(it.id)
+          renderReminders()
+        })
+        row.appendChild(done)
+      }
+      const del = document.createElement('button')
+      del.textContent = '✕'
+      del.title = '删除这条'
+      del.addEventListener('click', async () => {
+        await window.nagi.reminders.remove({ id: it.id })
+        renderReminders()
+      })
+      row.appendChild(del)
+      box.appendChild(row)
+    }
+  } catch (err) {
+    console.warn('[reminder] 列表读取失败', err.message)
+  }
+}
+
+function wireReminderPage() {
+  const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn)
+  on('btn-open-reminder', openReminder)
+  on('btn-close-reminder', closeReminder)
+  on('btn-rm-add', async () => {
+    const textEl = document.getElementById('rm-text')
+    const whenEl = document.getElementById('rm-when')
+    const repEl = document.getElementById('rm-repeat')
+    const out = document.getElementById('rm-result')
+    const text = textEl?.value.trim()
+    const when = whenEl?.value.trim()
+    if (!text) {
+      if (out) out.textContent = '先写要提醒什么'
+      return
+    }
+    if (!when) {
+      if (out) out.textContent = '什么时候提醒？例如「10分钟后」「明天9:00」'
+      return
+    }
+    const r = await window.nagi.reminders.add({ text, when, repeat: repEl?.value || 'none' })
+    if (out) out.textContent = r.ok ? '记下了。到点她会叫你。' : '没能记下：' + (r.error || '未知原因')
+    if (r.ok) {
+      if (textEl) textEl.value = ''
+      if (whenEl) whenEl.value = ''
+      if (repEl) repEl.value = 'none'
+      renderReminders()
+    }
+  })
+}
+
 // 调试：暴露情绪触发 / 动作触发
 window.__nagiTestEmotion = (name) => {
   if (!EMOTIONS.includes(name)) return false
@@ -978,3 +1095,6 @@ window.__nagiProbeRed = () => l2d.probeRedOnce()
 window.__nagiRelation = () => window.nagi.relation.get()
 window.__nagiTimeline = (days) => window.nagi.relation.timeline({ days: days || 7 })
 window.__nagiOpenRelation = () => openRelation()
+// 调试：日程
+window.__nagiReminders = () => window.nagi.reminders.list()
+window.__nagiOpenReminder = () => openReminder()

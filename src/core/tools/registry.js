@@ -95,6 +95,22 @@ export const TOOL_SCHEMAS = [
     type: 'object',
     properties: { entity_id: str('scene.xxx 或 script.xxx') },
     required: ['entity_id']
+  }),
+  fn('reminder_add', '设置一条日程提醒；到点后你会主动提醒用户（这是你自己记下的事，不是系统闹钟）', {
+    type: 'object',
+    properties: {
+      text: str('要提醒的内容，例如「开会」「该吃药了」'),
+      when: str('什么时候提醒。可用自然语言：「10分钟后」「明天9:00」「下午3点半」「今晚8点」「周五10点」'),
+      at: num('也可以直接给绝对时间戳（毫秒）'),
+      repeat: str("是否重复：'none'（默认）/ 'daily'（每天）/ 'weekly'（每周）"),
+      say: str('可选：你到点想说的那句话。不填就由你到时候临场组织')
+    },
+    required: ['text']
+  }),
+  fn('reminder_list', '列出还没到点的提醒', S),
+  fn('reminder_cancel', '取消一条/多条提醒（按 id，或按内容关键词）', {
+    type: 'object',
+    properties: { id: str('提醒 id（reminder_list 会给出）'), text: str('或按内容关键词匹配') }
   })
 ]
 
@@ -127,12 +143,13 @@ export function planHomeService(args) {
 
 /**
  * 组装统一执行入口。
- * @param {object} deps { files, system, browser, ha, native }
+ * @param {object} deps { files, system, browser, ha, native, reminders }
  *   files:    createFileTools 的返回
  *   system:   createSystemTools 的返回
  *   browser:  createBrowserTools 的返回
  *   ha:       HAClient 实例（可为 null）
  *   native:   Electron 原生工具 { screenshot, clipboardRead, clipboardWrite, notify }
+ *   reminders: main/reminders.js 的 reminderTools()（{ add, list, cancel }）
  */
 export function createToolRunner(deps) {
   const unknown = (name) => ({ ok: false, summary: `未知工具：${name}` })
@@ -194,6 +211,16 @@ export function createToolRunner(deps) {
         await deps.ha.trigger(args.entity_id)
         return { ok: true, summary: `已触发 ${args.entity_id}` }
       }
+
+      case 'reminder_add':
+        if (!deps.reminders) return unknown(name)
+        return deps.reminders.add(args)
+      case 'reminder_list':
+        if (!deps.reminders) return unknown(name)
+        return deps.reminders.list()
+      case 'reminder_cancel':
+        if (!deps.reminders) return unknown(name)
+        return deps.reminders.cancel(args)
       default:
         return unknown(name)
     }

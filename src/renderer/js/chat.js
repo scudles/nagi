@@ -74,11 +74,11 @@ function onAgentEvent(evt) {
       break
 
     case AGENT_EVENT.TOOL_CALL:
-      ui.addToolLog(`▶ ${evt.name}(${JSON.stringify(evt.args || {})}) [${evt.risk || 'low'}]`)
+      ui.addToolCard({ id: evt.id, phase: 'call', name: evt.name, args: evt.args, risk: evt.risk })
       break
 
     case AGENT_EVENT.TOOL_RESULT:
-      ui.addToolLog(`${evt.ok ? '✔' : '✘'} ${evt.name} ${evt.ms != null ? evt.ms + 'ms' : ''} ${evt.summary || ''}`)
+      ui.addToolCard({ id: evt.id, phase: 'result', name: evt.name, ok: evt.ok, ms: evt.ms, summary: evt.summary })
       break
 
     case AGENT_EVENT.CONFIRM:

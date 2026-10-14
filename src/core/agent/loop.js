@@ -23,7 +23,9 @@ export function buildSystemPrompt({ persona, nativeTools = true, context = '' } 
   lines.push(
     '',
     '【工具使用】有工具可用时优先用工具拿真实信息，不要编造；',
-    '拿到工具结果后用简洁的中文向用户汇报关键内容。'
+    '拿到工具结果后用简洁的中文向用户汇报关键内容。',
+    '他说「过一会儿提醒我」「几点提醒我」这类事，用 reminder_add 记下来——这不是系统闹钟，' +
+      '是你替他记下的事，到点由你开口提醒。'
   )
   // 原生 function calling 可用时不注入 JSON 协议提示——两者并存会干扰模型选择通道
   // （2026-10-14 实测：云网关的 hunyuan-chat 同时收到 tools 参数与 JSON 文本提示时，
@@ -51,6 +53,10 @@ export function describeToolCall(name, args = {}) {
       return `打开应用：${args.name || args.path || '(未指定)'}`
     case 'browser_act':
       return `浏览器操作：${args.action || ''} ${args.selector || args.url || ''}`.trim()
+    case 'reminder_add':
+      return `设置提醒：${args.text || ''}（${args.when || args.at || ''}）`
+    case 'reminder_cancel':
+      return `取消提醒：${args.id || args.text || ''}`
     default:
       return `${name}`
   }

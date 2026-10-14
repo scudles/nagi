@@ -11,8 +11,9 @@ import { registerChatIpc } from './ipc/chat.js'
 import { registerHomeAssistantIpc } from './ipc/homeassistant.js'
 import { registerPetIpc } from './ipc/pet.js'
 import { registerRelationIpc } from './ipc/relation.js'
+import { registerReminderIpc } from './ipc/reminders.js'
 import { loadSettings, saveSettings } from './settings-store.js'
-import { disposeAgent, startMoodEngine, startActivityMonitor, restoreState } from './agent.js'
+import { disposeAgent, startMoodEngine, startActivityMonitor, startReminders, restoreState } from './agent.js'
 import { MODE } from '../shared/protocol.js'
 
 // ---- 运行环境开关 ----
@@ -48,6 +49,7 @@ if (!gotLock) {
     registerHomeAssistantIpc()
     registerPetIpc()
     registerRelationIpc()
+    registerReminderIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
@@ -65,6 +67,9 @@ if (!gotLock) {
 
     // 活动监测：看你在用什么程序，适时主动开口（M3，受 settings.privacy 控制）
     startActivityMonitor()
+
+    // 日程提醒：她替你记着的事，到点主动开口（M4）
+    startReminders()
 
     // 窗口（NAGI_MODE=workbench 可覆盖初始形态，便于无头验证）
     const envMode = process.env.NAGI_MODE === MODE.WORKBENCH ? MODE.WORKBENCH : null

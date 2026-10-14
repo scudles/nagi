@@ -39,6 +39,11 @@ export const IPC = {
   // 关系层（S4）：熟悉度 + 情绪时间线
   RELATION_GET: 'relation:get',
   RELATION_TIMELINE: 'relation:timeline',
+  // 日程提醒（M4）：她会记事，到点主动提醒
+  REMINDER_LIST: 'reminder:list',
+  REMINDER_ADD: 'reminder:add',
+  REMINDER_REMOVE: 'reminder:remove',
+  REMINDER_DONE: 'reminder:done',
   // 智能家居
   HA_TEST: 'ha:test',
   HA_LIST: 'ha:list',

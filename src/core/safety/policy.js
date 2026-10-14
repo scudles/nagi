@@ -16,6 +16,9 @@ export const TOOL_RISK = {
   home_list: RISK.LOW,
   home_get: RISK.LOW,
   notify: RISK.LOW,
+  reminder_list: RISK.LOW,
+  reminder_add: RISK.LOW,
+  reminder_cancel: RISK.LOW,
 
   // 可逆写
   browser_act: RISK.MEDIUM,

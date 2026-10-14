@@ -64,6 +64,13 @@ const api = {
     get: () => ipcRenderer.invoke(IPC.RELATION_GET),
     timeline: (opts) => ipcRenderer.invoke(IPC.RELATION_TIMELINE, opts || {})
   },
+  /** 日程提醒（M4）：她会记事，到点主动提醒 */
+  reminders: {
+    list: () => ipcRenderer.invoke(IPC.REMINDER_LIST),
+    add: (payload) => ipcRenderer.invoke(IPC.REMINDER_ADD, payload),
+    remove: (payload) => ipcRenderer.invoke(IPC.REMINDER_REMOVE, payload),
+    done: (id) => ipcRenderer.invoke(IPC.REMINDER_DONE, { id })
+  },
   /** 订阅主进程事件；返回取消订阅函数 */
   on: (channel, listener) => {
     if (!ALLOWED_EVENTS.has(channel)) {
