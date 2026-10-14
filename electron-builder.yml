@@ -1,0 +1,70 @@
+# electron-builder 打包配置（凪 Nagi）
+# 产物：dist/ 下的 NSIS 安装包 + portable 免安装版（均为 x64）
+#
+# 关键点：
+#   1) 代码打进 app.asar（out/ + package.json + 生产依赖）
+#   2) models/ 与 resources/ 走 extraResources 释放到 process.resourcesPath——
+#      Live2D 模型必须能被 nagi-local:// 协议以真实文件路径读取，不能压在 asar 里
+#   3) playwright 的驱动需以真实文件运行，从 asar 解出（browser 工具 CDP 接管依赖它）
+appId: com.nagi.desktoppet
+productName: 凪 Nagi
+copyright: Copyright © 2026 苦瓜瓜 & 叉烧 · 个人自制非商用
+
+# 直接复用本地已安装的 electron 发行版，避免打包时再从 GitHub 下载（本机下载极慢）
+electronDist: node_modules/electron/dist
+
+directories:
+  output: dist
+  buildResources: resources
+
+# 采用「排除式」写法，保留 electron-builder 默认的 **/*（自动剔除非生产依赖），
+# 只排除不需要进包的源码与工程文件
+files:
+  - '!src/**/*'
+  - '!test/**/*'
+  - '!scripts/**/*'
+  - '!tools/**/*'
+  - '!models/**/*'
+  - '!resources/**/*'
+  - '!dist/**/*'
+  - '!.git/**/*'
+  - '!*.md'
+  - '!electron.vite.config.mjs'
+  - '!start-pet.bat'
+  - '!**/*.map'
+
+extraResources:
+  - from: models
+    to: models
+  - from: resources
+    to: resources
+
+asarUnpack:
+  - node_modules/playwright/**
+  - node_modules/playwright-core/**
+
+# 无原生模块，跳过 rebuild（省时且避免无谓失败）
+npmRebuild: false
+
+win:
+  icon: resources/icon.png
+  executableName: Nagi
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 凪 Nagi
+  artifactName: Nagi-Setup-${version}.${ext}
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: Nagi-Portable-${version}.${ext}
+  unpackDirName: NagiPortable

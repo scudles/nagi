@@ -14,6 +14,7 @@
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "dist": "electron-vite build && electron-builder",
+    "pack": "electron-vite build && electron-builder --dir",
     "test": "node --test",
     "viewer": "node tools/live2d-viewer/server.mjs",
     "postinstall": "node scripts/setup-core.mjs"
@@ -23,13 +24,13 @@
     "openai": "^4.104.0",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^7.4.3",
+    "playwright": "^1.49.0",
     "ws": "^8.22.0"
   },
   "devDependencies": {
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
-    "playwright": "^1.49.0",
     "vite": "^5.4.11"
   },
   "optionalDependencies": {

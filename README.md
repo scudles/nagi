@@ -26,8 +26,16 @@ npm run dev        # 开发模式启动
 | `npm run dev` | 开发模式（electron-vite dev，热重载） |
 | `npm run build` | 构建到 `out/` |
 | `npm start` | 预览构建产物 |
-| `npm run dist` | 构建 + electron-builder 打包 |
+| `npm run pack` | 只打包到目录 `dist/win-unpacked`（快速验证，不出安装包） |
+| `npm run dist` | 构建 + 打包出安装包与免安装版到 `dist/` |
 | `npm test` | 跑 `src/core` 纯逻辑单测（node --test） |
+
+打包产物（Windows x64）：
+- `dist/Nagi-Setup-<版本>.exe` —— NSIS 安装包（可选安装目录、建桌面/开始菜单快捷方式），
+  装完即用；**这是让桌宠脱离开发环境、长久挂机的正解**
+- `dist/Nagi-Portable-<版本>.exe` —— 免安装单文件版，双击即跑、拷走即用
+
+> 详细打包说明与国内加速见「十、打包与分发」。
 
 ---
 
@@ -107,18 +115,26 @@ API Key 通过 Electron `safeStorage` 加密落盘（`userData/secrets.json`）�
 
 两种模式：
 
-**① 接管你日常的 Chrome（默认，推荐）**
-用 CDP 连接已开调试端口的 Chrome —— 这样她用的是你已登录的浏览器。
+**① 接管你日常的浏览器（默认，推荐）**
+用 CDP 连接已开调试端口的浏览器 —— 这样她用的是你已登录的浏览器。**Chrome 与 Edge 均可**
+（同为 Chromium 内核，Edge 是 Windows 预装，无需额外安装）。
 
-Windows（先完全退出 Chrome，再执行）：
+Windows（先完全退出浏览器，再执行）：
 ```bat
+:: Chrome
 "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
+:: 或 Edge（Windows 预装）
+"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9222
 ```
 macOS：
 ```bash
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
 ```
-应用连接 `http://localhost:9222`。
+应用连接 `http://localhost:9222`。若浏览器较新，建议加 `--remote-allow-origins=*`。
+
+> **已实测（2026-10-14，S3 真机验证）**：本机用 Edge 155 开 `9222`，nagi 的
+> `browser_open` / `browser_scrape` / `browser_act`（填表+点击）全链路走 CDP 通道通过。
+> 验证脚本：`node scripts/verify-cdp.mjs`（需已有浏览器开着调试端口）。
 
 **② 托管模式**
 连不上 CDP 时自动回退到 Playwright 自带的独立浏览器（`launchPersistentContext`，
@@ -126,6 +142,7 @@ macOS：
 ```bash
 npx playwright install chromium
 ```
+> 注：打包版仅内置 Playwright 运行库（支持 CDP 接管）；托管模式仍需在目标机器执行上一条命令装 Chromium。
 
 ---
 
@@ -148,11 +165,16 @@ Matter 设备原生接入；涂鸦等用官方集成。
 ```
 nagi/
 ├── electron.vite.config.mjs
+├── electron-builder.yml            # 打包配置（NSIS 安装包 + portable）
+├── cloud-config.js                 # 凪云公开键配置（免密钥默认大脑）
+├── start-pet.bat                   # 双击启动（清 ELECTRON_RUN_AS_NODE 后拉起）
 ├── scripts/setup-core.mjs          # postinstall 下载 Cubism Core
 ├── scripts/fetch-sample-model.mjs  # 拉取官方免费模型（Mao/Hiyori/Haru）
 ├── scripts/gen-icons.py            # 生成托盘/应用图标
-├── resources/                      # tray.png / icon.png
-├── models/                         # Live2D 模型（Mao 已内置，Lisette 自行放入）
+├── scripts/convert-portraits.py    # 表情差分 PNG → WebP 入库
+├── scripts/verify-cdp.mjs          # CDP 接管真机验证（调用生产代码）
+├── resources/                      # tray.png / icon.png / portraits 立绘
+├── models/                         # Live2D 模型（Lisette/Mao）
 └── src/
     ├── shared/protocol.js          # IPC 通道 / 事件 / 情绪 / 工具 / 风险等级
     ├── main/                       # 主进程
@@ -215,8 +237,22 @@ unset ELECTRON_RUN_AS_NODE && npm run dev
 ```
 
 **Chrome CDP 连不上**
-确认 Chrome 已用 `--remote-debugging-port=9222` 启动且已完全退出重启过一次；
+确认 Chrome/Edge 已用 `--remote-debugging-port=9222` 启动且已完全退出重启过一次；
 应用会自动回退到托管浏览器。
+
+**打包（`npm run dist`）下载卡住 / 极慢（国内网络）**
+electron-builder 需要从 GitHub 拉 winCodeSign、NSIS 等二进制，国内直连常只有几十 KB/s。
+改用国内镜像（实测 4.5MB/s）：
+```bash
+export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+npm run dist
+```
+Electron 本体无需下载——配置里已用 `electronDist: node_modules/electron/dist` 复用本地已装的发行版。
+
+**打包报 `Cannot create symbolic link ... libcrypto.dylib`（winCodeSign 解压失败）**
+winCodeSign 包含 macOS 符号链接，Windows 无符号链接权限时 7za 退出码非 0，electron-builder 会重试并失败。
+解法：把已解出的内容放到正确的缓存名下（`%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0\`，
+缺那两个 darwin `.dylib` 不影响 Windows 打包），或开启 Windows「开发者模式」以允许创建符号链接。
 
 ---
 
@@ -232,16 +268,22 @@ unset ELECTRON_RUN_AS_NODE && npm run dev
 | M2 情感系统 | 连续情绪状态机 + 独白日记 + 6/6 情绪映射 + 情绪注入 LLM | ✅ |
 | T7 LLM 适配 | 凪云（默认，免密钥）+ OpenAI 兼容 + 双通道 | ✅ |
 | T8 Agent Loop | 步数上限 / 事件广播 / 工具结果回喂 / 中止 | ✅ |
-| T9 工具集 | 浏览器 / 文件 / 命令 / 截屏 / 剪贴板 / 通知 / 搜索 | ✅ |
+| T9 工具集 | 浏览器 / 文件 / 命令 / 截屏 / 剪贴板 / 通知 / 搜索 | ✅（浏览器工具已真机验证） |
 | T10 安全门 | 风险分级 / 高危确认 / 命令黑白名单 / 路径边界 | ✅ |
 | T11 智能家居 | HA REST + WS 事件订阅 + 主动提醒 | ✅ 代码，待真机 |
+| **S3 打包与真机验证** | electron-builder 安装包 + 免安装版；CDP 接管真机实测 | ✅ |
 | M3 监测与主动行为 | 活动监测（前台窗口/进程） | ⬜ 下一步 |
 | M5 语音全链路 | ASR + TTS | ⬜ 本期不做 |
 
-**验证情况**（2026-10-14 合并后全量复验）：单测 59/59；无头端到端全绿——
-假大脑全链路（工具调用→回喂→汇报）、凪云真连（对话 + 原生 function calling 工具闭环 +
-基于真实目录内容汇报）、双窗情绪同步、戳击链路、日记落盘与查看器渲染。
-浏览器 CDP 接管与 HA 控制需要真实环境后实测。
+**验证情况**（2026-10-14 合并后全量复验 + S3）：
+- 单测 **59/59**；无头端到端全绿——假大脑全链路（工具调用→回喂→汇报）、凪云真连
+  （对话 + 原生 function calling 工具闭环 + 基于真实目录内容汇报）、双窗情绪同步、
+  戳击链路、日记落盘与查看器渲染
+- **浏览器 CDP 已真机验证**：以 Edge 155 开调试端口，`browser_open`/`browser_scrape`/
+  `browser_act` 全链路走 CDP 通道通过（顺带修掉 `scrape()` 里 `evalOnSelectorAll` 的 API 误用）
+- **打包产物已启动验证**：`dist/win-unpacked/Nagi.exe` 与 `Nagi-Portable` 均能启动，
+  从 `process.resourcesPath/models` 正确加载 Lisette、6/6 表情映射、凪云在线、日记窗正常
+- HA 控制仍需真实 HA 实例后实测
 
 > 声音线（TTS / ASR / GPT-SoVITS 音色训练）整体延后，本期交互为文字气泡 + 表情 + 日记。
 
@@ -256,3 +298,41 @@ unset ELECTRON_RUN_AS_NODE && npm run dev
 | `NAGI_SELFTEST_MSG=<文本>` | 覆盖自测消息内容（如触发工具调用的指令） |
 | `NAGI_FAKE_LLM=1` | 用脚本化假大脑，不配 Key 也能验证 Agent 全链路 |
 | `NAGI_SOFTWARE_GL=0` | 关闭强制软件渲染（真机想用硬件加速时） |
+
+---
+
+## 十、打包与分发（S3）
+
+把 nagi 打成 Windows 桌面应用，脱离开发环境运行——这也是桌宠在 agent 沙箱里「随启随用」问题的正解。
+
+### 产物
+
+| 文件 | 说明 |
+|---|---|
+| `dist/Nagi-Setup-<版本>.exe` | NSIS 安装包：可选安装目录、建桌面/开始菜单快捷方式（快捷名「凪 Nagi」） |
+| `dist/Nagi-Portable-<版本>.exe` | 免安装单文件版：双击即跑、拷走即用 |
+| `dist/win-unpacked/` | 未压缩的应用目录（调试用，直接跑 `Nagi.exe`） |
+
+### 打包
+
+```bash
+export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"  # 国内加速
+npm run dist        # 出安装包 + 免安装版
+npm run pack        # 只出目录 dist/win-unpacked，快速验证
+```
+
+打包配置见 `electron-builder.yml`，要点：
+- **代码进 asar**：`out/` + `package.json` + 生产依赖
+- **模型与资源走 extraResources**：`models/`、`resources/` 释放到 `process.resourcesPath`
+  —— Live2D 模型必须能被 `nagi-local://` 协议以真实文件路径读取，不能压在 asar 里；
+  主进程 `src/main/paths.js` 已按 `app.isPackaged` 分流解析
+- **playwright 从 asar 解出**（`asarUnpack`），CDP 接管依赖它的运行库
+- **复用本地 Electron**（`electronDist`），避免打包时再从 GitHub 下载
+
+### 安装与自启
+
+装完（或解压免安装版）后想让它开机常驻：`Win+R` → `shell:startup`，把
+「凪 Nagi」的快捷方式（或免安装版 exe）拖进去即可。
+
+> 未签名：本工程为个人自制非商用，未做代码签名，首次运行 Windows SmartScreen 可能提示
+> 「未知发布者」，点「仍要运行」即可。

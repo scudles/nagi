@@ -174,7 +174,7 @@ export function createBrowserTools(cfg = {}) {
       const text = await scope.innerText({ timeout: 15000 }).catch(() => '')
       const maxChars = Math.min(Math.max(Number(args.maxChars) || 4000, 500), 12000)
       const links = await p
-        .evalOnSelectorAll('a[href]', (as) =>
+        .$$eval('a[href]', (as) =>
           as.slice(0, 40).map((a) => ({ text: (a.innerText || '').trim().slice(0, 60), href: a.href }))
         )
         .catch(() => [])
