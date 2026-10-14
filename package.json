@@ -15,6 +15,7 @@
     "start": "electron-vite preview",
     "dist": "electron-vite build && electron-builder",
     "test": "node --test",
+    "viewer": "node tools/live2d-viewer/server.mjs",
     "postinstall": "node scripts/setup-core.mjs"
   },
   "dependencies": {

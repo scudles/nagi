@@ -3,9 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!-- CSP：允许本地模型协议与开发期 vite -->
+  <!-- CSP：允许本地模型协议与开发期 vite。
+       注：script-src 必须留 'unsafe-eval' —— pixi.js v7 用 new Function 生成着色器，
+       收紧后 Live2D 模型会加载失败（2026-10-14 实测）。'unsafe-inline' 已移除。 -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self' 'unsafe-inline' data: blob: nagi-local: http://localhost:* ws://localhost:*; img-src 'self' data: blob: nagi-local:; connect-src 'self' data: blob: nagi-local: http://localhost:* ws://localhost:*; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'" />
+        content="default-src 'self' data: blob: nagi-local: http://localhost:* ws://localhost:*; img-src 'self' data: blob: nagi-local:; connect-src 'self' data: blob: nagi-local: http://localhost:* ws://localhost:*; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'" />
   <title>凪 Nagi</title>
   <link rel="stylesheet" href="./css/base.css" />
   <!-- Live2D Cubism Core 必须在 pixi-live2d-display 之前加载 -->
@@ -46,7 +48,10 @@
           <span id="mood-label">情绪：平静</span>
           <span id="brain-label" class="dim">大脑：占位</span>
         </div>
-        <div id="monologue" class="monologue"></div>
+        <div class="side-note">
+          <p class="dim">她的内心独白不实时显示在这里，而是安静地写进日记。</p>
+          <button id="btn-open-diary">看看她的日记</button>
+        </div>
         <div class="side-foot">
           <button id="btn-open-settings">设置</button>
         </div>
@@ -122,6 +127,22 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ============ 日记查看器形态（独立小窗，D2：内心独白按需查看） ============ -->
+  <div id="diary-root" class="mode-diary">
+    <header id="diary-titlebar">
+      <div class="tb-title">凪的日记</div>
+      <div class="tb-actions">
+        <button id="btn-diary-refresh" title="刷新">↻</button>
+        <button id="btn-diary-close" title="关闭">✕</button>
+      </div>
+    </header>
+    <main id="diary-main">
+      <div id="diary-empty" class="dim hidden">还没有日记。她独白的时候，会写下来。</div>
+      <div id="diary-list"></div>
+      <article id="diary-content"></article>
+    </main>
   </div>
 
   <script type="module" src="./js/main.js"></script>

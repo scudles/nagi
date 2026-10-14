@@ -4,7 +4,7 @@
 import { app, BrowserWindow } from 'electron'
 import { registerScheme, registerHandler } from './local-protocol.js'
 import { modelsDir } from './paths.js'
-import { createPetWindow, createWorkbenchWindow, switchMode, getMode, getPetWindow } from './windows.js'
+import { createPetWindow, createWorkbenchWindow, switchMode, getMode, getPetWindow, openDiaryWindow } from './windows.js'
 import { createTray } from './tray.js'
 import { registerSettingsIpc } from './ipc/settings.js'
 import { registerChatIpc } from './ipc/chat.js'
@@ -59,6 +59,11 @@ if (!gotLock) {
 
     // 托盘
     createTray()
+
+    // 无头自测：额外拉起日记查看器，验证日记读取链路
+    if (process.env.NAGI_SELFTEST && process.env.NAGI_SELFTEST_DIARY === '1') {
+      setTimeout(() => openDiaryWindow(), 1200)
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createPetWindow()

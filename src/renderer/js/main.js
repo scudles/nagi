@@ -5,30 +5,69 @@ import { PROVIDER_PRESETS, SECRET_KEYS, MODE, EMOTIONS, EVT } from '../../shared
 import * as ui from './ui.js'
 import { initChat, sendText } from './chat.js'
 import * as l2d from './live2d.js'
+import { initDiary } from './diary.js'
 
 const params = new URLSearchParams(location.search)
-const mode = params.get('mode') === MODE.WORKBENCH ? MODE.WORKBENCH : MODE.PET
+const mode = params.get('mode') === MODE.WORKBENCH ? MODE.WORKBENCH : params.get('mode') === 'diary' ? 'diary' : MODE.PET
 document.body.dataset.mode = mode
 
 let settings = null
 let l2dReady = false
+let currentMood = null // 主进程情绪状态机的最新快照
 
 boot().catch((err) => {
   console.error('[nagi] 启动失败：', err)
   ui.addMessage('error', '启动失败：' + err.message)
 })
 
+function applyMood(snap) {
+  if (!snap) return
+  currentMood = snap
+  ui.setMood(snap.mood)
+  if (mode === MODE.PET && l2dReady) l2d.setEmotion(snap.expr)
+}
+
 async function boot() {
   settings = await window.nagi.settings.get()
+
+  // 日记查看器形态：独立小窗，只装配日记
+  if (mode === 'diary') {
+    initDiary()
+    // 无头自测：把渲染结果打到 stdout，验证日记读取链路
+    if (params.get('selftest') === '1') {
+      setTimeout(() => {
+        const dates = document.querySelectorAll?.('#diary-list .diary-date')?.length || 0
+        const items = document.querySelectorAll?.('#diary-content .d-item')?.length || 0
+        console.log(`[selftest] 日记窗：${dates} 篇日期，最新一篇 ${items} 条独白`)
+      }, 1500)
+    }
+    return
+  }
 
   // 事件：设置变更
   window.nagi.on(EVT.SETTINGS_CHANGED, (next) => {
     if (next) settings = next
   })
 
-  // 事件：家里设备状态变化（主动提醒进独白面板）
+  // 事件：情绪状态机广播（主进程单例，双窗同步）——侧栏读数 + 桌宠休息面容
+  window.nagi.on(EVT.MOOD, applyMood)
+  // 初始情绪：心跳 15s 一次，先拉一次免得多半分钟默认脸
+  try {
+    applyMood(await window.nagi.mood.get())
+  } catch {
+    /* 旧版本主进程没有该通道时忽略 */
+  }
+
+  // 事件：桌宠交互（戳一戳台词气泡）
+  window.nagi.on(EVT.PET, (p) => {
+    if (mode === MODE.PET && p && p.text) ui.showBubble(p.text)
+  })
+
+  // 事件：家里设备状态变化（桌宠气泡提醒；工作台进工具日志——独白面板已按 D2 移除）
   window.nagi.on(EVT.HA_EVENT, (payload) => {
-    if (payload && payload.summary) ui.addMonologue(`（家里：${payload.summary}）`, 'calm')
+    if (!payload || !payload.summary) return
+    if (mode === MODE.PET) ui.showBubble(`（家里：${payload.summary}）`)
+    else ui.addToolLog(`（家里：${payload.summary}）`)
   })
 
   wireWindowButtons()
@@ -37,16 +76,16 @@ async function boot() {
   // 对话
   initChat({
     onEmotion: (emotion) => {
-      l2d.setEmotion(emotion)
+      // 流式情绪只驱动当场表情；状态机的正式情绪以 MOOD 广播为准（DONE 时才提议）
+      if (mode === MODE.PET && l2dReady) l2d.setEmotion(emotion)
     },
     onStatus: (state) => {
       if (state === 'thinking') ui.showBubble('……', { autoHide: 0 })
     }
   })
 
-  // 默认独白（工作台）
+  // 工作台：大脑标签
   if (mode === MODE.WORKBENCH) {
-    ui.addMonologue('（凪醒来了，安静地看着屏幕。）', 'calm')
     ui.setBrain(brainLabel())
   }
 
@@ -116,6 +155,7 @@ function wireWindowButtons() {
   on('btn-open-workbench', () => window.nagi.win.setMode(MODE.WORKBENCH))
   on('btn-pet-settings', () => openSettings())
   on('btn-pet-hide', () => window.nagi.win.hide())
+  on('btn-open-diary', () => window.nagi.win.openDiary())
 
   on('btn-wb-pet', () => window.nagi.win.setMode(MODE.PET))
   on('btn-wb-min', () => window.nagi.win.minimize())
@@ -144,6 +184,8 @@ async function tryLoadLive2D() {
     })
     l2dReady = true
     ui.els.placeholder.classList.add('hidden')
+    // 模型就位后立刻同步当前情绪（初始拉取发生在模型加载前）
+    if (currentMood) l2d.setEmotion(currentMood.expr)
     console.log('[live2d] 已加载模型：', rel, '表情：', l2d.listExpressions())
   } catch (err) {
     console.error('[live2d] 加载失败：', err)

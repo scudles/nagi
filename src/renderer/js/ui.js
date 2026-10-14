@@ -13,7 +13,6 @@ export const els = {
   messages: $('#messages'),
   toolLog: $('#tool-log'),
   confirmBar: $('#confirm-bar'),
-  monologue: $('#monologue'),
   moodLabel: $('#mood-label'),
   brainLabel: $('#brain-label'),
   input: $('#input'),
@@ -88,21 +87,6 @@ export function addMessage(who, text = '') {
 
 function scrollMessages() {
   els.messages.scrollTop = els.messages.scrollHeight
-}
-
-/* ---------------- 独白面板 ---------------- */
-export function addMonologue(text, mood) {
-  const item = document.createElement('div')
-  item.className = 'm-item'
-  const t = document.createElement('span')
-  t.className = 't'
-  t.textContent = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  const s = document.createElement('span')
-  s.textContent = text
-  item.append(t, s)
-  if (mood) item.dataset.mood = mood
-  els.monologue.appendChild(item)
-  els.monologue.scrollTop = els.monologue.scrollHeight
 }
 
 /* ---------------- 工具日志 ---------------- */

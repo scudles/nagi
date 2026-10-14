@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { IPC, EVT, SECRET_KEYS, MODE } from '../../shared/protocol.js'
 import { getSettings, saveSettings, settingsPath } from '../settings-store.js'
 import { setSecret, hasSecret, deleteSecret } from '../keystore.js'
-import { broadcast, switchMode, getMode, getPetWindow, getWorkbenchWindow } from '../windows.js'
+import { broadcast, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow } from '../windows.js'
 import { modelsDir, projectRoot } from '../paths.js'
 
 const ALL_SECRET_KEYS = Object.values(SECRET_KEYS)
@@ -83,6 +83,11 @@ export function registerSettingsIpc() {
   ipcMain.handle(IPC.MODELS_LIST, () => ({ dir: modelsDir, models: listModels() }))
 
   ipcMain.handle(IPC.WINDOW_SET_MODE, (_e, mode) => switchMode(mode))
+
+  ipcMain.handle(IPC.WINDOW_OPEN_DIARY, () => {
+    openDiaryWindow()
+    return { ok: true }
+  })
 
   ipcMain.on(IPC.WINDOW_MINIMIZE, (e) => {
     const win = requireWin(e)

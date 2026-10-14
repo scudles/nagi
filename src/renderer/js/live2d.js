@@ -120,13 +120,15 @@ export async function load(canvas, url, opts = {}) {
     window.addEventListener('pointermove', onPointerMove)
   }
 
-  // 戳一戳：点击模型身体触发 TapBody 动作
+  // 戳一戳：点击模型身体触发 TapBody 动作 + 通知主进程（台词气泡/情绪/日记）
   boundTap = () => {
     try {
       m.motion('TapBody')
     } catch {
       /* 模型无 TapBody 组则忽略 */
     }
+    // 主进程 handlePoke：选台词 → 广播 PET 事件 → 气泡显示（fire-and-forget）
+    window.nagi?.pet?.poke().catch(() => {})
   }
   m.on('pointertap', boundTap)
 

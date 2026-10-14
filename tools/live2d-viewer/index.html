@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live2D 模型预览器 · 凪</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>Live2D 预览器</div>
+    <div class="topbar-ctrl">
+      <label class="field">
+        <span>模型</span>
+        <select id="model-select" title="选择模型（扫描模型根目录下所有 *.model3.json）"></select>
+      </label>
+      <button class="btn" id="btn-reload" title="重新加载当前模型">重载</button>
+      <label class="chk"><input type="checkbox" id="chk-board" /> 棋盘格</label>
+    </div>
+  </header>
+
+  <main>
+    <section class="stage" id="stage">
+      <canvas id="canvas"></canvas>
+      <div class="overlay" id="overlay">初始化…</div>
+      <div class="toast hidden" id="toast"></div>
+      <div class="hint">滚轮缩放 · 按住拖动平移 · 单击模型触发动作</div>
+      <div class="busy hidden" id="busy"><i></i><span id="busy-text">加载中…</span></div>
+    </section>
+
+    <aside class="panel">
+      <div class="group">
+        <h3>表情 <small id="exp-count">—</small></h3>
+        <div class="grid" id="expr-list"></div>
+        <button class="btn ghost" id="btn-exp-clear">清除表情</button>
+      </div>
+
+      <div class="group">
+        <h3>动作 <small id="mot-count">—</small></h3>
+        <div class="grid" id="motion-list"></div>
+        <button class="btn ghost" id="btn-motion-stop">停止动作</button>
+      </div>
+
+      <div class="group">
+        <h3>模拟开关</h3>
+        <label class="chk block"><input type="checkbox" id="chk-physics" checked /> 物理演算<span class="cap" id="cap-physics"></span></label>
+        <label class="chk block"><input type="checkbox" id="chk-blink" checked /> 自动眨眼<span class="cap" id="cap-blink"></span></label>
+        <label class="chk block"><input type="checkbox" id="chk-breath" checked /> 呼吸起伏<span class="cap" id="cap-breath"></span></label>
+        <label class="chk block"><input type="checkbox" id="chk-focus" checked /> 视线跟随鼠标</label>
+        <label class="chk block"><input type="checkbox" id="chk-mirror" /> 水平镜像</label>
+      </div>
+
+      <div class="group">
+        <h3>视图</h3>
+        <label class="range">
+          <span>缩放</span>
+          <input type="range" id="zoom" min="20" max="400" value="100" />
+          <b id="zoom-val">100%</b>
+        </label>
+        <div class="row">
+          <button class="btn" id="btn-fit">适应窗口</button>
+          <button class="btn" id="btn-recenter">回正</button>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3>模型信息</h3>
+        <dl class="info" id="info"></dl>
+      </div>
+
+      <div class="group tips">
+        <h3>快捷键</h3>
+        <ul>
+          <li><kbd>滚轮</kbd> 缩放（跟随指针）</li>
+          <li><kbd>拖动</kbd> 平移模型</li>
+          <li><kbd>单击模型</kbd> 戳一戳</li>
+          <li><kbd>0</kbd> 适应窗口　<kbd>M</kbd> 镜像</li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+
+  <!-- 运行库（顺序不可换）：Cubism Core → pixi → pixi-live2d-display(cubism4) -->
+  <script src="/vendor/live2dcubismcore.min.js"></script>
+  <script src="/vendor/pixi.min.js"></script>
+  <script src="/vendor/cubism4.min.js"></script>
+  <script src="/viewer.js"></script>
+</body>
+</html>

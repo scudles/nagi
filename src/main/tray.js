@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { MODE } from '../shared/protocol.js'
-import { switchMode, getMode, getPetWindow, getWorkbenchWindow } from './windows.js'
+import { switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow } from './windows.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -59,6 +59,7 @@ function buildMenu() {
         }
       }
     },
+    { label: '看看她的日记', click: () => openDiaryWindow() },
     { type: 'separator' },
     { label: '退出凪', click: () => app.quit() }
   ])

@@ -21,7 +21,8 @@ const api = {
     setMode: (mode) => ipcRenderer.invoke(IPC.WINDOW_SET_MODE, mode),
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
     hide: () => ipcRenderer.send(IPC.WINDOW_HIDE),
-    close: () => ipcRenderer.send(IPC.WINDOW_CLOSE)
+    close: () => ipcRenderer.send(IPC.WINDOW_CLOSE),
+    openDiary: () => ipcRenderer.invoke(IPC.WINDOW_OPEN_DIARY)
   },
   chat: {
     send: (text) => ipcRenderer.invoke(IPC.CHAT_SEND, { text }),

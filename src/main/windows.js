@@ -12,13 +12,16 @@ const isDev = !!process.env.ELECTRON_RENDERER_URL
 
 let petWindow = null
 let workbenchWindow = null
+let diaryWindow = null
 let currentMode = MODE.PET
 
 const rendererPreload = () => join(__dirname, '../preload/index.mjs')
 
 function loadRenderer(win, mode) {
-  // 自测钩子：工作台发一条消息验证对话链路；桌宠轮换情绪验证表情映射
-  const testKey = process.env.NAGI_SELFTEST ? (mode === MODE.WORKBENCH ? 'selftest' : 'pettest') : null
+  // 自测钩子：工作台发一条消息验证对话链路；桌宠轮换情绪验证表情映射；日记窗验证日记渲染
+  const selftestKey =
+    mode === MODE.WORKBENCH ? 'selftest' : mode === 'diary' ? 'selftest' : 'pettest'
+  const testKey = process.env.NAGI_SELFTEST ? selftestKey : null
   // NAGI_SELFTEST_MSG 可覆盖自测消息内容（验证特定链路用，如触发工具调用）
   const testMsg = process.env.NAGI_SELFTEST_MSG || ''
   // 把渲染层 console 转发到主进程 stdout，便于无头排查（两个窗都转发）
@@ -125,6 +128,45 @@ export function getWorkbenchWindow() {
   return workbenchWindow && !workbenchWindow.isDestroyed() ? workbenchWindow : null
 }
 
+/* ---------------- 内心独白日史查看器（D2：按需打开的独立小窗） ---------------- */
+export function createDiaryWindow() {
+  if (diaryWindow && !diaryWindow.isDestroyed()) return diaryWindow
+  diaryWindow = new BrowserWindow({
+    width: 520,
+    height: 680,
+    minWidth: 380,
+    minHeight: 420,
+    frame: false,
+    show: false,
+    backgroundColor: '#14161c',
+    webPreferences: {
+      preload: rendererPreload(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  })
+  loadRenderer(diaryWindow, 'diary')
+  diaryWindow.once('ready-to-show', () => diaryWindow.show())
+  diaryWindow.on('closed', () => {
+    diaryWindow = null
+  })
+  diaryWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  return diaryWindow
+}
+
+/** 打开（或聚拢）日记查看器 */
+export function openDiaryWindow() {
+  const win = createDiaryWindow()
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+  return win
+}
+
 /** 切换形态：显示目标窗、隐藏另一个 */
 export function switchMode(mode) {
   currentMode = mode === MODE.WORKBENCH ? MODE.WORKBENCH : MODE.PET
@@ -146,9 +188,16 @@ export function getMode() {
   return currentMode
 }
 
-/** 向所有存活窗口广播事件 */
+/** 向所有存活窗口广播事件（frame 已销毁/正在导航时静默跳过，避免定时器抛错） */
 export function broadcast(channel, payload) {
-  for (const win of [petWindow, workbenchWindow]) {
-    if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+  for (const win of [petWindow, workbenchWindow, diaryWindow]) {
+    if (!win || win.isDestroyed()) continue
+    const wc = win.webContents
+    if (!wc || wc.isDestroyed() || wc.isCrashed()) continue
+    try {
+      wc.send(channel, payload)
+    } catch {
+      /* 渲染帧已销毁（导航/崩溃竞态）：丢弃这一帧即可，不影响主进程 */
+    }
   }
 }

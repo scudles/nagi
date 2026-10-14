@@ -16,6 +16,7 @@ export const IPC = {
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_HIDE: 'window:hide',
   WINDOW_CLOSE: 'window:close',
+  WINDOW_OPEN_DIARY: 'window:open-diary',
   // 对话 / Agent
   CHAT_SEND: 'chat:send',
   CHAT_ABORT: 'chat:abort',
