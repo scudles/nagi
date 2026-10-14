@@ -25,10 +25,15 @@
     </div>
     <div id="pet-status" class="pet-status hidden"></div>
     <div class="pet-toolbar">
+      <button id="btn-pet-grow" title="放大（Ctrl+滚轮）">＋</button>
+      <button id="btn-pet-shrink" title="缩小（Ctrl+滚轮）">－</button>
+      <button id="btn-pet-action" title="随便动一下">✦</button>
       <button id="btn-open-workbench" title="打开工作台">▣</button>
       <button id="btn-pet-settings" title="设置">⚙</button>
       <button id="btn-pet-hide" title="隐藏">✕</button>
     </div>
+    <!-- 右下角拖拽缩放（按住拖动即等比改变桌宠大小） -->
+    <div id="pet-resizer" title="拖动调整大小"></div>
   </div>
 
   <!-- ============ 工作台形态 ============ -->
@@ -66,6 +71,37 @@
           <button id="btn-send">发送</button>
         </div>
       </section>
+
+      <!-- 拖动改宽（240–460） -->
+      <div id="wb-splitter" title="拖动调整凪面板宽度"></div>
+
+      <!-- ============ 凪面板：工作台里也看得见她 ============ -->
+      <aside id="nagi-panel">
+        <div class="np-head">
+          <span class="np-title">凪</span>
+          <span id="np-mood" class="dim">平静</span>
+          <button id="btn-nagi-panel-collapse" title="收起面板">›</button>
+        </div>
+        <div class="np-stage">
+          <canvas id="wb-live2d-canvas"></canvas>
+          <div id="wb-live2d-placeholder" class="placeholder">凪</div>
+        </div>
+        <div class="np-controls">
+          <div class="np-row">
+            <span class="np-label">尺寸</span>
+            <input id="wb-l2d-scale" type="range" min="0.4" max="2" step="0.05" value="1" />
+            <span id="wb-l2d-scale-val" class="dim">1.00</span>
+          </div>
+          <div class="np-label np-label-block">动作（点一下她就演）</div>
+          <div id="wb-motion-list" class="np-motions"></div>
+          <div class="np-row np-row-btns">
+            <button id="btn-wb-random-motion" title="随机播一个动作">随机动作</button>
+            <button id="btn-wb-stop-motion" title="停下，回待机">回待机</button>
+            <button id="btn-wb-mirror" title="水平镜像">镜像</button>
+          </div>
+        </div>
+      </aside>
+      <button id="btn-nagi-panel-expand" class="hidden" title="展开凪面板">‹</button>
     </main>
 
     <!-- ============ 设置页 ============ -->
@@ -97,9 +133,24 @@
             <select id="set-model-path"></select>
           </label>
           <label>缩放 <input id="set-l2d-scale" type="number" step="0.05" min="0.3" max="2" /></label>
+          <label>桌宠大小 <span id="set-pet-size-val" class="dim">400 × 600</span>
+            <input id="set-pet-size" type="range" min="240" max="760" step="10" />
+          </label>
+          <label class="check"><input id="set-idle-boost" type="checkbox" /> 待机时放大一点、换个姿势（更醒目）</label>
           <div class="sp-row">
             <button id="btn-refresh-models">刷新模型列表</button>
             <button id="btn-save-l2d">保存 Live2D 设置</button>
+          </div>
+
+          <h3>她的记忆</h3>
+          <p class="dim" style="margin:0 0 8px;line-height:1.7">
+            这些是她跨会话记得的、关于你的事，会写进每轮对话的上下文。删掉的她会忘掉。
+          </p>
+          <div id="memory-list" class="memory-list"></div>
+          <div class="sp-row">
+            <input id="memory-new" type="text" placeholder="手动加一条，例如：在做一个桌宠项目" style="flex:1;min-width:180px" />
+            <button id="btn-memory-add">记住</button>
+            <button id="btn-history-clear" class="danger">清空对话历史</button>
           </div>
 
           <h3>工具与隐私</h3>

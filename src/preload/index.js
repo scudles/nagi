@@ -19,6 +19,9 @@ const api = {
   },
   win: {
     setMode: (mode) => ipcRenderer.invoke(IPC.WINDOW_SET_MODE, mode),
+    resize: (size) => ipcRenderer.invoke(IPC.WINDOW_RESIZE, size),
+    // 拖动窗口：窗口原点由渲染层同步读 window.screenX/screenY，这里只负责写回
+    moveTo: (x, y) => ipcRenderer.send(IPC.WINDOW_MOVE, { x, y }),
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
     hide: () => ipcRenderer.send(IPC.WINDOW_HIDE),
     close: () => ipcRenderer.send(IPC.WINDOW_CLOSE),
@@ -48,6 +51,13 @@ const api = {
   },
   models: {
     list: () => ipcRenderer.invoke(IPC.MODELS_LIST)
+  },
+  /** 长期记忆（跨会话）与对话历史 */
+  memory: {
+    list: () => ipcRenderer.invoke(IPC.MEMORY_LIST),
+    add: (text) => ipcRenderer.invoke(IPC.MEMORY_ADD, text),
+    remove: (payload) => ipcRenderer.invoke(IPC.MEMORY_DELETE, payload),
+    clearHistory: () => ipcRenderer.invoke(IPC.HISTORY_CLEAR)
   },
   /** 订阅主进程事件；返回取消订阅函数 */
   on: (channel, listener) => {

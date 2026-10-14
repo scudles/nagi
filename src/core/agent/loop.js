@@ -15,13 +15,16 @@ import { NagiPersona } from '../persona.js'
 export const DEFAULT_MAX_STEPS = 10
 
 /** 系统提示：人格 + 输出契约（含情绪标签，见 core/persona.js）+ 工具提示 */
-export function buildSystemPrompt({ persona, nativeTools = true } = {}) {
-  const lines = [
-    persona || NagiPersona.llmSystem,
+export function buildSystemPrompt({ persona, nativeTools = true, context = '' } = {}) {
+  const lines = [persona || NagiPersona.llmSystem]
+  // 「此刻」动态上下文（时间/上次互动/情绪/长期记忆/最近说过的话）——
+  // 放在人格之后、工具说明之前：它是最影响这一句怎么说的信息
+  if (context) lines.push('', context)
+  lines.push(
     '',
     '【工具使用】有工具可用时优先用工具拿真实信息，不要编造；',
     '拿到工具结果后用简洁的中文向用户汇报关键内容。'
-  ]
+  )
   // 原生 function calling 可用时不注入 JSON 协议提示——两者并存会干扰模型选择通道
   // （2026-10-14 实测：云网关的 hunyuan-chat 同时收到 tools 参数与 JSON 文本提示时，
   // 会优先在正文里吐 ```json 块而不是走 tool_calls）

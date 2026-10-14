@@ -5,7 +5,8 @@
 import { BrowserWindow, screen, shell } from 'electron'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { MODE, EVT } from '../shared/protocol.js'
+import { MODE, EVT, DEFAULT_SETTINGS } from '../shared/protocol.js'
+import { getSettings, saveSettings } from './settings-store.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const isDev = !!process.env.ELECTRON_RENDERER_URL
@@ -42,8 +43,9 @@ function loadRenderer(win, mode) {
 
 function petBounds() {
   const { workArea } = screen.getPrimaryDisplay()
-  const w = 320
-  const h = 480
+  const cfg = getSettings()?.live2d || {}
+  const w = clampPetSize(cfg.petWidth, DEFAULT_SETTINGS.live2d.petWidth, PET_MIN.w, PET_MAX.w)
+  const h = clampPetSize(cfg.petHeight, DEFAULT_SETTINGS.live2d.petHeight, PET_MIN.h, PET_MAX.h)
   const margin = 12
   return {
     x: Math.round(workArea.x + workArea.width - w - margin),
@@ -51,6 +53,55 @@ function petBounds() {
     width: w,
     height: h
   }
+}
+
+/* ---------------- 桌宠尺寸（用户可自由调节） ---------------- */
+export const PET_MIN = { w: 200, h: 300 }
+export const PET_MAX = { w: 900, h: 1300 }
+
+function clampPetSize(v, fallback, min, max) {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.round(Math.min(max, Math.max(min, n)))
+}
+
+/**
+ * 调整桌宠窗口尺寸。锚定右下角（桌宠通常蹲在屏幕右下，缩放时不应位移）。
+ * 同时把尺寸写回 settings.live2d，重启后保持一致。
+ * @param {{width?:number,height?:number,persist?:boolean}} size
+ */
+export function resizePetWindow(size = {}) {
+  const cfg = getSettings()?.live2d || {}
+  const win = petWindow && !petWindow.isDestroyed() ? petWindow : null
+  const cur = win ? win.getBounds() : null
+  const w = clampPetSize(size.width ?? cur?.width, cfg.petWidth || DEFAULT_SETTINGS.live2d.petWidth, PET_MIN.w, PET_MAX.w)
+  const h = clampPetSize(size.height ?? cur?.height, cfg.petHeight || DEFAULT_SETTINGS.live2d.petHeight, PET_MIN.h, PET_MAX.h)
+  if (win) {
+    const right = cur.x + cur.width
+    const bottom = cur.y + cur.height
+    win.setBounds({ x: Math.round(right - w), y: Math.round(bottom - h), width: w, height: h })
+  }
+  if (size.persist !== false) {
+    try {
+      saveSettings({ live2d: { petWidth: w, petHeight: h } })
+    } catch {
+      /* 设置写失败不影响本次缩放 */
+    }
+  }
+  return { width: w, height: h }
+}
+
+/* ---------------- 桌宠拖动（渲染层原生 pointer 事件驱动） ---------------- */
+
+/** 移动桌宠窗到指定坐标（DIP） */
+export function movePetWindow(x, y) {
+  const win = getPetWindow()
+  if (!win) return null
+  const nx = Math.round(Number(x))
+  const ny = Math.round(Number(y))
+  if (!Number.isFinite(nx) || !Number.isFinite(ny)) return null
+  win.setPosition(nx, ny, false)
+  return { x: nx, y: ny }
 }
 
 export function createPetWindow() {

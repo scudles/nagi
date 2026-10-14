@@ -51,7 +51,11 @@ export function setStatus(state, detail) {
 }
 
 export function setMood(emotion) {
-  if (els.moodLabel) els.moodLabel.textContent = `情绪：${EMOTION_LABEL[emotion] || emotion || '平静'}`
+  const label = EMOTION_LABEL[emotion] || emotion || '平静'
+  if (els.moodLabel) els.moodLabel.textContent = `情绪：${label}`
+  // 工作台凪面板上的情绪读数
+  const np = document.getElementById('np-mood')
+  if (np) np.textContent = label
 }
 
 export function setBrain(label) {

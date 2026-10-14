@@ -11,6 +11,20 @@ import { resolveLlm, supportsNativeTools } from '../core/llm/providers.js'
 import { initCloudBrain, cloudBrainStatus, cloudChatStream } from '../core/llm/cloud-workbuddy.js'
 import { createMood } from '../core/emotion/mood.js'
 import { NagiPersona } from '../core/persona.js'
+import { buildContextBlock, recentAssistantReplies, timeSlot } from '../core/context.js'
+import { MEMORY_EXTRACT_PROMPT, parseMemoryOps } from '../core/memory.js'
+import {
+  loadHistory,
+  saveHistory,
+  lastInteractionAt,
+  memoryLines,
+  listMemories,
+  addMemory,
+  removeMemory,
+  mergeMemoryOps,
+  clearHistory,
+  flushPersist
+} from './persist.js'
 import { TOOL_SCHEMAS, createToolRunner } from '../core/tools/registry.js'
 import { createFileTools } from '../core/tools/files.js'
 import { createSystemTools } from '../core/tools/system.js'
@@ -56,11 +70,26 @@ function getHa() {
 }
 
 /* ---------------- 会话状态 ---------------- */
-const MAX_HISTORY = 30
+const MAX_HISTORY = 40
 let history = []
+let historyLoaded = false
 let busy = false
 let currentAbort = null
+let mockAnnounced = false // 本地占位大脑的说明只在第一次说一次
 const pendingConfirms = new Map() // id -> resolve
+
+/** 首次用到时从磁盘恢复对话历史（重启后凪还记得昨天聊过什么） */
+function ensureHistory() {
+  if (historyLoaded) return
+  historyLoaded = true
+  try {
+    history = loadHistory()
+    if (history.length) console.log('[memory] 已恢复历史消息', history.length, '条')
+  } catch (err) {
+    console.warn('[memory] 历史读取失败：', err.message)
+    history = []
+  }
+}
 
 /* ---------------- 情绪状态机（主进程单例：双窗同步 + LLM 直读） ---------------- */
 const mood = createMood()
@@ -116,18 +145,29 @@ export function stopMoodEngine() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** 未配置 key / 云端不可用时的本地占位大脑（D4：persona 关键词规则版） */
-async function mockRun(userText, emit) {
+/** 未配置 key / 云端不可用时的本地占位大脑（D4：persona 关键词规则版）
+ *  2026-10-14 去模板化：传入时段等情境，由 persona.reply 做反重复组合；
+ *  首轮明确告知"这是本地占位大脑"，让用户知道差距来自哪里而不是以为她本来就这样。 */
+async function mockRun(userText, emit, { announce = false } = {}) {
   emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.THINKING })
-  const r = NagiPersona.reply(userText)
+  const r = NagiPersona.reply(userText, { slot: timeSlot(new Date()), moodLabel: mood.label() })
   emit({ type: AGENT_EVENT.EMOTION, emotion: r.expr, intensity: 1 })
-  const body = r.text
+  let body = r.text
+  if (announce) body = body + '\n（……现在的我只有这么点脑子。接上真大脑，我会说得更像样。）'
   for (const ch of body) {
     emit({ type: AGENT_EVENT.TEXT_DELTA, text: ch })
     await sleep(18)
   }
   emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.IDLE })
   emit({ type: AGENT_EVENT.DONE, text: body })
+  // 占位大脑同样记账：否则接上真大脑之前的对话全部从上下文里消失
+  try {
+    ensureHistory()
+    history = [...history, { role: 'user', content: userText }, { role: 'assistant', content: body }].slice(-MAX_HISTORY)
+    saveHistory(history)
+  } catch (err) {
+    console.warn('[memory] 历史落盘失败：', err.message)
+  }
   return body
 }
 
@@ -151,14 +191,68 @@ function fakeCallModel() {
 }
 
 function buildMessages(userText, supportsNative) {
-  // 情绪连贯：强度够高时把当前情绪作为 user 消息前缀（只影响本轮，不改系统提示词）
-  const hint = mood.hintForLLM()
-  const userContent = hint ? '（凪当前的情绪：' + hint + '）\n' + userText : userText
+  ensureHistory()
+  const snap = mood.current()
+  // 「此刻」上下文：时间/时段、距上次互动多久、当前情绪及强度、长期记忆、她最近说过的话。
+  // 原先是在 user 消息前塞一句"（凪当前的情绪：担心）"，信息量太薄且会把模型钉在同一个
+  // 情绪标签上；改为结构化注入，并且顺带给出"不要重复这些说法"的反复读约束。
+  const context = buildContextBlock({
+    now: Date.now(),
+    lastInteractionAt: lastInteractionAt(),
+    mood: snap,
+    memories: memoryLines(),
+    recentReplies: recentAssistantReplies(history, 4)
+  })
   return [
-    { role: 'system', content: buildSystemPrompt({ nativeTools: supportsNative }) },
+    { role: 'system', content: buildSystemPrompt({ nativeTools: supportsNative, context }) },
     ...history,
-    { role: 'user', content: userContent }
+    { role: 'user', content: userText }
   ]
+}
+
+/**
+ * 单轮非流式取一次模型输出（长期记忆抽取用）。
+ * 与主对话共用同一通道，不影响主流程；失败由调用方吞掉。
+ */
+async function callModelOnce({ client, llm, useCloud, messages, temperature = 0.2 }) {
+  let out = ''
+  const stream = useCloud
+    ? await cloudChatStream({ messages })
+    : await chatStream(client, { model: llm.model, messages, temperature })
+  for await (const evt of stream) {
+    if (evt.type === 'delta') out += evt.text || ''
+    else if (evt.type === 'done') break
+  }
+  return out
+}
+
+/**
+ * 长期记忆抽取（fire-and-forget）：一轮对话结束后，让模型判断有没有"值得以后还记得的事"，
+ * 输出增删指令合并进 memory.json。异步且不阻塞回复；任何失败都静默（不能因为她记笔记失败
+ * 而影响对话）。太短的寒暄直接跳过，省一次调用。
+ */
+function extractMemoriesAsync({ client, llm, useCloud, userText, assistantText }) {
+  const u = String(userText || '').trim()
+  const a = String(assistantText || '').trim()
+  if (u.length < 6 || a.length < 6) return
+  const existing = memoryLines()
+  const messages = [
+    { role: 'system', content: MEMORY_EXTRACT_PROMPT },
+    {
+      role: 'user',
+      content:
+        `他：${u}\n我：${a}\n\n已有记忆：\n` +
+        (existing.length ? existing.map((x) => '- ' + x).join('\n') : '（空）')
+    }
+  ]
+  callModelOnce({ client, llm, useCloud, messages })
+    .then((raw) => {
+      const ops = parseMemoryOps(raw)
+      if (!ops.add.length && !ops.remove.length) return
+      const r = mergeMemoryOps(ops)
+      console.log('[memory] 记忆更新：', r.before, '→', r.after, ops.add.length ? '新增 ' + ops.add.join(' / ') : '')
+    })
+    .catch((err) => console.warn('[memory] 抽取失败（忽略）：', err.message))
 }
 
 function trimHistory(messages) {
@@ -176,13 +270,18 @@ function trimHistory(messages) {
 
 /** 组装依赖并执行一轮 */
 export async function runTurn(userText, emit) {
+  ensureHistory()
   const settings = getSettings()
   const llm = resolveLlm(settings.llm || {})
   const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
   const fakeLlm = process.env.NAGI_FAKE_LLM === '1'
   const useCloud = llm.provider === 'workbuddy' && !fakeLlm
 
-  if (!hasKey && !fakeLlm && !useCloud) return mockRun(userText, emit)
+  if (!hasKey && !fakeLlm && !useCloud) {
+    const first = !mockAnnounced
+    mockAnnounced = true
+    return mockRun(userText, emit, { announce: first })
+  }
 
   // 云端大脑：未就绪则尝试初始化；仍不可用则降级本地占位（中文原因提示）
   if (useCloud && !cloudBrainStatus().ok) {
@@ -245,6 +344,13 @@ export async function runTurn(userText, emit) {
   // 写入历史（messages 已含 system + 旧历史 + 本轮 user + 工具过程，再补最终回复）
   if (r.text) messages.push({ role: 'assistant', content: r.text })
   trimHistory(messages)
+  try {
+    saveHistory(history)
+  } catch (err) {
+    console.warn('[memory] 历史落盘失败：', err.message)
+  }
+  // 长期记忆抽取：异步、不阻塞、失败静默（她记笔记不该拖慢说话）
+  extractMemoriesAsync({ client, llm, useCloud, userText, assistantText: r.text })
   return r.text
 }
 
@@ -311,6 +417,28 @@ export async function disposeAgent() {
     /* ignore */
   }
   if (haClient) haClient.stopEvents()
+  try {
+    flushPersist() // 把防抖中的记忆/历史立刻刷盘
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ---------------- 长期记忆 / 历史 IPC ---------------- */
+export function memoryList() {
+  return listMemories()
+}
+export function memoryAdd(text) {
+  return addMemory(text)
+}
+export function memoryRemove(payload) {
+  return removeMemory(payload || {})
+}
+export function historyClear() {
+  clearHistory()
+  history = []
+  historyLoaded = true
+  return { ok: true }
 }
 
 /* ---------------- HA 专用 IPC（设置页的"测试连接 / 列设备"） ---------------- */

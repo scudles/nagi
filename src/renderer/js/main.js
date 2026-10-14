@@ -1,5 +1,8 @@
 // src/renderer/js/main.js
 // 渲染层入口：根据 ?mode=pet|workbench 初始化布局，装配 Live2D、对话与设置页。
+//
+// 两个形态各自加载一份 Live2D（桌宠窗 / 工作台凪面板），共用同一套驱动逻辑（live2d.js）；
+// 因为是两个渲染进程，模块状态互不干扰。
 
 import { PROVIDER_PRESETS, SECRET_KEYS, MODE, EMOTIONS, EVT } from '../../shared/protocol.js'
 import * as ui from './ui.js'
@@ -14,6 +17,39 @@ document.body.dataset.mode = mode
 let settings = null
 let l2dReady = false
 let currentMood = null // 主进程情绪状态机的最新快照
+let lastMoodKey = null // 用于区分「情绪真的变了」和「心跳重复广播」
+
+/* ---------------- 待机醒目：一段时间没互动就放大一点、换个姿势 ---------------- */
+const IDLE_AFTER_MS = 3 * 60 * 1000
+const IDLE_BOOST = 1.15
+let lastActivityAt = Date.now()
+let idleBoosted = false
+let idleTimer = null
+
+function noteActivity() {
+  lastActivityAt = Date.now()
+  if (idleBoosted) {
+    idleBoosted = false
+    if (l2dReady) l2d.setScale(settings?.live2d?.scale || 1)
+  }
+}
+
+function startIdleWatch() {
+  if (idleTimer) return
+  idleTimer = setInterval(() => {
+    if (!l2dReady) return
+    if (settings?.live2d?.idleBoost === false) return
+    const idle = Date.now() - lastActivityAt
+    if (!idleBoosted && idle > IDLE_AFTER_MS) {
+      idleBoosted = true
+      l2d.setScale((settings?.live2d?.scale || 1) * IDLE_BOOST)
+      l2d.playMotion('Idle') // 换个待机姿势，提醒她还在
+    } else if (idleBoosted) {
+      // 待机中偶尔再动一下，别像块背景板
+      if (Math.random() < 0.35) l2d.playMotion('Idle')
+    }
+  }, 20000)
+}
 
 boot().catch((err) => {
   console.error('[nagi] 启动失败：', err)
@@ -24,7 +60,12 @@ function applyMood(snap) {
   if (!snap) return
   currentMood = snap
   ui.setMood(snap.mood)
-  if (mode === MODE.PET && l2dReady) l2d.setEmotion(snap.expr)
+  if (!l2dReady) return
+  // 情绪真变了才带动作；心跳重复广播时只保持面容（否则每 15 秒手舞足蹈一次）
+  const key = snap.mood + '|' + snap.expr
+  const changed = key !== lastMoodKey
+  lastMoodKey = key
+  l2d.setEmotion(snap.expr, { motion: changed })
 }
 
 async function boot() {
@@ -49,7 +90,7 @@ async function boot() {
     if (next) settings = next
   })
 
-  // 事件：情绪状态机广播（主进程单例，双窗同步）——侧栏读数 + 桌宠休息面容
+  // 事件：情绪状态机广播（主进程单例，双窗同步）——侧栏读数 + 双形态面容/动作
   window.nagi.on(EVT.MOOD, applyMood)
   // 初始情绪：心跳 15s 一次，先拉一次免得多半分钟默认脸
   try {
@@ -60,10 +101,12 @@ async function boot() {
 
   // 事件：桌宠交互（戳一戳台词气泡）
   window.nagi.on(EVT.PET, (p) => {
+    noteActivity()
     if (mode === MODE.PET && p && p.text) ui.showBubble(p.text)
+    // TapBody 动作在 pokeHer() 里已经播了，这里只管说
   })
 
-  // 事件：家里设备状态变化（桌宠气泡提醒；工作台进工具日志——独白面板已按 D2 移除）
+  // 事件：家里设备状态变化（桌宠气泡提醒；工作台进工具日志）
   window.nagi.on(EVT.HA_EVENT, (payload) => {
     if (!payload || !payload.summary) return
     if (mode === MODE.PET) ui.showBubble(`（家里：${payload.summary}）`)
@@ -76,28 +119,42 @@ async function boot() {
   // 对话
   initChat({
     onEmotion: (emotion) => {
-      // 流式情绪只驱动当场表情；状态机的正式情绪以 MOOD 广播为准（DONE 时才提议）
-      if (mode === MODE.PET && l2dReady) l2d.setEmotion(emotion)
+      // 流式情绪只驱动当场表情 + 动作（状态机的正式情绪以 MOOD 广播为准）
+      if (l2dReady) l2d.setEmotion(emotion, { motion: true })
     },
     onStatus: (state) => {
       if (state === 'thinking') ui.showBubble('……', { autoHide: 0 })
+    },
+    // 说话口型：文本在流，嘴就动
+    onTextDelta: () => {
+      noteActivity()
+      if (l2dReady) l2d.startTalking()
+    },
+    onDone: () => {
+      if (l2dReady) l2d.stopTalking()
     }
   })
 
-  // 工作台：大脑标签
   if (mode === MODE.WORKBENCH) {
     ui.setBrain(brainLabel())
+    wireWorkbenchPanel()
   }
 
-  // 桌宠：尝试加载 Live2D 模型
+  // 桌宠：加载模型 + 尺寸控制 + 待机加成
   if (mode === MODE.PET) {
-    await tryLoadLive2D()
-    // 无头自测：轮换 6 情绪，验证表情映射全部命中
+    wirePetControls()
+    await tryLoadLive2D(ui.els.canvas, ui.els.placeholder)
+    startIdleWatch()
     if (params.get('pettest') === '1') runEmotionSelftest()
   }
 
+  // 工作台：凪面板里也加载一份
+  if (mode === MODE.WORKBENCH) {
+    await tryLoadLive2D(document.getElementById('wb-live2d-canvas'), document.getElementById('wb-live2d-placeholder'))
+    renderMotionPanel()
+  }
+
   // 无头自测：自动发一条消息验证 对话 IPC → 事件广播 → UI 渲染 全链路
-  // （testmsg 参数可覆盖默认消息，用于验证工具调用等特定链路）
   if (params.get('selftest') === '1') {
     setTimeout(() => sendText(params.get('testmsg') || '你好，凪'), 3000)
     setTimeout(runPetSelftest, 6000)
@@ -164,32 +221,273 @@ function wireWindowButtons() {
   on('btn-close-settings', () => closeSettings())
 }
 
+/* ---------------- 桌宠：尺寸自由调节 + 待机加成 ---------------- */
+function wirePetControls() {
+  const el = document.getElementById('pet-root')
+  // 鼠标在桌宠上就是"有动静"
+  el?.addEventListener('pointermove', noteActivity)
+  el?.addEventListener('pointerdown', noteActivity)
+
+  // 工具栏 ＋／－：等比缩放窗口（右下角锚定）
+  const resizeBy = (factor) => {
+    const b = window.__nagiPetSize || { width: 400, height: 600 }
+    const width = Math.round(Math.min(760, Math.max(240, b.width * factor)))
+    applyPetSize(width)
+  }
+  document.getElementById('btn-pet-grow')?.addEventListener('click', () => resizeBy(1.12))
+  document.getElementById('btn-pet-shrink')?.addEventListener('click', () => resizeBy(1 / 1.12))
+  document.getElementById('btn-pet-action')?.addEventListener('click', () => {
+    noteActivity()
+    if (l2dReady) l2d.randomMotion()
+  })
+
+  // Ctrl+滚轮 快速缩放
+  el?.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      resizeBy(e.deltaY < 0 ? 1.08 : 1 / 1.08)
+    },
+    { passive: false }
+  )
+
+  // 右下角拖拽手柄：拖多少改多少，等比（保持 2:3）
+  const grip = document.getElementById('pet-resizer')
+  let dragging = false
+  let start = null
+  grip?.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragging = true
+    start = { x: e.clientX, y: e.clientY, w: window.__nagiPetSize?.width || 400, h: window.__nagiPetSize?.height || 600 }
+    grip.setPointerCapture(e.pointerId)
+  })
+  grip?.addEventListener('pointermove', (e) => {
+    if (!dragging) return
+    const dw = e.clientX - start.x
+    const dh = e.clientY - start.y
+    // 取变化更大的那个方向，保持等比
+    const byW = start.w + dw
+    const byH = (start.h + dh) * (2 / 3)
+    const width = Math.abs(dw) >= Math.abs(dh) ? byW : byH
+    applyPetSize(width)
+  })
+  const endDrag = () => {
+    if (!dragging) return
+    dragging = false
+    if (window.__nagiPetSize) window.nagi.win.resize({ ...window.__nagiPetSize, persist: true })
+  }
+  grip?.addEventListener('pointerup', endDrag)
+  grip?.addEventListener('pointercancel', endDrag)
+
+  wirePetDragAndPoke(el)
+}
+
+/**
+ * 拖动窗口 + 戳一戳。
+ * 因为 #pet-root 不再是 -webkit-app-region: drag（见 css/base.css），
+ * 鼠标事件能正常到达渲染层，于是可以做到：
+ *   按住任意部位拖动 → 窗口跟着走；原地松手（位移 < 4px）→ 算戳一下。
+ * 比"整窗当标题栏拖"多了一层语义：抓她=搬家，点她=逗她。
+ */
+function wirePetDragAndPoke(el) {
+  if (!el) return
+  const DRAG_THRESHOLD = 4
+  let st = null
+
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return
+    // 工具条按钮 / 缩放滑杆 / 气泡 / 右下角手柄 不参与拖动
+    if (e.target?.closest?.('button, input, .bubble, #pet-resizer')) return
+    // window.screenX/Y 是同步可读的窗口左上角（DIP），不必再问主进程，
+    // 避免"按下后立刻快拖"时坐标还没回来、窗口跳到屏幕角落的竞态。
+    st = { sx: e.screenX, sy: e.screenY, wx: window.screenX, wy: window.screenY, moved: false, id: e.pointerId }
+    try {
+      el.setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+  })
+
+  el.addEventListener('pointermove', (e) => {
+    if (!st || e.pointerId !== st.id) return
+    const dx = e.screenX - st.sx
+    const dy = e.screenY - st.sy
+    if (!st.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) st.moved = true
+    if (st.moved) window.nagi.win.moveTo(st.wx + dx, st.wy + dy)
+  })
+
+  const finish = (e) => {
+    if (!st || (e && e.pointerId !== st.id)) return
+    const wasDrag = st.moved
+    st = null
+    try {
+      el.releasePointerCapture(e?.pointerId)
+    } catch {
+      /* ignore */
+    }
+    // 原地松手 = 戳一下（拖动过就不算）
+    if (!wasDrag) pokeHer()
+  }
+  el.addEventListener('pointerup', finish)
+  el.addEventListener('pointercancel', () => {
+    st = null
+  })
+}
+
+/** 戳一戳：演一下 TapBody，再让主进程挑台词（气泡 / 情绪 / 日记都走那条链） */
+function pokeHer() {
+  noteActivity()
+  if (l2dReady) l2d.playMotion('TapBody')
+  window.nagi?.pet?.poke()?.catch?.(() => {})
+}
+
+/** 应用桌宠尺寸（等比 2:3），拖动中不落盘，松手才 persist */
+function applyPetSize(width) {
+  const w = Math.round(Math.min(760, Math.max(240, width)))
+  const h = Math.round(w * 1.5)
+  window.__nagiPetSize = { width: w, height: h }
+  window.nagi.win.resize({ width: w, height: h, persist: false })
+  // 画布随窗口变化由 pixi 的 resizeTo 处理；这里补一次确保立刻生效
+  if (l2dReady) setTimeout(() => l2d.resize(), 60)
+}
+
+/* ---------------- 工作台：凪面板 ---------------- */
+function wireWorkbenchPanel() {
+  const panel = document.getElementById('nagi-panel')
+  const splitter = document.getElementById('wb-splitter')
+  const expandBtn = document.getElementById('btn-nagi-panel-expand')
+  if (!panel) return
+
+  // 记忆上次的宽度与折叠状态
+  const savedW = Number(localStorage.getItem('nagi.panelWidth'))
+  if (Number.isFinite(savedW) && savedW >= 240 && savedW <= 460) {
+    panel.style.flexBasis = savedW + 'px'
+    panel.style.width = savedW + 'px'
+  }
+  const collapsed = localStorage.getItem('nagi.panelCollapsed') === '1'
+  setPanelCollapsed(collapsed, { silent: true })
+
+  function setPanelCollapsed(c, { silent = false } = {}) {
+    panel.classList.toggle('collapsed', c)
+    expandBtn?.classList.toggle('hidden', !c)
+    if (!silent) localStorage.setItem('nagi.panelCollapsed', c ? '1' : '0')
+    // 面板尺寸变了，画布要重排（CSS 有过渡，稍等一下再量）
+    setTimeout(() => l2dReady && l2d.resize(), 220)
+  }
+  document.getElementById('btn-nagi-panel-collapse')?.addEventListener('click', () => setPanelCollapsed(true))
+  expandBtn?.addEventListener('click', () => setPanelCollapsed(false))
+
+  // 拖动改宽
+  splitter?.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    splitter.setPointerCapture(e.pointerId)
+    const startX = e.clientX
+    const startW = panel.getBoundingClientRect().width
+    const move = (ev) => {
+      const w = Math.round(Math.min(460, Math.max(240, startW - (ev.clientX - startX))))
+      panel.style.flexBasis = w + 'px'
+      panel.style.width = w + 'px'
+      l2dReady && l2d.resize()
+    }
+    const up = () => {
+      splitter.removeEventListener('pointermove', move)
+      splitter.removeEventListener('pointerup', up)
+      localStorage.setItem('nagi.panelWidth', String(Math.round(panel.getBoundingClientRect().width)))
+    }
+    splitter.addEventListener('pointermove', move)
+    splitter.addEventListener('pointerup', up)
+  })
+
+  // 缩放滑杆
+  const scale = document.getElementById('wb-l2d-scale')
+  const scaleVal = document.getElementById('wb-l2d-scale-val')
+  if (scale) {
+    scale.value = String(settings?.live2d?.scale ?? 1)
+    if (scaleVal) scaleVal.textContent = Number(scale.value).toFixed(2)
+    scale.addEventListener('input', () => {
+      const v = Number(scale.value)
+      if (scaleVal) scaleVal.textContent = v.toFixed(2)
+      if (l2dReady) l2d.setScale(v)
+    })
+    scale.addEventListener('change', async () => {
+      await window.nagi.settings.set({ live2d: { scale: Number(scale.value) } })
+      settings = await window.nagi.settings.get()
+    })
+  }
+
+  // 动作按钮
+  document.getElementById('btn-wb-random-motion')?.addEventListener('click', () => {
+    const r = l2d.randomMotion()
+    if (r) ui.addToolLog(`（凪动了一下：${r.group} #${r.index + 1}）`)
+  })
+  document.getElementById('btn-wb-stop-motion')?.addEventListener('click', () => l2d.stopMotions())
+  document.getElementById('btn-wb-mirror')?.addEventListener('click', async () => {
+    const next = !(settings?.live2d?.mirror ?? false)
+    l2d.setMirror(next)
+    await window.nagi.settings.set({ live2d: { mirror: next } })
+    settings = await window.nagi.settings.get()
+  })
+}
+
+/** 把模型里的动作组渲染成一排按钮：点一下她就演一遍 */
+function renderMotionPanel() {
+  const box = document.getElementById('wb-motion-list')
+  if (!box) return
+  box.innerHTML = ''
+  const catalog = l2d.motionCatalog()
+  const groups = Object.keys(catalog)
+  if (!groups.length) {
+    const d = document.createElement('div')
+    d.className = 'dim'
+    d.textContent = '（这个模型没有动作）'
+    box.appendChild(d)
+    return
+  }
+  for (const group of groups) {
+    const label = document.createElement('div')
+    label.className = 'np-group'
+    label.textContent = group
+    box.appendChild(label)
+    catalog[group].forEach((name, i) => {
+      const b = document.createElement('button')
+      b.textContent = name
+      b.title = `${group} · ${name}`
+      b.addEventListener('click', () => l2d.playMotion(group, i))
+      box.appendChild(b)
+    })
+  }
+}
+
 /* ---------------- Live2D ---------------- */
-async function tryLoadLive2D() {
+async function tryLoadLive2D(canvas, placeholder) {
+  if (!canvas) return
   const cfg = settings?.live2d || {}
   const list = await window.nagi.models.list()
   if (!list.models || list.models.length === 0) {
-    ui.addMonologue?.('（未找到 Live2D 模型，桌宠显示占位。请把模型放进 models/ 目录。）')
+    ui.addToolLog?.('（未找到 Live2D 模型，请把模型放进 models/ 目录。）')
     console.warn('[live2d] models 目录下没有 *.model3.json，跳过模型加载。模型目录：', list.dir)
     return
   }
   const rel = cfg.modelPath && list.models.includes(cfg.modelPath) ? cfg.modelPath : list.models[0]
   const url = `nagi-local://models/${rel}`
   try {
-    await l2d.load(ui.els.canvas, url, {
+    await l2d.load(canvas, url, {
       scale: cfg.scale || 1,
       mirror: !!cfg.mirror,
       eyeBlink: cfg.eyeBlink !== false,
       focusFollow: cfg.focusFollow !== false
     })
     l2dReady = true
-    ui.els.placeholder.classList.add('hidden')
+    placeholder?.classList.add('hidden')
     // 模型就位后立刻同步当前情绪（初始拉取发生在模型加载前）
-    if (currentMood) l2d.setEmotion(currentMood.expr)
-    console.log('[live2d] 已加载模型：', rel, '表情：', l2d.listExpressions())
+    if (currentMood) l2d.setEmotion(currentMood.expr, { motion: false })
+    console.log('[live2d] 已加载模型：', rel, '表情：', l2d.listExpressions().length, '动作组：', l2d.listMotionGroups().join('/'))
   } catch (err) {
     console.error('[live2d] 加载失败：', err)
-    ui.showBubble('模型加载失败：' + err.message)
+    if (mode === MODE.PET) ui.showBubble('模型加载失败：' + err.message)
+    else ui.addToolLog('模型加载失败：' + err.message)
   }
 }
 
@@ -198,12 +496,16 @@ function runEmotionSelftest() {
   setTimeout(() => {
     console.log('[selftest] 模型表情列表:', JSON.stringify(l2d.listExpressions()))
     console.log('[selftest] 动作组:', JSON.stringify(l2d.listMotionGroups()))
+    console.log('[selftest] 动作目录:', JSON.stringify(l2d.motionCatalog()))
     const results = {}
+    const motions = {}
     for (const e of EMOTIONS) {
       const hit = l2d.resolveExpression(e)
+      const mo = l2d.resolveMotion(e)
       results[e] = hit
-      l2d.setEmotion(e)
-      console.log(`[selftest] 情绪 ${e} → 表情 ${hit || '(无映射，保持默认)'}`)
+      motions[e] = mo
+      l2d.setEmotion(e, { motion: 'force' })
+      console.log(`[selftest] 情绪 ${e} → 表情 ${hit || '(无映射，保持默认)'} / 动作 ${mo || '(无)'}`)
     }
     const missed = EMOTIONS.filter((e) => !results[e])
     console.log(missed.length ? `[selftest] ⚠ 未命中: ${missed.join(',')}` : '[selftest] ✔ 6/6 情绪全部映射到真实表情')
@@ -253,9 +555,20 @@ function fillSettingsForm() {
   document.getElementById('set-cdp').value = tools.cdpPort ?? 9222
   document.getElementById('set-confirm').checked = tools.confirmHighRisk !== false
   document.getElementById('set-l2d-scale').value = settings?.live2d?.scale ?? 1
+  // 桌宠大小
+  const sizeEl = document.getElementById('set-pet-size')
+  if (sizeEl) {
+    const w = settings?.live2d?.petWidth ?? 400
+    sizeEl.value = String(w)
+    const label = document.getElementById('set-pet-size-val')
+    if (label) label.textContent = `${w} × ${Math.round(w * 1.5)}`
+  }
+  const boost = document.getElementById('set-idle-boost')
+  if (boost) boost.checked = settings?.live2d?.idleBoost !== false
 
   refreshSecretStatus()
   refreshModels()
+  refreshMemory()
 }
 
 async function refreshSecretStatus() {
@@ -267,6 +580,34 @@ async function refreshSecretStatus() {
     document.getElementById('set-ha-status').textContent = ha
   } catch {
     /* ignore */
+  }
+}
+
+/** 她的长期记忆：列出来 + 单条遗忘 */
+async function refreshMemory() {
+  const box = document.getElementById('memory-list')
+  if (!box || !window.nagi.memory) return
+  try {
+    const list = await window.nagi.memory.list()
+    box.innerHTML = ''
+    for (const m of list) {
+      const row = document.createElement('div')
+      row.className = 'mem-item'
+      const t = document.createElement('div')
+      t.className = 't'
+      t.textContent = m.text
+      const del = document.createElement('button')
+      del.textContent = '✕'
+      del.title = '让她忘掉这条'
+      del.addEventListener('click', async () => {
+        await window.nagi.memory.remove({ id: m.id })
+        refreshMemory()
+      })
+      row.append(t, del)
+      box.appendChild(row)
+    }
+  } catch (err) {
+    console.warn('[memory] 列表读取失败', err.message)
   }
 }
 
@@ -327,17 +668,46 @@ function wireSettingsPage() {
     ui.addToolLog('API Key 已删除')
   })
 
+  // 桌宠大小滑杆：拖动即改窗口（等比 2:3），主进程负责落盘
+  const sizeEl = document.getElementById('set-pet-size')
+  sizeEl?.addEventListener('input', () => {
+    const w = Number(sizeEl.value)
+    const label = document.getElementById('set-pet-size-val')
+    if (label) label.textContent = `${w} × ${Math.round(w * 1.5)}`
+    window.nagi.win.resize({ width: w, height: Math.round(w * 1.5) })
+  })
+  sizeEl?.addEventListener('change', async () => {
+    settings = await window.nagi.settings.get()
+  })
+
   on('btn-refresh-models', refreshModels)
   on('btn-save-l2d', async () => {
     await window.nagi.settings.set({
       live2d: {
         modelPath: document.getElementById('set-model-path').value,
-        scale: Number(document.getElementById('set-l2d-scale').value) || 1
+        scale: Number(document.getElementById('set-l2d-scale').value) || 1,
+        idleBoost: document.getElementById('set-idle-boost')?.checked !== false
       }
     })
     settings = await window.nagi.settings.get()
-    ui.addToolLog('Live2D 设置已保存（回到桌宠后生效）')
+    if (l2dReady) l2d.setScale(settings?.live2d?.scale || 1)
+    ui.addToolLog('Live2D 设置已保存')
   })
+
+  // 记忆
+  on('btn-memory-add', async () => {
+    const input = document.getElementById('memory-new')
+    const v = input?.value.trim()
+    if (!v) return
+    await window.nagi.memory.add(v)
+    if (input) input.value = ''
+    await refreshMemory()
+  })
+  on('btn-history-clear', async () => {
+    await window.nagi.memory.clearHistory()
+    ui.addToolLog('对话历史已清空（长期记忆保留）')
+  })
+
   on('btn-save-tools', async () => {
     await window.nagi.settings.set({
       tools: {
@@ -383,9 +753,18 @@ function wireSettingsPage() {
   })
 }
 
-// 调试：暴露情绪触发
+// 调试：暴露情绪触发 / 动作触发
 window.__nagiTestEmotion = (name) => {
   if (!EMOTIONS.includes(name)) return false
   ui.setMood(name)
-  return l2d.setEmotion(name)
+  return l2d.setEmotion(name, { motion: 'force' })
 }
+window.__nagiTestMotion = (group) => l2d.playMotion(group)
+window.__nagiTestMotion2 = (group, index) => l2d.playMotion(group, index)
+window.__nagiStopMotions = () => l2d.stopMotions()
+window.__nagiMotionCatalog = () => l2d.motionCatalog()
+window.__nagiExpressionList = () => l2d.listExpressions()
+window.__nagiTestExpression = (name) => l2d.setExpressionRaw(name)
+window.__nagiReadParams = (ids) => l2d.readParams(ids)
+window.__nagiRedParams = () => l2d.redParamIds()
+window.__nagiProbeRed = () => l2d.probeRedOnce()

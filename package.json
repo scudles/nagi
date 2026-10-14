@@ -16,6 +16,7 @@
     "dist": "electron-vite build && electron-builder",
     "pack": "electron-vite build && electron-builder --dir",
     "test": "node --test",
+    "verify:ui": "node scripts/verify-ui.mjs",
     "viewer": "node tools/live2d-viewer/server.mjs",
     "postinstall": "node scripts/setup-core.mjs"
   },

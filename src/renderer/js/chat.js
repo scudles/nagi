@@ -6,7 +6,7 @@ import * as ui from './ui.js'
 
 let current = null // 进行中的凪消息节点
 let streamed = false // 本轮是否已经流式输出过
-let hooks = { onEmotion: () => {}, onStatus: () => {}, onMonologue: () => {} }
+let hooks = { onEmotion: () => {}, onStatus: () => {}, onMonologue: () => {}, onTextDelta: () => {}, onDone: () => {} }
 let busy = false
 
 export function initChat(customHooks = {}) {
@@ -60,6 +60,7 @@ function onAgentEvent(evt) {
       current.append(evt.text || '')
       streamed = true
       ui.appendBubble(evt.text || '')
+      hooks.onTextDelta(evt.text || '') // 驱动口型：她在说话，嘴要动
       break
 
     case AGENT_EVENT.EMOTION:
@@ -89,6 +90,7 @@ function onAgentEvent(evt) {
       if (!streamed && evt.text) ui.addMessage('nagi', evt.text)
       ui.setStatus('idle')
       ui.hideBubble()
+      hooks.onDone()
       break
 
     case AGENT_EVENT.ERROR:
@@ -96,6 +98,7 @@ function onAgentEvent(evt) {
       ui.setStatus('idle')
       current = null
       streamed = false
+      hooks.onDone()
       break
   }
 }

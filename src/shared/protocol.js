@@ -17,6 +17,9 @@ export const IPC = {
   WINDOW_HIDE: 'window:hide',
   WINDOW_CLOSE: 'window:close',
   WINDOW_OPEN_DIARY: 'window:open-diary',
+  WINDOW_RESIZE: 'window:resize',
+  // 桌宠拖动：渲染层用原生 pointer 事件 + window.screenX 驱动窗口移动
+  WINDOW_MOVE: 'window:move',
   // 对话 / Agent
   CHAT_SEND: 'chat:send',
   CHAT_ABORT: 'chat:abort',
@@ -26,6 +29,11 @@ export const IPC = {
   MOOD_GET: 'mood:get',
   DIARY_LIST: 'diary:list',
   DIARY_READ: 'diary:read',
+  // 长期记忆 / 对话历史（跨会话）
+  MEMORY_LIST: 'memory:list',
+  MEMORY_ADD: 'memory:add',
+  MEMORY_DELETE: 'memory:delete',
+  HISTORY_CLEAR: 'history:clear',
   // 智能家居
   HA_TEST: 'ha:test',
   HA_LIST: 'ha:list',
@@ -80,7 +88,9 @@ export const SECRET_KEYS = {
 
 /** 各家模型（OpenAI 兼容）预设 */
 export const PROVIDER_PRESETS = {
-  workbuddy: { label: '凪云（免密钥）', baseURL: '', model: 'hunyuan-chat' },
+  // 凪云默认用 deepseek-v4.1-flash：2026-10-14 实测它在同等人格提示下复读最少、
+  // 最会引用上下文、响应也快（hunyuan-chat 倾向重复固定句式）
+  workbuddy: { label: '凪云（免密钥）', baseURL: '', model: 'deepseek-v4.1-flash' },
   openai: { label: 'OpenAI ChatGPT', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   hunyuan: { label: '腾讯混元', baseURL: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-turbos-latest' },
   deepseek: { label: 'DeepSeek', baseURL: 'https://api.deepseek.com', model: 'deepseek-chat' },
@@ -106,7 +116,10 @@ export const DEFAULT_SETTINGS = {
     scale: 1,
     mirror: false,
     eyeBlink: true,
-    focusFollow: true
+    focusFollow: true,
+    petWidth: 400, // 桌宠窗口尺寸（可用右下角手柄/Ctrl+滚轮自由调）
+    petHeight: 600,
+    idleBoost: true // 待机加成：一段时间无互动时放大一点、换个姿势
   },
   homeassistant: {
     enabled: false,

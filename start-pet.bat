@@ -1,21 +1,24 @@
 @echo off
 chcp 65001 >nul
-title 凪 Nagi
+title Nagi
 cd /d "%~dp0"
 
-rem 本机全局设了 ELECTRON_RUN_AS_NODE=1，会让 electron 退化成 node，必须先清掉
+rem This machine sets ELECTRON_RUN_AS_NODE=1 globally, which makes electron
+rem behave as plain node. Clear it before launching.
 set ELECTRON_RUN_AS_NODE=
 
-rem 若未构建过，先构建
+rem Build first if never built. NOTE: keep this file ASCII-only -- cmd.exe
+rem mis-parses non-ASCII bytes under the default console codepage and the
+rem script breaks apart into bogus commands.
 if not exist "out\main\index.js" (
-  echo [凪] 首次启动，正在构建...
+  echo [Nagi] first run, building...
   call npm run build
   if errorlevel 1 (
-    echo [凪] 构建失败，请检查网络与依赖。
+    echo [Nagi] build failed. Check network and dependencies.
     pause
     exit /b 1
   )
 )
 
-echo [凪] 启动桌宠...
+echo [Nagi] launching desktop pet...
 start "" "node_modules\electron\dist\electron.exe" .

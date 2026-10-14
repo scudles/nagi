@@ -7,7 +7,8 @@ import { join } from 'node:path'
 import { IPC, EVT, SECRET_KEYS, MODE } from '../../shared/protocol.js'
 import { getSettings, saveSettings, settingsPath } from '../settings-store.js'
 import { setSecret, hasSecret, deleteSecret } from '../keystore.js'
-import { broadcast, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow } from '../windows.js'
+import { broadcast, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow, resizePetWindow, movePetWindow } from '../windows.js'
+import { memoryList, memoryAdd, memoryRemove, historyClear } from '../agent.js'
 import { modelsDir, projectRoot } from '../paths.js'
 
 const ALL_SECRET_KEYS = Object.values(SECRET_KEYS)
@@ -81,6 +82,18 @@ export function registerSettingsIpc() {
   }))
 
   ipcMain.handle(IPC.MODELS_LIST, () => ({ dir: modelsDir, models: listModels() }))
+
+  // 桌宠尺寸（右下角手柄 / Ctrl+滚轮 / 设置页滑杆都走这里）
+  ipcMain.handle(IPC.WINDOW_RESIZE, (_e, size) => resizePetWindow(size || {}))
+
+  // 桌宠拖动（渲染层原生 pointer 事件驱动窗口移动）
+  ipcMain.on(IPC.WINDOW_MOVE, (_e, { x, y } = {}) => movePetWindow(x, y))
+
+  // 长期记忆 / 对话历史
+  ipcMain.handle(IPC.MEMORY_LIST, () => memoryList())
+  ipcMain.handle(IPC.MEMORY_ADD, (_e, text) => memoryAdd(text))
+  ipcMain.handle(IPC.MEMORY_DELETE, (_e, payload) => memoryRemove(payload || {}))
+  ipcMain.handle(IPC.HISTORY_CLEAR, () => historyClear())
 
   ipcMain.handle(IPC.WINDOW_SET_MODE, (_e, mode) => switchMode(mode))
 
