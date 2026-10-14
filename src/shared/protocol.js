@@ -20,6 +20,11 @@ export const IPC = {
   CHAT_SEND: 'chat:send',
   CHAT_ABORT: 'chat:abort',
   TOOL_CONFIRM: 'tool:confirm',
+  // 桌宠交互 / 独白日记
+  PET_POKE: 'pet:poke',
+  MOOD_GET: 'mood:get',
+  DIARY_LIST: 'diary:list',
+  DIARY_READ: 'diary:read',
   // 智能家居
   HA_TEST: 'ha:test',
   HA_LIST: 'ha:list',
@@ -32,7 +37,9 @@ export const IPC = {
 export const EVT = {
   AGENT: 'agent:event',
   SETTINGS_CHANGED: 'settings:changed',
-  HA_EVENT: 'ha:event'
+  HA_EVENT: 'ha:event',
+  MOOD: 'mood:change',   // 情绪状态机快照 { mood, intensity, expr, label }
+  PET: 'pet:event'       // 桌宠交互 { kind: 'poke', text, expr }
 }
 
 /** 6 种离散情绪（与旧情感系统一致） */
@@ -72,6 +79,7 @@ export const SECRET_KEYS = {
 
 /** 各家模型（OpenAI 兼容）预设 */
 export const PROVIDER_PRESETS = {
+  workbuddy: { label: '凪云（免密钥）', baseURL: '', model: 'hunyuan-chat' },
   openai: { label: 'OpenAI ChatGPT', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   hunyuan: { label: '腾讯混元', baseURL: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-turbos-latest' },
   deepseek: { label: 'DeepSeek', baseURL: 'https://api.deepseek.com', model: 'deepseek-chat' },
@@ -87,13 +95,13 @@ export const PROVIDER_PRESETS = {
 export const DEFAULT_SETTINGS = {
   mode: MODE.PET,
   llm: {
-    provider: 'openai',
-    baseURL: PROVIDER_PRESETS.openai.baseURL,
-    model: PROVIDER_PRESETS.openai.model,
+    provider: 'workbuddy',
+    baseURL: PROVIDER_PRESETS.workbuddy.baseURL,
+    model: PROVIDER_PRESETS.workbuddy.model,
     temperature: 0.7
   },
   live2d: {
-    modelPath: '',
+    modelPath: 'Lisette/Lisette.model3.json',
     scale: 1,
     mirror: false,
     eyeBlink: true,

@@ -21,11 +21,13 @@ async function* streamOf(chunks) {
   }
 }
 
-test('buildSystemPrompt 包含情绪标签契约与 JSON 协议说明', () => {
+test('buildSystemPrompt：原生通道不含 JSON 协议提示，兜底通道含', () => {
   const p = buildSystemPrompt()
   assert.ok(p.includes('[calm]'))
-  assert.ok(p.includes('JSON 代码块'))
   assert.ok(p.includes('凪'))
+  assert.ok(!p.includes('JSON 代码块'), '原生通道不应注入 JSON 协议提示（会干扰模型选通道）')
+  const p2 = buildSystemPrompt({ nativeTools: false })
+  assert.ok(p2.includes('JSON 代码块'))
 })
 
 test('纯文本回复：情绪标签被解析且不进正文，事件序列完整', async () => {

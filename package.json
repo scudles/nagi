@@ -18,6 +18,7 @@
     "postinstall": "node scripts/setup-core.mjs"
   },
   "dependencies": {
+    "@tencent-ai/workbuddy-cloud-sdk": "^0.1.3-dev.c090db7.202610050023",
     "openai": "^4.104.0",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^7.4.3",

@@ -2,12 +2,15 @@
 // Agent 会话编排：组装 LLM 客户端 + 工具集 + 安全门 + 确认回路，跑 core/agent/loop。
 // 未配置 API Key 时回退到本地占位大脑，保证应用开箱可用。
 
-import { app } from 'electron'
+import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
-import { AGENT_EVENT, AGENT_STATE, EVT, SECRET_KEYS } from '../shared/protocol.js'
+import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/protocol.js'
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createClient, chatStream } from '../core/llm/openai-compatible.js'
 import { resolveLlm, supportsNativeTools } from '../core/llm/providers.js'
+import { initCloudBrain, cloudBrainStatus, cloudChatStream } from '../core/llm/cloud-workbuddy.js'
+import { createMood } from '../core/emotion/mood.js'
+import { NagiPersona } from '../core/persona.js'
 import { TOOL_SCHEMAS, createToolRunner } from '../core/tools/registry.js'
 import { createFileTools } from '../core/tools/files.js'
 import { createSystemTools } from '../core/tools/system.js'
@@ -17,6 +20,7 @@ import { createNativeTools } from './native-tools.js'
 import { getSettings } from './settings-store.js'
 import { getSecret, hasSecret } from './keystore.js'
 import { broadcast, getWorkbenchWindow } from './windows.js'
+import { appendDiary } from './diary.js'
 
 /* ---------------- 全局单例 ---------------- */
 const nativeTools = createNativeTools({ getWorkbenchWindow })
@@ -58,16 +62,66 @@ let busy = false
 let currentAbort = null
 const pendingConfirms = new Map() // id -> resolve
 
+/* ---------------- 情绪状态机（主进程单例：双窗同步 + LLM 直读） ---------------- */
+const mood = createMood()
+
+function broadcastMood() {
+  broadcast(EVT.MOOD, mood.current())
+}
+
+// Agent 事件出口：EMOTION 只记最后一帧（DONE 时才提议情绪，流式中途不翻脸），其余直广播
+let lastEmotion = null
+function emitAgentEvent(e) {
+  if (e.type === AGENT_EVENT.EMOTION) {
+    lastEmotion = e.emotion
+    broadcast(EVT.AGENT, e)
+    return
+  }
+  if (e.type === AGENT_EVENT.DONE) {
+    if (lastEmotion) {
+      mood.propose(lastEmotion, 1.0, 'llm')
+      broadcastMood()
+    }
+    broadcast(EVT.AGENT, e)
+    return
+  }
+  broadcast(EVT.AGENT, e)
+}
+
+/* ---------------- 情绪引擎：心跳 + 独白日史 ---------------- */
+let moodTickTimer = null
+let diaryTimer = null
+
+/** 启动情绪心跳（15s）与独白日史定时器（42s × 50%）；app ready 后调用 */
+export function startMoodEngine() {
+  if (moodTickTimer) return
+  moodTickTimer = setInterval(() => {
+    mood.tick()
+    broadcastMood()
+  }, 15000)
+  // 内心独白写日史文件（D2 决策：UI 不常驻，用户在日记查看器/文件夹里按需打开）
+  diaryTimer = setInterval(() => {
+    if (Math.random() < 0.5) {
+      appendDiary(mood.current(), mood.pickMonologue())
+    }
+  }, 42000)
+}
+
+export function stopMoodEngine() {
+  if (moodTickTimer) clearInterval(moodTickTimer)
+  if (diaryTimer) clearInterval(diaryTimer)
+  moodTickTimer = null
+  diaryTimer = null
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** 未配置 key 时的占位大脑（保持开箱可用） */
+/** 未配置 key / 云端不可用时的本地占位大脑（D4：persona 关键词规则版） */
 async function mockRun(userText, emit) {
   emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.THINKING })
-  const emotion = /[?？]/.test(userText) ? 'puzzled' : /[!！好谢谢]/.test(userText) ? 'smile' : 'calm'
-  emit({ type: AGENT_EVENT.EMOTION, emotion, intensity: 1 })
-  const body =
-    `……嗯，了解了。你说的是：「${userText}」。\n` +
-    `（当前是本地占位大脑——还没有配置模型 API Key。打开 设置 → 大脑，填入提供商与 API Key 后，我就是真的了。）`
+  const r = NagiPersona.reply(userText)
+  emit({ type: AGENT_EVENT.EMOTION, emotion: r.expr, intensity: 1 })
+  const body = r.text
   for (const ch of body) {
     emit({ type: AGENT_EVENT.TEXT_DELTA, text: ch })
     await sleep(18)
@@ -96,11 +150,14 @@ function fakeCallModel() {
   }
 }
 
-function buildMessages(userText) {
+function buildMessages(userText, supportsNative) {
+  // 情绪连贯：强度够高时把当前情绪作为 user 消息前缀（只影响本轮，不改系统提示词）
+  const hint = mood.hintForLLM()
+  const userContent = hint ? '（凪当前的情绪：' + hint + '）\n' + userText : userText
   return [
-    { role: 'system', content: buildSystemPrompt() },
+    { role: 'system', content: buildSystemPrompt({ nativeTools: supportsNative }) },
     ...history,
-    { role: 'user', content: userText }
+    { role: 'user', content: userContent }
   ]
 }
 
@@ -123,11 +180,25 @@ export async function runTurn(userText, emit) {
   const llm = resolveLlm(settings.llm || {})
   const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
   const fakeLlm = process.env.NAGI_FAKE_LLM === '1'
+  const useCloud = llm.provider === 'workbuddy' && !fakeLlm
 
-  if (!hasKey && !fakeLlm) return mockRun(userText, emit)
+  if (!hasKey && !fakeLlm && !useCloud) return mockRun(userText, emit)
+
+  // 云端大脑：未就绪则尝试初始化；仍不可用则降级本地占位（中文原因提示）
+  if (useCloud && !cloudBrainStatus().ok) {
+    const st = await initCloudBrain()
+    if (!st.ok) {
+      broadcast(EVT.AGENT, { type: AGENT_EVENT.ERROR, message: '云端大脑暂不可用（' + (st.error || '未知原因') + '），先用本地模式陪你。' })
+      return mockRun(userText, emit)
+    }
+  }
 
   const apiKey = hasKey ? getSecret(SECRET_KEYS.LLM_API_KEY) : null
   const client = hasKey ? createClient({ apiKey, baseURL: llm.baseURL }) : null
+
+  // 云端（凪云）网关实测支持原生 function calling（2026-10-14 验证，hunyuan-chat 亦可），
+  // 与 openai 通道一致；假大脑固定走 JSON 兜底通道
+  const supportsNative = fakeLlm ? false : useCloud ? true : supportsNativeTools({ provider: llm.provider, model: llm.model })
 
   const fileRoot = settings.tools?.fileRoot || app.getPath('documents')
   const files = createFileTools({ fileRoot })
@@ -135,23 +206,25 @@ export async function runTurn(userText, emit) {
   const ha = getHa()
   const executeTool = createToolRunner({ files, system, browser: browserTools, ha, native: nativeTools })
 
-  const messages = buildMessages(userText)
+  const messages = buildMessages(userText, supportsNative)
   currentAbort = new AbortController()
 
   const r = await runAgentLoop({
     messages,
-    supportsNative: fakeLlm ? false : supportsNativeTools({ provider: llm.provider, model: llm.model }),
+    supportsNative,
     toolSchemas: TOOL_SCHEMAS,
     callModel: fakeLlm
       ? fakeCallModel()
-      : async ({ tools, signal }) =>
-          chatStream(client, {
-            model: llm.model,
-            messages,
-            temperature: llm.temperature,
-            tools,
-            signal: signal || currentAbort.signal
-          }),
+      : useCloud
+        ? async ({ tools, signal }) => cloudChatStream({ messages, tools, signal: signal || currentAbort.signal })
+        : async ({ tools, signal }) =>
+            chatStream(client, {
+              model: llm.model,
+              messages,
+              temperature: llm.temperature,
+              tools,
+              signal: signal || currentAbort.signal
+            }),
     executeTool,
     confirm: ({ id }) =>
       new Promise((resolve) => {
@@ -181,7 +254,8 @@ export async function handleChatSend(text) {
   if (!t) return { ok: false, error: '空消息' }
   if (busy) return { ok: false, error: '正在处理上一条消息' }
   busy = true
-  const emit = (e) => broadcast(EVT.AGENT, e)
+  mood.noteInteraction() // 连聊 burst 统计 + 刷新互动时间
+  const emit = (e) => emitAgentEvent(e)
   try {
     await runTurn(t, emit)
     return { ok: true }
@@ -193,6 +267,22 @@ export async function handleChatSend(text) {
     busy = false
     currentAbort = null
   }
+}
+
+/* ---------------- 桌宠交互：戳一戳 / 情绪读数 ---------------- */
+
+/** 当前情绪快照（渲染层轮询或 IPC 拉取用） */
+export function getMoodSnapshot() {
+  return mood.current()
+}
+
+/** 戳一戳：返回气泡台词 + 当时表情，并广播 PET 事件 */
+export function handlePoke() {
+  mood.noteInteraction() // 戳她也是互动：刷新冷落计时
+  const p = mood.pickPoke()
+  broadcastMood()
+  broadcast(EVT.PET, { kind: 'poke', text: p.text, expr: p.expr })
+  return p
 }
 
 /** 确认条回传 */
@@ -214,6 +304,7 @@ export function abortChat() {
 
 /** 退出前清理 */
 export async function disposeAgent() {
+  stopMoodEngine()
   try {
     await browserTools.dispose()
   } catch {

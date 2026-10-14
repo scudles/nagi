@@ -9,8 +9,9 @@ import { createTray } from './tray.js'
 import { registerSettingsIpc } from './ipc/settings.js'
 import { registerChatIpc } from './ipc/chat.js'
 import { registerHomeAssistantIpc } from './ipc/homeassistant.js'
+import { registerPetIpc } from './ipc/pet.js'
 import { loadSettings } from './settings-store.js'
-import { disposeAgent } from './agent.js'
+import { disposeAgent, startMoodEngine } from './agent.js'
 import { MODE } from '../shared/protocol.js'
 
 // ---- 运行环境开关 ----
@@ -44,6 +45,10 @@ if (!gotLock) {
     registerSettingsIpc()
     registerChatIpc()
     registerHomeAssistantIpc()
+    registerPetIpc()
+
+    // 情绪引擎：心跳 + 独白日史（双窗广播，退出时随 disposeAgent 停止）
+    startMoodEngine()
 
     // 窗口（NAGI_MODE=workbench 可覆盖初始形态，便于无头验证）
     const settings = loadSettings()

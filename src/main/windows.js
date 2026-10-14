@@ -19,6 +19,8 @@ const rendererPreload = () => join(__dirname, '../preload/index.mjs')
 function loadRenderer(win, mode) {
   // 自测钩子：工作台发一条消息验证对话链路；桌宠轮换情绪验证表情映射
   const testKey = process.env.NAGI_SELFTEST ? (mode === MODE.WORKBENCH ? 'selftest' : 'pettest') : null
+  // NAGI_SELFTEST_MSG 可覆盖自测消息内容（验证特定链路用，如触发工具调用）
+  const testMsg = process.env.NAGI_SELFTEST_MSG || ''
   // 把渲染层 console 转发到主进程 stdout，便于无头排查（两个窗都转发）
   if (process.env.NAGI_SELFTEST) {
     win.webContents.on('console-message', (...args) => {
@@ -27,10 +29,10 @@ function loadRenderer(win, mode) {
     })
   }
   if (isDev) {
-    win.loadURL(`${process.env.ELECTRON_RENDERER_URL}?mode=${mode}${testKey ? `&${testKey}=1` : ''}`)
+    win.loadURL(`${process.env.ELECTRON_RENDERER_URL}?mode=${mode}${testKey ? `&${testKey}=1` : ''}${testMsg ? `&testmsg=${encodeURIComponent(testMsg)}` : ''}`)
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), {
-      query: { mode, ...(testKey ? { [testKey]: '1' } : {}) }
+      query: { mode, ...(testKey ? { [testKey]: '1' } : {}), ...(testMsg ? { testmsg: testMsg } : {}) }
     })
   }
 }

@@ -5,7 +5,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, EVT } from '../shared/protocol.js'
 
-const ALLOWED_EVENTS = new Set([EVT.AGENT, EVT.SETTINGS_CHANGED, EVT.HA_EVENT])
+const ALLOWED_EVENTS = new Set([EVT.AGENT, EVT.SETTINGS_CHANGED, EVT.HA_EVENT, EVT.MOOD, EVT.PET])
 
 const api = {
   settings: {
@@ -31,6 +31,16 @@ const api = {
   ha: {
     test: () => ipcRenderer.invoke(IPC.HA_TEST),
     list: () => ipcRenderer.invoke(IPC.HA_LIST)
+  },
+  pet: {
+    poke: () => ipcRenderer.invoke(IPC.PET_POKE)
+  },
+  mood: {
+    get: () => ipcRenderer.invoke(IPC.MOOD_GET)
+  },
+  diary: {
+    list: () => ipcRenderer.invoke(IPC.DIARY_LIST),
+    read: (file) => ipcRenderer.invoke(IPC.DIARY_READ, { file })
   },
   app: {
     info: () => ipcRenderer.invoke(IPC.APP_GET_INFO)

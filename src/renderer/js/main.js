@@ -58,9 +58,47 @@ async function boot() {
   }
 
   // 无头自测：自动发一条消息验证 对话 IPC → 事件广播 → UI 渲染 全链路
+  // （testmsg 参数可覆盖默认消息，用于验证工具调用等特定链路）
   if (params.get('selftest') === '1') {
-    setTimeout(() => sendText('你好，凪'), 3000)
+    setTimeout(() => sendText(params.get('testmsg') || '你好，凪'), 3000)
+    setTimeout(runPetSelftest, 6000)
   }
+}
+
+/* ---------------- 情绪/戳击链路自测（无头） ---------------- */
+async function runPetSelftest() {
+  const report = (name, pass, detail) =>
+    console.log(`[selftest] ${pass ? '✔' : '✘'} ${name}${detail ? '：' + detail : ''}`)
+  let allPass = true
+  const check = (name, pass, detail) => {
+    if (!pass) allPass = false
+    report(name, pass, detail)
+  }
+  // 1. 初始快照
+  try {
+    const snap = await window.nagi.mood.get()
+    check('mood.get 初始快照', !!snap && typeof snap.mood === 'string', `mood=${snap?.mood} expr=${snap?.expr}`)
+  } catch (err) {
+    check('mood.get 初始快照', false, err.message)
+  }
+  // 2. 订阅 → 戳击 → MOOD/PET 双广播（handlePoke 会立即广播两者）
+  let moodSeen = null
+  let petSeen = null
+  const offMood = window.nagi.on(EVT.MOOD, (s) => { if (!moodSeen) moodSeen = s })
+  const offPet = window.nagi.on(EVT.PET, (p) => { if (!petSeen) petSeen = p })
+  try {
+    const p = await window.nagi.pet.poke()
+    check('pet.poke 返回台词', !!p && typeof p.text === 'string' && typeof p.expr === 'string',
+      p ? `「${p.text}」(${p.expr})` : '')
+  } catch (err) {
+    check('pet.poke 返回台词', false, err.message)
+  }
+  await new Promise((r) => setTimeout(r, 500))
+  offMood()
+  offPet()
+  check('MOOD 广播到达', !!moodSeen, moodSeen ? `${moodSeen.mood}/${moodSeen.expr}` : '未收到')
+  check('PET 广播到达', !!petSeen && typeof petSeen.text === 'string', petSeen ? `「${petSeen.text}」` : '未收到')
+  console.log(`[selftest] 情绪/戳击链路：${allPass ? '全部通过' : '存在失败项'}`)
 }
 
 function brainLabel() {
