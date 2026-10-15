@@ -49,6 +49,7 @@ import { broadcast, getWorkbenchWindow } from './windows.js'
 import { appendDiary, recentDiaryLines, cacheLeakCount, noteCacheLeak } from './diary.js'
 import { noteEvent, todayEvents, pruneJournals } from './journal.js'
 import { startMonitor, stopMonitor } from './monitor/index.js'
+import { getRag } from './rag/index.js'
 import {
   startReminderEngine,
   stopReminderEngine,
@@ -499,10 +500,29 @@ function upcomingReminderLines(now = Date.now()) {
   }
 }
 
-function buildMessages(userText, supportsNative) {
+/**
+ * 向量检索召回的往事片段（RAG）。
+ * 任何异常、引擎未就绪、超时都返回空数组——最坏情况只是这一轮没有往事，
+ * 与不开 RAG 时逐字一致。她记不起来的时候，也照样能把话接下去。
+ */
+async function recalledPieces(query) {
+  try {
+    const r = await getRag().recall(query)
+    return Array.isArray(r.results) ? r.results.map((x) => x.piece).filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 组装本轮消息。之所以是 async：开 RAG 时要先检索一次「相关往事」再拼上下文。
+ * 检索自带超时与静默降级，不会拖慢回复（见 recalledPieces）。
+ */
+async function buildMessages(userText, supportsNative) {
   ensureHistory()
   const snap = mood.current()
-  // 「此刻」上下文：时间/时段、距上次互动多久、当前情绪及强度、长期记忆、她最近说过的话。
+  // 「此刻」上下文：时间/时段、距上次互动多久、当前情绪及强度、长期记忆、
+  // 检索召回的往事、她最近说过的话。
   // 原先是在 user 消息前塞一句"（凪当前的情绪：担心）"，信息量太薄且会把模型钉在同一个
   // 情绪标签上；改为结构化注入，并且顺带给出"不要重复这些说法"的反复读约束。
   const context = buildContextBlock({
@@ -511,6 +531,7 @@ function buildMessages(userText, supportsNative) {
     mood: snap,
     relation: relationSummary(),
     memories: memoryLines(),
+    recalled: await recalledPieces(userText),
     recentReplies: recentAssistantReplies(history, 4),
     // 她替你记着的提醒：让她知道「有这几件事等着」，别把答应过的事忘了
     extra: upcomingReminderLines()
@@ -563,8 +584,22 @@ function extractMemoriesAsync({ client, llm, useCloud, userText, assistantText }
       if (!ops.add.length && !ops.remove.length) return
       const r = mergeMemoryOps(ops)
       console.log('[memory] 记忆更新：', r.before, '→', r.after, ops.add.length ? '新增 ' + ops.add.join(' / ') : '')
+      // 同步一份进向量档案：memory.json 只在「条数不多」时全量注入提示词，
+      // 攒多了就注不下去了；向量侧靠语义检索，条数不是问题。
+      syncFactsToRag(r.added, r.removed)
     })
     .catch((err) => console.warn('[memory] 抽取失败（忽略）：', err.message))
+}
+
+/** 记忆增删 → 向量档案同步（失败静默，档案落不下不影响对话） */
+function syncFactsToRag(added, removed) {
+  try {
+    const rag = getRag()
+    for (const t of added || []) if (t) rag.ingestFact({ text: t })
+    for (const t of removed || []) if (t) rag.forgetText(t)
+  } catch {
+    /* 档案写入失败不影响对话 */
+  }
 }
 
 function trimHistory(messages) {
@@ -624,7 +659,7 @@ export async function runTurn(userText, emit) {
     reminders: reminderTools()
   })
 
-  const messages = buildMessages(userText, supportsNative)
+  const messages = await buildMessages(userText, supportsNative)
   currentAbort = new AbortController()
 
   const r = await runAgentLoop({
@@ -697,6 +732,14 @@ export async function handleChatSend(text) {
     } catch {
       /* 记流水失败不影响对话 */
     }
+    // 这轮对话进长期档案（向量检索用）。
+    // 放在 finally 里：不管这轮是 mock 大脑、真大脑还是中途出错，只要她开了口，
+    // 这段对话就真实发生过，该进档案。RAG 未就绪时这只是一行 pending 文本。
+    try {
+      if (reply) getRag().ingestTurn({ user: t, assistant: reply, mood: mood.current().mood })
+    } catch {
+      /* 进档案失败不影响对话 */
+    }
     // 刚聊完，是她最可能想记一笔的时刻（写不写由节流内部决定）
     maybeWriteDiary('after-chat')
     busy = false
@@ -756,6 +799,11 @@ export async function disposeAgent() {
   if (haClient) haClient.stopEvents()
   try {
     flushPersist() // 把防抖中的记忆/历史立刻刷盘
+  } catch {
+    /* ignore */
+  }
+  try {
+    getRag().dispose() // 停掉待嵌定时器与预热定时器
   } catch {
     /* ignore */
   }

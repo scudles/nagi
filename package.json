@@ -22,7 +22,8 @@
     "verify:m4": "node scripts/verify-m4.mjs",
     "viewer": "node tools/live2d-viewer/server.mjs",
     "postinstall": "node scripts/setup-core.mjs",
-    "verify:pose": "node scripts/verify-pose.mjs"
+    "verify:pose": "node scripts/verify-pose.mjs",
+    "verify:rag": "node scripts/verify-rag.mjs"
   },
   "dependencies": {
     "@tencent-ai/workbuddy-cloud-sdk": "^0.1.3-dev.c090db7.202610050023",

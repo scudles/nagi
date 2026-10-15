@@ -5,6 +5,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, EVT } from '../shared/protocol.js'
 import { VOICE_IPC, VOICE_EVT } from '../shared/voice-protocol.js'
+import { RAG_IPC, RAG_EVT } from '../shared/rag-protocol.js'
 
 const ALLOWED_EVENTS = new Set([
   EVT.AGENT,
@@ -14,7 +15,8 @@ const ALLOWED_EVENTS = new Set([
   EVT.PET,
   VOICE_EVT.PROGRESS,
   VOICE_EVT.NOTICE,
-  VOICE_EVT.OWNER_LOST
+  VOICE_EVT.OWNER_LOST,
+  RAG_EVT.PROGRESS
 ])
 
 const api = {
@@ -101,6 +103,21 @@ const api = {
     downloadModel: () => ipcRenderer.invoke(VOICE_IPC.MODEL_DOWNLOAD),
     /** 停掉常驻的离线识别服务，把内存还回去 */
     stopServer: () => ipcRenderer.invoke(VOICE_IPC.SERVER_STOP)
+  },
+  /** 长期记忆档案（RAG）：无限容量的语义检索记忆 */
+  rag: {
+    /** 状态快照：开关/引擎/条数/待嵌/磁盘占用/本地模型 */
+    status: () => ipcRenderer.invoke(RAG_IPC.STATUS),
+    /** 召回自测：输入一句话，看她能从档案里想起什么 */
+    recallTest: (query) => ipcRenderer.invoke(RAG_IPC.RECALL_TEST, { query }),
+    /** 重建索引（换引擎或索引损坏后；文本全保留，重新嵌入） */
+    rebuild: () => ipcRenderer.invoke(RAG_IPC.REBUILD),
+    /** 清空档案 */
+    clear: () => ipcRenderer.invoke(RAG_IPC.CLEAR),
+    /** 本地嵌入模型安装状态 */
+    modelStatus: () => ipcRenderer.invoke(RAG_IPC.MODEL_STATUS),
+    /** 下载本地嵌入模型（约 25MB，进度走 RAG_EVT.PROGRESS） */
+    downloadModel: () => ipcRenderer.invoke(RAG_IPC.MODEL_DOWNLOAD)
   },
   /** 订阅主进程事件；返回取消订阅函数 */
   on: (channel, listener) => {

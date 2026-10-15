@@ -65,6 +65,25 @@ test('长期记忆与「不要重复」约束会进上下文', () => {
   assert.match(s, /「……人类真是不会照顾自己。」/)
 })
 
+// RAG 召回的往事：为空时必须与「没开 RAG」逐字一致（这是容错底线——
+// 检索挂了她照样说话，提示词一个字都不该多）
+test('召回往事排在「记得的事」之后；为空时输出与不开 RAG 完全一致', () => {
+  const base = {
+    now: Date.now(),
+    memories: ['在做一款叫凪的桌宠项目'],
+    recentReplies: ['……人类真是不会照顾自己。']
+  }
+  const off = buildContextBlock({ ...base })
+  const empty = buildContextBlock({ ...base, recalled: [] })
+  assert.equal(empty, off, '召回为空时不能多出任何一行')
+
+  const on = buildContextBlock({ ...base, recalled: ['「三个月前（07-12）：他：最近睡不好」'] })
+  assert.match(on, /你想起的相关往事/)
+  assert.match(on, /三个月前（07-12）/)
+  assert.ok(on.indexOf('你想起的相关往事') > on.indexOf('你记得的关于他的事'), '往事排在精选记忆之后')
+  assert.ok(!on.includes('undefined'), '不能出现 undefined 之类的脏输出')
+})
+
 test('没有任何附加信息时仍给出时间（时间本身就是情境）', () => {
   const s = buildContextBlock({ now: new Date(2026, 9, 14, 9, 0).getTime() })
   assert.match(s, /现在：2026-10-14 周三 09:00（上午）/)

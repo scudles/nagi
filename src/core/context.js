@@ -7,6 +7,8 @@
 //
 // 纯逻辑、无 Electron / Node 依赖，可单测。
 
+import { formatRecall } from './rag/recall.js'
+
 const SLOTS = [
   { from: 0, to: 5, name: '凌晨' },
   { from: 5, to: 8, name: '清晨' },
@@ -62,6 +64,7 @@ function intensityWord(v) {
  * @param {object}   [o.mood]              情绪快照 { mood, intensity, label }
  * @param {object}   [o.relation]          关系摘要（core/relation/familiarity.js 的 describeRelation）
  * @param {string[]} [o.memories]          长期记忆条目（关于用户的、值得记住的事实）
+ * @param {string[]} [o.recalled]          向量检索召回的往事片段（RAG；为空时输出与不开 RAG 时逐字一致）
  * @param {string[]} [o.recentReplies]     她最近说过的话（要求模型不要重复）
  * @param {string[]} [o.extra]             其他一次性附注
  * @returns {string} 形如「【此刻】…」的段落；无任何内容时返回空串
@@ -72,6 +75,7 @@ export function buildContextBlock({
   mood = null,
   relation = null,
   memories = [],
+  recalled = [],
   recentReplies = [],
   extra = []
 } = {}) {
@@ -101,6 +105,11 @@ export function buildContextBlock({
   if (memories.length) {
     lines.push('- 你记得的关于他的事：' + memories.join('；'))
   }
+
+  // 检索召回的往事（RAG）：排在「记得的事」之后——前者是精选事实，后者是当时情境。
+  // 为空时这里什么都不加，输出与不开 RAG 时逐字一致（容错：RAG 挂了她照样说话）。
+  const recallBlock = formatRecall(recalled)
+  if (recallBlock) lines.push(recallBlock)
 
   if (recentReplies.length) {
     lines.push('- 你最近几次说过的话（换种说法，不要重复这些句式）：')

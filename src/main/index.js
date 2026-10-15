@@ -13,6 +13,8 @@ import { registerPetIpc } from './ipc/pet.js'
 import { registerRelationIpc } from './ipc/relation.js'
 import { registerReminderIpc } from './ipc/reminders.js'
 import { registerVoiceIpc } from './ipc/voice.js'
+import { registerRagIpc } from './ipc/rag.js'
+import { initRag } from './rag/index.js'
 import { loadSettings, saveSettings } from './settings-store.js'
 import { disposeAgent, startMoodEngine, startActivityMonitor, startReminders, restoreState } from './agent.js'
 import { prewarmVoice, disposeVoice } from './voice/index.js'
@@ -53,6 +55,7 @@ if (!gotLock) {
     registerRelationIpc()
     registerReminderIpc()
     registerVoiceIpc()
+    registerRagIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
@@ -64,6 +67,10 @@ if (!gotLock) {
 
     // 恢复上次的情绪（按离线时长自然衰减）与关系统计，并清理过期时间线
     restoreState()
+
+    // 长期记忆档案（RAG）：载库 + 8 秒后后台预热嵌入模型、补齐待嵌队列。
+    // 模型没装时这里只是静默不就绪，对话行为一帧不变。
+    initRag()
 
     // 情绪引擎：心跳 + 独白日史（双窗广播，退出时随 disposeAgent 停止）
     startMoodEngine()

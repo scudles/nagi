@@ -6,6 +6,7 @@
 
 import { PROVIDER_PRESETS, SECRET_KEYS, MODE, EMOTIONS, EVT } from '../../shared/protocol.js'
 import { VOICE_EVT, mergeVoiceSettings } from '../../shared/voice-protocol.js'
+import { RAG_EVT, mergeRagSettings } from '../../shared/rag-protocol.js'
 import { EDGE_VOICES, TTS_ENGINES, ASR_ENGINES } from '../../core/voice/index.js'
 import { toSegments } from '../../core/relation/timeline.js'
 import * as ui from './ui.js'
@@ -660,6 +661,7 @@ function fillSettingsForm() {
   refreshModels()
   refreshMemory()
   refreshVoice()
+  refreshRag()
 }
 
 async function refreshSecretStatus() {
@@ -1057,6 +1059,211 @@ function wireVoiceSettings(on) {
   })
 }
 
+/* ---------------- 记忆档案设置（设置页 · 记忆档案区块） ---------------- */
+
+/** 最近一次档案状态快照 */
+let ragSnapshot = null
+
+const RAG_PROVIDER_NOTE = {
+  local: '全部在你电脑上算，不联网、不外发。首次需要下载一个约 25MB 的小模型。',
+  openai: '复用「大脑」里填的 Key。注意：要送去做向量的文字会发到对方服务器，介意的话用本机模型。',
+  none: '照样记录，但不会自动想起往事（等于关掉检索）。'
+}
+
+/** 档案状态文字：条数 / 待嵌 / 磁盘 / 引擎 */
+function renderRagStatus(st) {
+  const el = document.getElementById('rag-status')
+  if (!el) return
+  if (!st) {
+    el.textContent = '档案状态：读取中…'
+    return
+  }
+  if (!st.ready) {
+    const why = st.dimMismatch
+      ? '索引维度与当前引擎不符，点「重建索引」即可（原文都还在）'
+      : st.provider === 'openai'
+        ? '云端检索未就绪：需要配置大脑的 API Key'
+        : '本机模型没装好，装完就自动开始工作（对话照常，只是暂时想不起往事）'
+    el.textContent = `档案：未就绪 —— ${why}`
+    return
+  }
+  const mb = st.disk ? (st.disk / 1024 / 1024).toFixed(1) + ' MB' : '0 MB'
+  const pend = st.pending ? ` · 待嵌入 ${st.pending}` : ''
+  el.textContent = `档案：${st.chunks} 条（${st.engine === 'local' ? '本机' : '云端'}引擎，${st.dim} 维）${pend} · 占 ${mb}`
+}
+
+/** 本机嵌入模型状态文字 */
+function renderRagModel(st) {
+  const el = document.getElementById('set-rag-model-status')
+  const btn = document.getElementById('btn-rag-download')
+  if (!el) return
+  const m = st?.model
+  if (!m) {
+    el.textContent = '本机模型状态：未知'
+    return
+  }
+  el.textContent = m.ready
+    ? '本机模型：已装好，离线可用'
+    : `本机模型：未安装${m.error ? '（' + m.error + '）' : ''}`
+  if (btn) btn.disabled = !!m.ready
+}
+
+/** 读一次档案状态并刷新整个区块 */
+async function refreshRag() {
+  const sel = document.getElementById('set-rag-provider')
+  if (!sel || !window.nagi.rag) return
+  const cfg = mergeRagSettings(settings?.rag)
+
+  let st = null
+  try {
+    st = await window.nagi.rag.status()
+  } catch (err) {
+    console.warn('[rag] 状态读取失败', err.message)
+  }
+  ragSnapshot = st
+
+  const set = (id, v) => {
+    const el = document.getElementById(id)
+    if (el) el.checked = v
+  }
+  set('set-rag-enabled', cfg.enabled)
+  set('set-rag-autosummary', cfg.autoSummary)
+  sel.value = cfg.provider
+
+  const note = document.getElementById('set-rag-provider-note')
+  if (note) note.textContent = RAG_PROVIDER_NOTE[cfg.provider] || ''
+  // 只有本机模式才需要看到「下载模型」那一块
+  document.getElementById('set-rag-model-wrap')?.classList.toggle('hidden', cfg.provider !== 'local')
+
+  const th = document.getElementById('set-rag-threshold')
+  if (th) th.value = String(cfg.threshold)
+  setText('set-rag-threshold-val', cfg.threshold.toFixed(2))
+  const hl = document.getElementById('set-rag-halflife')
+  if (hl) hl.value = String(cfg.halfLifeDays)
+  setText('set-rag-halflife-val', cfg.halfLifeDays + ' 天')
+  const se = document.getElementById('set-rag-summary-every')
+  if (se) se.value = String(cfg.summaryEveryTurns)
+
+  renderRagModel(st)
+  renderRagStatus(st)
+}
+
+function wireRagSettings(on) {
+  const th = document.getElementById('set-rag-threshold')
+  th?.addEventListener('input', () => {
+    setText('set-rag-threshold-val', Number(th.value).toFixed(2))
+  })
+  const hl = document.getElementById('set-rag-halflife')
+  hl?.addEventListener('input', () => {
+    setText('set-rag-halflife-val', Number(hl.value) + ' 天')
+  })
+  document.getElementById('set-rag-provider')?.addEventListener('change', () => {
+    const v = document.getElementById('set-rag-provider').value
+    const note = document.getElementById('set-rag-provider-note')
+    if (note) note.textContent = RAG_PROVIDER_NOTE[v] || ''
+    document.getElementById('set-rag-model-wrap')?.classList.toggle('hidden', v !== 'local')
+  })
+
+  on('btn-save-rag', async () => {
+    await window.nagi.settings.set({
+      rag: {
+        enabled: document.getElementById('set-rag-enabled').checked,
+        provider: document.getElementById('set-rag-provider').value,
+        autoSummary: document.getElementById('set-rag-autosummary').checked,
+        summaryEveryTurns: Number(document.getElementById('set-rag-summary-every').value) || 20,
+        threshold: Number(document.getElementById('set-rag-threshold').value),
+        halfLifeDays: Number(document.getElementById('set-rag-halflife').value)
+      }
+    })
+    settings = await window.nagi.settings.get()
+    ui.addToolLog('记忆设置已保存')
+    await refreshRag()
+  })
+
+  on('btn-rag-download', async () => {
+    const btn = document.getElementById('btn-rag-download')
+    const out = document.getElementById('set-rag-model-status')
+    if (btn) btn.disabled = true
+    if (out) out.textContent = '正在下载本机模型（约 25MB）…'
+    document.getElementById('rag-progress')?.classList.remove('hidden')
+    try {
+      const r = await window.nagi.rag.downloadModel()
+      ui.addToolLog(r?.ok ? '本机检索模型已装好，之后完全离线可用' : '模型安装失败：' + (r?.error || '未知原因'))
+    } catch (err) {
+      ui.addToolLog('模型安装失败：' + err.message)
+    } finally {
+      document.getElementById('rag-progress')?.classList.add('hidden')
+      await refreshRag()
+    }
+  })
+
+  on('btn-rag-rebuild', async () => {
+    const btn = document.getElementById('btn-rag-rebuild')
+    if (btn) btn.disabled = true
+    try {
+      const r = await window.nagi.rag.rebuild()
+      ui.addToolLog(r?.ok ? `索引重建中：${r.count} 条正在重新嵌入` : '重建失败：' + (r?.error || '未知原因'))
+    } catch (err) {
+      ui.addToolLog('重建失败：' + err.message)
+    } finally {
+      if (btn) btn.disabled = false
+      await refreshRag()
+    }
+  })
+
+  on('btn-rag-clear', async () => {
+    // 档案是她跟你之间发生过的一切，删了就真没了——多确认一次
+    if (!window.confirm('清空她的记忆档案？所有对话档案都会被删除，且无法恢复。')) return
+    const r = await window.nagi.rag.clear()
+    ui.addToolLog(r?.ok ? '记忆档案已清空' : '清空失败：' + (r?.error || '未知原因'))
+    await refreshRag()
+  })
+
+  on('btn-rag-test', async () => {
+    const out = document.getElementById('rag-test-result')
+    const q = (document.getElementById('rag-query')?.value || '').trim()
+    if (!q) {
+      if (out) out.textContent = '先写一句话，比如「我最近睡得怎么样」'
+      return
+    }
+    if (out) out.textContent = '检索中…'
+    try {
+      const r = await window.nagi.rag.recallTest(q)
+      if (!out) return
+      if (!r.ok) {
+        out.textContent = '没检索到：' + (r.reason || '档案里还没有能匹配的内容')
+        return
+      }
+      out.textContent = r.count ? r.text || r.results.map((x) => `· ${x.label}（${x.sim}）`).join('\n') : '档案里还没有能匹配的内容'
+    } catch (err) {
+      if (out) out.textContent = '检索失败：' + err.message
+    }
+  })
+
+  // 下载进度（主进程广播）：只在设置页显示
+  window.nagi.on(RAG_EVT.PROGRESS, (p) => {
+    if (!p || p.kind !== 'download') return
+    const wrap = document.getElementById('rag-progress')
+    const bar = document.getElementById('rag-progress-bar')
+    const out = document.getElementById('set-rag-model-status')
+    if (!wrap || !bar) return
+    if (p.done) {
+      bar.style.width = '100%'
+      if (out) out.textContent = p.ok ? '下载完成，正在校验…' : '下载失败：' + (p.error || '未知原因')
+      return
+    }
+    wrap.classList.remove('hidden')
+    const pct = p.total ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0
+    bar.style.width = pct + '%'
+    if (out) {
+      const what = p.file && p.file.includes('tokenizer') ? '分词器' : '检索模型'
+      out.textContent = `正在下载${what} · ${pct}%`
+    }
+    const btn = document.getElementById('btn-rag-download')
+    if (btn) btn.disabled = true
+  })
+}
+
 function wireSettingsPage() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn)
 
@@ -1192,6 +1399,8 @@ function wireSettingsPage() {
 
   // 语音（M5）：引擎 / 音色 / 语速音量 / 自动开口 / 离线识别
   wireVoiceSettings(on)
+  // 记忆档案（长期记忆检索）：开关 / 引擎 / 门限 / 重建 / 召回自测
+  wireRagSettings(on)
 }
 
 /* ---------------- 关系页（S4：熟悉度 + 情绪时间线） ---------------- */
