@@ -1,14 +1,20 @@
 // src/renderer/js/live2d.js
-// Live2D 加载与驱动：缩放锚点（底部对齐居中）、自动眨眼、视线跟随、待机动作轮换、
-// 戳一戳（TapBody）、情绪 → 表情 + 动作映射、说话口型。
+// Live2D 加载与驱动：缩放锚点（底部对齐居中）、自动眨眼、待机动作轮换、
+// 戳一戳（TapBody）、情绪 → 表情 + 动作映射、说话口型、对话状态驱动的思考姿态。
 //
 // 表情/动作映射来自模型目录下的 nagi-emotion.json，支持两种写法：
 //   "joy": "nagi_joy"                                                     // 只映射表情（旧格式）
 //   "joy": { "expr": "nagi_joy", "motion": "Happy", "motionChance": 0.75 } // 表情 + 动作
 //
+// 2026-10-15 行为变更：
+//   · 「黑脸」系列表情（dark_mask×4）已移除：资源删除 + 模型清单摘除 + 运行时黑名单兜底；
+//   · 取消"目光/身体跟随鼠标"（focusController 改为加载时瞬间归中，见 load()）；
+//   · 动作改由对话状态驱动：生成期间 setPose('thinking')，回复返回后由调用方按情绪翻脸。
+//
 // 依赖：vendor/live2dcubismcore.min.js（在 index.html 中先加载）+ pixi.js v7 + pixi-live2d-display/cubism4
 import { pickRedParams, shouldRemoveRedGlow } from '../../core/redform.js'
 import { DEFAULT_FRAME, fitBand, frameBand, framePreset } from '../../core/frame.js'
+import { POSE_EASE_RATE, easePose, poseSettled, poseTargets } from '../../core/pose.js'
 
 let app = null
 let model = null
@@ -30,6 +36,24 @@ let frameMode = DEFAULT_FRAME
 let baseW = 0
 let baseH = 0
 let resizer = null
+
+/* ------------------------------------------------------------------ *
+ * 「黑脸」系列表情黑名单（dark_mask×4：整脸压黑的死相）
+ *
+ * 2026-10-15 需求：任何回答情境下都不该出现该系列表情。
+ * 三道防线：① 资源文件已从模型目录删除；② model3.json 里的条目已摘除；
+ * ③ 这里再兜一层——即使模型文件被还原、或换一个自带同名表情的模型，
+ *    也加载不进来（listExpressions 过滤）、映射不到（resolveExpression 走 listExpressions）、
+ *    调试口也触发不了（setExpressionRaw 拒绝）。
+ * ------------------------------------------------------------------ */
+const HIDDEN_EXPRESSIONS = ['dark_mask', 'dark_mask2', 'dark_mask3', 'dark_mask4']
+const HIDDEN_EXPRESSION_RE = /dark[_-]?mask/i
+
+/** 该表情名是否属于「黑脸」系列（对外导出供测试/调试断言） */
+export function isHiddenExpression(name) {
+  const n = String(name || '').toLowerCase()
+  return HIDDEN_EXPRESSIONS.includes(n) || HIDDEN_EXPRESSION_RE.test(n)
+}
 
 /* ------------------------------------------------------------------ *
  * 红色形态（红色辉光）裁剪
@@ -176,6 +200,43 @@ export function probeRedOnce() {
   })
 }
 
+/** 姿态相关参数（思考姿态写的就是这一族） */
+const POSE_PARAM_IDS = ['ParamEyeBallX', 'ParamEyeBallY', 'ParamAngleX', 'ParamAngleY', 'ParamAngleZ', 'ParamBodyAngleX']
+
+/**
+ * 调试/验证：在"姿态已生效、网格尚未计算"的瞬间采样姿态参数。
+ *
+ * 为什么不能在帧外读：Cubism 每帧末尾会 loadParameters() 还原到动作写完时的快照，
+ * 姿态/表情/呼吸/焦点这些都是"这一帧的叠加量"，帧外读到的永远是叠加前的值——
+ * 红色参数当年就是因此才必须在 beforeModelUpdate 里采（见 probeRedOnce）。
+ * 本函数注册在姿态钩子之后，读到的是叠加后的真实值。
+ */
+export function probePoseOnce(ids = POSE_PARAM_IDS) {
+  return new Promise((resolve) => {
+    const im = model?.internalModel
+    if (!im) return resolve(null)
+    const core = im.coreModel
+    const once = () => {
+      try {
+        im.off('beforeModelUpdate', once)
+      } catch {
+        /* ignore */
+      }
+      const out = {}
+      for (const id of ids) {
+        try {
+          out[id] = core.getParameterValueById(id)
+        } catch {
+          out[id] = null
+        }
+      }
+      resolve(out)
+    }
+    im.on('beforeModelUpdate', once)
+    setTimeout(() => resolve(null), 1500)
+  })
+}
+
 /* ------------------------------------------------------------------ *
  * 6 情绪 → 表情候选名
  * 不同模型表情命名差异很大，这里给出通配候选表；按顺序取模型里第一个真实存在的。
@@ -284,7 +345,7 @@ function overrideEntry(emotion) {
  * 加载模型
  * @param {HTMLCanvasElement} canvas
  * @param {string} url 形如 nagi-local://models/Lisette/Lisette.model3.json
- * @param {{scale?:number, mirror?:boolean, eyeBlink?:boolean, focusFollow?:boolean}} opts
+ * @param {{scale?:number, mirror?:boolean, eyeBlink?:boolean}} opts
  */
 export async function load(canvas, url, opts = {}) {
   if (!coreAvailable()) {
@@ -366,9 +427,16 @@ export async function load(canvas, url, opts = {}) {
     }
   }
 
-  // 视线跟随鼠标（原生事件，不依赖 pixi 事件系统）
-  if (opts.focusFollow !== false) {
-    window.addEventListener('pointermove', onPointerMove)
+  // 目光/身体跟随鼠标：已取消（2026-10-15 需求，立绘动作改由对话状态驱动）。
+  // 光撤监听不够 —— focusController 每帧都会把它内部的目标值写进
+  // ParamAngle*/ParamEyeBall*，而 focus() 不调用时它停在"鼠标最后停留的位置"，
+  // 她会一直盯着那儿看。这里在加载时瞬间归中，之后目光交还给：
+  //   · 思考姿态（setPose('thinking')，生成回复期间）
+  //   · 模型自身的自然动作（呼吸/待机，全部归零时）
+  try {
+    m.internalModel?.focusController?.focus(0, 0, true)
+  } catch {
+    /* 个别模型没有 focusController，忽略 */
   }
 
   userScale = opts.scale || 1
@@ -493,28 +561,119 @@ export function resize() {
   layout(userScale, mirrorOn)
 }
 
-function onPointerMove(e) {
-  if (!model?.internalModel) return
-  try {
-    const rect = model.getBounds?.()
-    model.focus(e.clientX, e.clientY, rect)
-  } catch {
-    try {
-      model.focus(e.clientX, e.clientY)
-    } catch {
-      /* 部分模型无 focus 支持 */
+/* ---------------- 对话状态驱动的姿态（思考） ----------------
+ *
+ * 做法与红色形态裁剪同源：挂在 beforeModelUpdate 上——这一帧
+ *   motion 写参 → 表情写参 → 目光(focus) → 呼吸 → 物理 → 【beforeModelUpdate】→ 算网格
+ * 我们的偏移在最后一刻加进去，不会被动作/表情覆盖；用 add（不是 set），
+ * 这样模型的呼吸、待机动作仍然在该参数上生效，思考姿态是"叠加在上面的轻微倾向"。
+ *
+ * 退出是渐变的：平滑归零后才撤钩，让模型自身的动作无缝接管，不会跳一下。
+ */
+let poseHook = null
+let poseState = null // { name, target:{id:值}, cur:{id:当前值}, releasing:bool }
+let poseLastAt = 0
+
+/**
+ * 切换姿态。
+ * @param {string|null} name 'thinking' = 思考（目光偏移 + 轻微低侧头）；null = 收回中立
+ * @returns {boolean} 模型就绪且已受理
+ */
+export function setPose(name) {
+  if (!model?.internalModel) return false
+  const target = poseTargets(name)
+  if (poseHook) {
+    // 已在运行：只改目标。thinking→thinking 不重启；任何→中立 开始平滑收回。
+    // 收回时保留原姿态名——getPose() 要能报出 "thinking→neutral"，调用方才知道在收敛中。
+    poseState.target = target
+    poseState.releasing = Object.keys(target).length === 0
+    if (!poseState.releasing) poseState.name = name
+    return true
+  }
+  if (!Object.keys(target).length) return true // 本来就是中立，不必挂钩
+  const cur = {}
+  for (const id of Object.keys(target)) cur[id] = 0
+  poseState = { name, target, cur, releasing: false }
+  poseLastAt = performance.now()
+  poseHook = () => {
+    const core = model?.internalModel?.coreModel
+    if (!core) return
+    const now = performance.now()
+    const dt = Math.min(0.1, Math.max(0, (now - poseLastAt) / 1000))
+    poseLastAt = now
+    // 遍历"目标 ∪ 当前值"：收回时 target 是空表，但 cur 里还有没收完的值，
+    // 必须继续把它们平滑归零——只遍历 target 会第一帧就判定 settled 而硬切。
+    const ids = new Set([...Object.keys(poseState.target), ...Object.keys(poseState.cur)])
+    let settled = true
+    for (const id of ids) {
+      const t = poseState.target[id] ?? 0
+      const c = easePose(poseState.cur[id] ?? 0, t, dt, POSE_EASE_RATE)
+      poseState.cur[id] = c
+      if (!poseSettled(c, t)) settled = false
+      if (Math.abs(c) > 5e-4) {
+        try {
+          core.addParameterValueById(id, c)
+        } catch {
+          /* 模型没这个参数就跳过 */
+        }
+      }
     }
+    if (poseState.releasing && settled) {
+      try {
+        model.internalModel.off('beforeModelUpdate', poseHook)
+      } catch {
+        /* ignore */
+      }
+      poseHook = null
+      poseState = null
+    }
+  }
+  model.internalModel.on('beforeModelUpdate', poseHook)
+  return true
+}
+
+/** 当前姿态（调试/验证用）：'neutral' | 'thinking' | 'thinking→neutral'（收回中） */
+export function getPose() {
+  if (!poseState) return 'neutral'
+  return poseState.releasing ? `${poseState.name}→neutral` : poseState.name
+}
+
+/**
+ * 焦点控制器内部状态（调试/验证"目光不再跟随鼠标"用）。
+ * 取消跟随时只做了两件事：撤监听 + 加载时归中；这个钩子让人能直接读到
+ * "它后来再也没动过"，比拿参数反推可靠（待机动作也在写角度参数）。
+ */
+/**
+ * 焦点控制器 + 动作状态（调试/验证用）。
+ *
+ * 两个用途：
+ *  1. 「目光不再跟随鼠标」——直接读焦点控制器的内部状态（它每帧都会把目标值写进
+ *     目光/头部参数）。取消跟随后它必须恒为 0；拿参数反推不可靠，因为待机动作
+ *     也在写同一批参数。
+ *  2. 「空闲时自然动画仍在跑」——读动作状态机的 currentGroup。框架自带
+ *     "动作播完随机换 Idle 组"的机制，这个字段就是它在轮换的证据。
+ */
+export function focusState() {
+  const im = model?.internalModel
+  const fc = im?.focusController
+  if (!fc) return null
+  return {
+    x: fc.x,
+    y: fc.y,
+    targetX: fc.targetX,
+    targetY: fc.targetY,
+    motionGroup: im?.motionManager?.state?.currentGroup ?? null
   }
 }
 
 /* ---------------- 查询 ---------------- */
 
-/** 列出模型实际拥有的表情名 */
+/** 列出模型实际拥有的表情名（「黑脸」系列已被黑名单挡在外面） */
 export function listExpressions() {
   if (!model) return []
   try {
     const defs = model.internalModel?.settings?.expressions || []
-    return defs.map((d) => d.Name || d.name).filter(Boolean)
+    return defs.map((d) => d.Name || d.name).filter((n) => n && !isHiddenExpression(n))
   } catch {
     return []
   }
@@ -607,9 +766,10 @@ export function setEmotion(emotion, opts = {}) {
   return ok
 }
 
-/** 调试用：直接按名字应用表情（绕过情绪映射），便于逐个形态比对 */
+/** 调试用：直接按名字应用表情（绕过情绪映射），便于逐个形态比对。黑脸系列拒绝 */
 export function setExpressionRaw(name) {
   if (!model) return false
+  if (isHiddenExpression(name)) return false
   try {
     if (!name) {
       model.internalModel?.motionManager?.expressionManager?.resetExpression?.()
@@ -732,7 +892,15 @@ export function clearLipTrack() {
 export function destroy() {
   if (disposed) return
   disposed = true
-  window.removeEventListener('pointermove', onPointerMove)
+  if (poseHook) {
+    try {
+      model?.internalModel?.off?.('beforeModelUpdate', poseHook)
+    } catch {
+      /* ignore */
+    }
+  }
+  poseHook = null
+  poseState = null
   try {
     resizer?.disconnect?.()
   } catch {

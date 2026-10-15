@@ -32,6 +32,7 @@ npm run dev        # 开发模式启动
 | `npm run verify:frame` | 取景/对齐实机矩阵：多窗口尺寸 + 面板宽度 + 真实像素不越界 |
 | `npm run verify:s4` | 无头验证关系层（情绪跨重启延续 / 离线衰减 / 时间线落盘 / 保留策略） |
 | `npm run verify:m4` | 无头验证日程提醒（到点→主动开口→日记落盘 / 重复推进 / 错过作废） |
+| `npm run verify:pose` | 实机验证立绘行为（黑脸移除 / 鼠标不跟随 / 对话状态驱动姿态） |
 
 打包产物（Windows x64）：
 - `dist/Nagi-Setup-<版本>.exe` —— NSIS 安装包（可选安装目录、建桌面/开始菜单快捷方式），
@@ -955,6 +956,82 @@ TTS 默认引擎与默认音色已定稿：**edge-tts「晓晓 · 温暖」**（
 默认音色作为显式数据写在 `shared/voice-protocol.js` 的 `voiceByEngine`（不依赖音色列表顺序）；
 语速/音高的基准在 `core/voice/engines.js` 的 `NAGI_VOICE`（rate -10「不慌不忙」、pitch -2 压甜感），
 设置页里的「语速」是在此基准上的额外偏移。想换随时在设置页切换、试听。
+
+## 十七、立绘行为：去掉黑脸、取消鼠标跟随、改由对话状态驱动（2026-10-15）
+
+三项需求，全部落在渲染层，没动模型资源结构（除删掉那 4 个黑脸文件）。
+
+### 1. 「黑脸」系列彻底移除
+
+原版模型自带 4 个表情（`dark_mask` / `dark_mask2` / `dark_mask3` / `dark_mask4`）会把整脸压黑
+（`ParamDarkMask=1`），和「凪」的气质完全不符。三道防线，任何一条都能单独拦住：
+
+| 防线 | 位置 | 做什么 |
+|---|---|---|
+| 资源删除 | `models/Lisette/Expressions/` | 4 个 `.exp3.json` 文件已删 |
+| 清单摘除 | `models/Lisette/Lisette.model3.json` | Expressions 数组移除 4 条，剩 11 个 |
+| 运行时黑名单 | `src/renderer/js/live2d.js` | `isHiddenExpression()` 白名单外一律拒：`listExpressions()` 过滤 + `setExpressionRaw()` 入口即拦 |
+
+情绪映射（`nagi-emotion.json`）里本来就没有黑脸，随机抽取走的是 `listExpressions()`，
+所以第二、三道防线已经把「任何路径」都堵死了。
+
+### 2. 目光与身体不再跟随鼠标
+
+原来的实现是 `onPointerMove` → `model.focus()`。**只撤监听不够**——
+`InternalModel.update()` 每帧都会调 `focusController.update(dt)`，它内部记住的
+目标值会被持续写进 `ParamEyeBallX/Y`、`ParamAngleX/Y/Z`、`ParamBodyAngleX`，
+鼠标最后停在哪儿她就盯着哪儿。所以加载时补了一次瞬时归中：
+
+```js
+try { m.internalModel?.focusController?.focus(0, 0, true) } catch {}
+```
+
+`focusState()`（调试口）直接读焦点控制器的 x/y/targetX/targetY，
+鼠标怼到四角后四字段恒 0——比拿参数反推可靠（待机动作也在写角度/眼球参数）。
+
+### 3. 动作由对话状态驱动
+
+`src/core/pose.js`（纯逻辑，可单测）+ `live2d.js` 的 `beforeModelUpdate` 钩子（管道）：
+
+- **生成回复期间**（`STATUS thinking`）→ `setPose('thinking')`：目光移开并微垂
+  （EyeBallX +0.35 / EyeBallY -0.45）、头低 4°、侧头 5°、身体跟着 2°。
+  全部刻意保持「轻微」——她常驻桌面上，夸张动作像动画片而不像她
+  （`test/pose-guard.test.js` 锁死口径：角度 ≤10°、眼珠 ≤0.6）。
+- **回复返回**（`DONE`）→ `setPose(null)` 平滑收回中立，同时按本轮 EMOTION 落表情
+  （`l2d.setEmotion(chatEmotion || 'calm', …)`）；**情绪判断不出 → `calm` 中立**。
+- **空闲** → 本模块全部归零，交还模型自身的呼吸/眨眼/待机轮换
+  （框架 `MotionManager` 动作播完自动随机重播 Idle 组，本来就是用户要保留的那部分）。
+
+进入/退出都是指数平滑（`easePose`，rate 6/s，帧率无关），收回要等归零才撤钩，
+不会「跳一下」。
+
+### 实现里踩出来的四个框架坑（都已写进注释/测试）
+
+1. **Cubism 每帧末尾 `loadParameters()` 还原快照**：姿态/表情/呼吸/焦点都是「帧内叠加量」，
+   帧外 `readParams` 永远读不到 → 必须注册 `beforeModelUpdate` 一次性监听采样
+   （`probePoseOnce()`）。
+2. **Live2D 动作硬停会冻结末值**：`stopAllMotions()` 是硬释放（非淡出），上一个动作的
+   参数末值会被冻在快照里（实测冻过 -0.3064 / -0.80）→ 校验断言一律用**增量**
+   （思考 − 中立），冻结基线在减法里抵消。
+3. **Idle 组里只有 `shy_idle` 写眼球参数**（12s 的那个），它一播放眼球采样就被污染；
+   `breathing`(4s) / `walking_idle`(3s) / `hand_fiddle_idle`(4.8s) 都不写 →
+   眼球因此是「只属于姿态」的硬信号，头部/身体参数被框架呼吸（±15°/±10°/±4°）干扰，
+   只做方向性参考 + 快照目视。
+4. **收回路径曾有个真 bug**：`setPose(null)` 把 target 置空后，平滑循环只遍历 target，
+   一次都不进 → `settled` 保持初值 true → **第一帧就撤钩，姿态被硬切**
+   （`getPose()` 立刻报 neutral，渐变根本不存在）。修法是循环改遍历
+   「target ∪ cur」，缺省的参数归零。这个 bug 单测抓不到（钩子在 live2d.js 里），
+   是 `verify:pose` 的「收回是渐变的」项抓出来的。
+
+### 验证
+
+- 单测 **7 项**（`test/pose-guard.test.js`）：资源删除 + `model3.json` 干净（11 条目）+
+  其余 15 个 exp3 一个不少、运行时黑名单命中/不误伤、`src/` 全扫无
+  `dark_mask*.exp3.json` / `onPointerMove` / `focusFollow` / `model.focus(` 残留、
+  姿态预设「轻微」口径、`easePose` 收敛与帧率无关
+- 实机 **13/13**：`npm run verify:pose`（自起隔离实例 + CDP）
+- 取景回归 **45/45**：`npm run verify:frame`（本轮改了 `live2d.js` 加载路径）
+- 全量单测 **263/263**
 
 
 

@@ -17,7 +17,11 @@
 （给 VTube Studio 用）。为接入 nagi 的情绪系统，在副本里增加了：
 
 - **Expressions**：原作者全部表情（angry / sad / shy / tear / tongue_out / frenzy /
-  sans_eye_glow / dark_mask×4）+ 4 个 nagi 定制表情（见下）
+  sans_eye_glow）+ 4 个 nagi 定制表情（见下）
+  - ⚠️ 2026-10-15 起**不再包含 `dark_mask×4`**：那组表情把整脸压黑（`ParamDarkMask=1`），
+    与「凪」的气质不符，已按需求整套移除——资源文件删除、`model3.json` 条目摘除、
+    渲染层另有黑名单兜底（`src/renderer/js/live2d.js` 的 `isHiddenExpression`），
+    任何路径都触发不了。详见根目录 README「立绘行为：黑脸移除与对话状态驱动」。
 - **Motions**：
   - `Idle` 组：breathing / hand_fiddle_idle / shy_idle（空闲时自动轮换）
   - `TapBody` 组：jump_ani（戳一戳反馈）
