@@ -33,7 +33,6 @@ test('参数表防回归：衰减/阈值/推力参数与原版一致', () => {
   assert.equal(MOOD_PARAMS.REST_THRESHOLD, 0.35)
   assert.equal(MOOD_PARAMS.JOY_DEEP, 0.6)
   assert.equal(MOOD_PARAMS.IDLE_POUT_MIN, 25)
-  assert.equal(MOOD_PARAMS.BURST_COUNT, 4)
   assert.equal(MOOD_PARAMS.HINT_THRESHOLD, 0.5)
 })
 
@@ -146,18 +145,7 @@ test('环境推力：早 7 点后重置，当夜再次担心', () => {
   assert.equal(m.current().mood, 'worry') // 重置后再次推担心
 })
 
-test('环境推力：90 秒内连发 4 条 → 开心，5 分钟内不重复推', () => {
-  const clock = fakeClock()
-  const m = createMood({ now: clock.fn })
-  for (let i = 0; i < 4; i++) m.noteInteraction()
-  m.tick()
-  assert.equal(m.current().mood, 'joy')
-  const first = m.current().intensity
-  m.tick()
-  assert.ok(m.current().intensity < first) // 只衰减未重复推
-})
-
-test('独白选池：pout 时 65% 走闹别扭池，绝不离池', () => {
+test('独白选池：pout 时 65% 走 sullen（存在性不安）池，绝不离池', () => {
   const m = createMood({ now: fakeClock().fn })
   m.propose('pout', 1.0)
   let sullenHits = 0

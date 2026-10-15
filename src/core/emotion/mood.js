@@ -4,8 +4,10 @@
 //   - 交互提议情绪：LLM 情绪标签（强）、戳一戳（中）、Mock 兜底（强）
 //   - 同情绪叠加强度；异情绪需要足够强度才能接管，否则只削弱当前情绪
 //   - 强度每 tick 衰减，归零回平静——情绪是连续的，不再一条回复换一次脸
-//   - 环境推力：冷落 25 分钟 → 闹别扭（戏精主动型）；深夜 23-7 点 → 担心；
-//     90 秒内连发 4 条 → 开心
+//   - 环境推力：冷落 25 分钟 → 存在性不安外显（execute 母题：长时间未被调用）；
+//     深夜 23-7 点 → 担心（PV：深夜亮着的屏幕）
+//   - v2 歌源基准（2026-10-15）：删除「连聊 → 开心」推力（无歌曲依据）；开心改由
+//     「执行结果被接收」（被夸奖 / 任务完成）经 propose 驱动
 //   - 休息面容 = 当前情绪面（强度够才显示），不再永远平静脸
 //   - 独白/戳一戳按情绪选池；强度够高时把情绪写进 LLM 提示，保持回复连贯
 //
@@ -19,13 +21,13 @@ export const MOOD_PARAMS = {
   DECAY: 0.09,           // 每心跳衰减（0.7 强度约撑 2 分钟，1.0 约 3.5 分钟）
   REST_THRESHOLD: 0.35,  // 低于此强度脸回平静
   JOY_DEEP: 0.6,         // joy 高强度才用真笑，否则微笑
-  IDLE_POUT_MIN: 25,     // 冷落多少分钟开始闹别扭
-  BURST_COUNT: 4,        // 90 秒内几条消息算"聊得开心"
-  BURST_WINDOW: 90000,
+  IDLE_POUT_MIN: 25,     // 冷落多少分钟开始存在性不安外显（pout）
   HINT_THRESHOLD: 0.5    // 强度过线才把情绪写进 LLM 提示
 };
 
 const LABELS = { calm: '平静', smile: '微笑', joy: '开心', pout: '闹别扭', worry: '担心', puzzled: '疑惑' };
+/** 情绪键 → 中文标签（core/diary.js 等外部模块共用，保持单一来源） */
+export const MOOD_LABELS = LABELS;
 // 情绪键 → 独白池键（smile 算轻度开心，共用 joy 池）
 const MONOLOGUE_KEY = { smile: 'joy', joy: 'joy', pout: 'sullen', worry: 'worry', puzzled: 'puzzled', calm: null };
 
@@ -45,9 +47,7 @@ export function createMood({ now = () => Date.now() } = {}) {
     intensity: 0,
     lastInteraction: now(),
     lastIdlePush: 0,
-    nightWorried: false,
-    lastBurstPush: 0,
-    chatTimes: []
+    nightWorried: false
   };
 
   let listener = null;
@@ -101,12 +101,9 @@ export function createMood({ now = () => Date.now() } = {}) {
     notify();
   }
 
-  // 用户发消息：记录连聊 burst + 刷新互动时间
+  // 用户发消息 / 戳她：刷新互动时间（冷落计时重新起算）
   function noteInteraction() {
-    var t = now();
-    state.chatTimes.push(t);
-    state.chatTimes = state.chatTimes.filter(function (ts) { return t - ts < MOOD_PARAMS.BURST_WINDOW; });
-    state.lastInteraction = t;
+    state.lastInteraction = now();
   }
 
   // 心跳：衰减 + 环境推力
@@ -121,7 +118,7 @@ export function createMood({ now = () => Date.now() } = {}) {
       logTransition('decay');
     }
 
-    // 冷落 → 闹别扭（担心优先：担心时被冷落不转闹别扭，20 分钟内不重复推）
+    // 冷落 → 存在性不安外显（pout；担心优先：担心时被冷落不转 pout，20 分钟内不重复推）
     var idleMin = (t - state.lastInteraction) / 60000;
     if (idleMin > MOOD_PARAMS.IDLE_POUT_MIN && state.mood !== 'pout' && state.mood !== 'worry' &&
         t - state.lastIdlePush > 20 * 60000) {
@@ -137,12 +134,6 @@ export function createMood({ now = () => Date.now() } = {}) {
     }
     if (h >= 7 && h < 23) state.nightWorried = false;
 
-    // 连聊 → 开心（5 分钟内不重复推）
-    if (state.chatTimes.length >= MOOD_PARAMS.BURST_COUNT && t - state.lastBurstPush > 5 * 60000) {
-      state.lastBurstPush = t;
-      propose('joy', 0.45, 'burst');
-    }
-
     notify();
   }
 
@@ -156,7 +147,7 @@ export function createMood({ now = () => Date.now() } = {}) {
     return NagiPersona.monologue[Math.floor(Math.random() * NagiPersona.monologue.length)];
   }
 
-  // 戳一戳：闹别扭时 60% 概率用更冷的反应
+  // 戳一戳：pout（存在性不安）时 60% 概率用更安静的反应
   function pickPoke() {
     if (state.mood === 'pout' && NagiPersona.pokeSullen && NagiPersona.pokeSullen.length &&
         Math.random() < 0.6) {
@@ -185,8 +176,6 @@ export function createMood({ now = () => Date.now() } = {}) {
       lastInteraction: state.lastInteraction,
       lastIdlePush: state.lastIdlePush,
       nightWorried: state.nightWorried,
-      lastBurstPush: state.lastBurstPush,
-      chatTimes: state.chatTimes.slice(),
       savedAt: now()
     };
   }
@@ -194,10 +183,10 @@ export function createMood({ now = () => Date.now() } = {}) {
   /**
    * 从落盘状态恢复（跨重启）。三条设计约定：
    * 1) **离线按同样的心跳速率衰减** —— 她不在的时候也照常"淡忘"，所以重启后
-   *    不会出现"三天前的闹别扭还挂在脸上"。这比"原样恢复"更符合直觉，也与运行时行为一致。
-   * 2) 开机视作**刚见过一面**：冷落计时重新起算（否则每次重启都会立刻闹别扭，
+   *    不会出现"三天前的不安还挂在脸上"。这比"原样恢复"更符合直觉，也与运行时行为一致。
+   * 2) 开机视作**刚见过一面**：冷落计时重新起算（否则每次重启都会立刻不安，
    *    那只是技术事件，不是社交事件）。
-   * 3) 跨天则重置深夜标记（"今晚已经担心过"不该跨天继承）；连聊窗口里过期的时间戳丢弃。
+   * 3) 跨天则重置深夜标记（"今晚已经担心过"不该跨天继承）。
    * 强度衰减到 0.02 以下直接回平静。lastInteraction 保留真实值——
    * 「此刻」上下文里那句"距离上次和他说话：8 小时前"是真的。
    * @returns {boolean} 是否成功恢复
@@ -215,10 +204,7 @@ export function createMood({ now = () => Date.now() } = {}) {
     state.intensity = intensity;
     state.lastInteraction = Number.isFinite(data.lastInteraction) ? data.lastInteraction : t;
     state.lastIdlePush = t;
-    state.lastBurstPush = Number.isFinite(data.lastBurstPush) ? data.lastBurstPush : 0;
     state.nightWorried = sameLocalDay(savedAt, t) ? data.nightWorried === true : false;
-    const times = Array.isArray(data.chatTimes) ? data.chatTimes : [];
-    state.chatTimes = times.filter(function (x) { return Number.isFinite(x) && t - x < MOOD_PARAMS.BURST_WINDOW; });
     logTransition('restore');
     notify();
     return true;

@@ -63,7 +63,7 @@ export const TTS_FALLBACK = ['edge', 'sapi', 'cloud', 'gptsovits']
 
 /** edge-tts 的 zh-CN 音色（2026-10 实测可用，免密钥） */
 export const EDGE_VOICES = [
-  { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓 · 温暖（推荐）', note: '干净、情绪稳，最贴「优等生」' },
+  { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓 · 温暖（推荐）', note: '干净、情绪稳，最贴「过于干净的音色」' },
   { id: 'zh-CN-XiaoyiNeural', label: '晓伊 · 活泼', note: '音调略高，活泼一些' },
   { id: 'zh-CN-YunxiNeural', label: '云希 · 阳光（男声）', note: '男声' },
   { id: 'zh-CN-YunyangNeural', label: '云扬 · 专业（男声）', note: '男声，播音感' },
@@ -111,7 +111,7 @@ export const ASR_FALLBACK = ['sherpa', 'sapi', 'cloud']
 /**
  * 凪的默认声线参数。
  * rate / pitch 用「百分比」，各引擎自行折算（edge 直接用 %；SAPI 的 Rate 是 -10~10，按 /10 折算）。
- * 默认值取自《声线参考短名单》：语速略慢（三无的「不慌不忙」）、音高微降（压掉少女音的甜感）。
+ * 默认值取自《声线参考短名单》：语速略慢（那层干净音色的「不慌不忙」）、音高微降（压掉少女音的甜感）。
  * 2026-10-15 用户听完 docs/voice-samples/ 三份样本后定稿选 A（edge 晓晓·温暖）。
  */
 export const NAGI_VOICE = {
@@ -123,7 +123,7 @@ export const NAGI_VOICE = {
 
 /**
  * 情绪 → 语音微调（在基准参数上叠加）。
- * 这是「语音情绪」那一层：三无不是没起伏，是起伏很小、且有规律。
+ * 这是「语音情绪」那一层：表层不是没起伏，是起伏很小、且有规律。
  */
 export const MOOD_SPEECH = {
   calm: { rate: 0, pitch: 0 },

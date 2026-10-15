@@ -46,7 +46,6 @@ test('mood：serialize 导出可落盘的状态快照', () => {
   assert.equal(s.mood, 'joy')
   assert.ok(close(s.intensity, 0.7))
   assert.equal(s.savedAt, c.at())
-  assert.ok(Array.isArray(s.chatTimes))
 })
 
 test('mood：restore 非法输入返回 false 且不动状态', () => {
@@ -110,7 +109,7 @@ test('mood：开机不立刻闹别扭（冷落计时重新起算）', () => {
   const a = createMood({ now: c.fn })
   a.noteInteraction()
   a.propose('joy', 1.0)
-  a.tick() // 消化掉连聊 burst，避免干扰
+  a.tick() // 让强度先衰减一档，模拟"过了一会儿"再落盘
   const snap = a.serialize()
 
   // 两小时没理她之后开机
@@ -149,8 +148,7 @@ test('mood：跨天重置深夜标记，同一天则保留', () => {
     mood: 'worry',
     intensity: 0.6,
     lastInteraction: new Date('2026-10-14T22:30:00').getTime(),
-    nightWorried: true,
-    chatTimes: []
+    nightWorried: true
   }
   // 跨过零点 → 重置
   const across = fakeClock('2026-10-15T00:30:00')
@@ -163,21 +161,6 @@ test('mood：跨天重置深夜标记，同一天则保留', () => {
   const m2 = createMood({ now: same.fn })
   m2.restore({ ...base, savedAt: new Date('2026-10-14T22:30:00').getTime() })
   assert.equal(m2.serialize().nightWorried, true, '同一天应保留')
-})
-
-test('mood：restore 丢弃过期的连聊时间戳', () => {
-  const c = fakeClock()
-  const a = createMood({ now: c.fn })
-  a.noteInteraction()
-  a.noteInteraction()
-  const snap = a.serialize()
-  assert.equal(snap.chatTimes.length, 2)
-
-  const c2 = fakeClock()
-  c2.advance(MOOD_PARAMS.BURST_WINDOW + 1000) // 超过 90 秒窗口
-  const b = createMood({ now: c2.fn })
-  b.restore(snap)
-  assert.equal(b.serialize().chatTimes.length, 0, '窗口外的连聊时间戳应被丢掉')
 })
 
 test('mood：restore 会广播一次（UI 与落盘都能跟上）', () => {

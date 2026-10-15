@@ -47,7 +47,7 @@ import { getSettings } from './settings-store.js'
 import { getSecret, hasSecret } from './keystore.js'
 import { broadcast, getWorkbenchWindow } from './windows.js'
 import { appendDiary, recentDiaryLines, cacheLeakCount, noteCacheLeak } from './diary.js'
-import { noteEvent, todayEvents, pruneJournals } from './journal.js'
+import { noteEvent, todayEvents, pruneJournals, flushJournal } from './journal.js'
 import { startMonitor, stopMonitor } from './monitor/index.js'
 import { getRag } from './rag/index.js'
 import {
@@ -802,6 +802,7 @@ export async function disposeAgent() {
   } catch {
     /* ignore */
   }
+  flushJournal() // 把防抖中的事件流水立刻刷盘
   try {
     getRag().dispose() // 停掉待嵌定时器与预热定时器
   } catch {
