@@ -19,6 +19,7 @@ import {
   pcmDurationMs
 } from '../src/core/voice/wav.js'
 import { DEFAULT_VOICE_SETTINGS, mergeVoiceSettings } from '../src/shared/voice-protocol.js'
+import { cacheHit, cacheEntry, EMPTY_TTL_MS } from '../src/core/voice/enum-cache.js'
 import { secMsGec, buildSsml } from '../src/main/voice/edge.js'
 import {
   buildSherpaFrame,
@@ -423,4 +424,40 @@ test('asr-sapi.ps1 必须逐次捕获 Recognize()（SAPI 读完音频是抛异�
   const catchIdx = body.indexOf('catch')
   assert.ok(tryIdx !== -1 && recIdx !== -1 && catchIdx !== -1, 'try / Recognize() / catch 必须都在循环体里')
   assert.ok(tryIdx < recIdx && recIdx < catchIdx, '顺序必须是 try { Recognize() } catch')
+})
+
+/* ---------------- 本机能力枚举缓存（2026-10-16 实测踩的坑） ---------------- */
+
+test('枚举缓存：空结果不能永久缓存（否则一次偶发超时就把本机引擎判死一整场）', () => {
+  // 现象：设置页「本机识别」永远不可用、识别器清单永远为空，怎么点都没用。
+  // 根因：枚举走 PowerShell，冷启动加载 .NET 要几秒，启动期主线程忙时会超时；
+  // 旧代码把空清单也当「确定结果」永久缓存，失败一次就再也不会重试。
+  const now = 1000000
+
+  // 空 + 刚写入 → 仍命中（避免同一次会话里反复 spawn）
+  assert.deepEqual(cacheHit(cacheEntry([], now), now + 1000), [])
+  // 空 + 超过 TTL → 失效，允许重试
+  assert.equal(cacheHit(cacheEntry([], now), now + EMPTY_TTL_MS + 1), null)
+  assert.equal(cacheHit(cacheEntry([], now), now + 3600000), null)
+
+  // 非空 = 真实能力，永久有效（系统装了什么不会中途变）
+  const ok = cacheEntry([{ id: 'MS-2052-80-DESK', culture: 'zh-CN' }], now)
+  assert.equal(cacheHit(ok, now + 3600000)?.length, 1)
+
+  // 边界：无缓存 / 脏数据
+  assert.equal(cacheHit(null), null)
+  assert.equal(cacheHit({ list: null, at: now }), null)
+})
+
+test('枚举缓存：TTL 至少 10 秒（太短会让每次开设置页都 spawn 一次 PowerShell）', () => {
+  assert.ok(EMPTY_TTL_MS >= 10000, `EMPTY_TTL_MS=${EMPTY_TTL_MS} 太短`)
+})
+
+test('ps.js 超时后要有宽限期（主线程繁忙时会把「其实成功了」误判成超时）', () => {
+  // 原来超时立刻 kill 并报失败。实测：应用内枚举报 timeout(20000ms)，
+  // 同一个脚本从 node 直接调只要 1.5~4.4s —— 是主线程被占满导致 close 事件排队。
+  const src = readFileSync(join(process.cwd(), 'src', 'main', 'voice', 'ps.js'), 'utf8')
+  assert.ok(/GRACE_AFTER_TIMEOUT_MS/.test(src), 'ps.js 必须定义超时宽限期')
+  assert.ok(/graceTimer\s*=\s*setTimeout/.test(src), '主超时回调里必须再挂宽限定时器，而不是直接 kill')
+  assert.ok(/if \(graceTimer\) clearTimeout\(graceTimer\)/.test(src), '正常结束时要清掉宽限定时器')
 })

@@ -15,15 +15,35 @@ import {
   writeTextFile,
   serialize
 } from './ps.js'
+import { cacheHit, cacheEntry } from '../../core/voice/enum-cache.js'
 
 const ttsScript = () => join(resourcesDir, 'voice', 'tts-sapi.ps1')
 const asrScript = () => join(resourcesDir, 'voice', 'asr-sapi.ps1')
 const scratchRoot = () => join(app.getPath('temp'), 'nagi-voice')
 
-/** 已安装语音清单（进程内缓存，启动后不变） */
+/** 已安装语音清单（进程内缓存：见 core/voice/enum-cache.js） */
 let voicesCache = null
 /** 已安装识别引擎清单（同上） */
 let recognizersCache = null
+
+/**
+ * 枚举类 PowerShell 调用的超时。
+ * 冷启动要加载 .NET + System.Speech，本机实测最慢 4.4s；应用启动期主线程繁忙时
+ * 还要排队 —— 原来给 20s 实测被打满过（2026-10-16），放宽到 45s。
+ */
+const ENUM_TIMEOUT_MS = 45000
+/**
+ * 空清单只缓存 EMPTY_TTL_MS 那么久。
+ * 关键：一次偶发超时/失败不能把「本机引擎」判死一整场 —— 之前空结果被永久缓存，
+ * 于是设置页永远显示 sapi 不可用、识别器清单永远为空（2026-10-16 实测复现）。
+ * 策略本身在 core/voice/enum-cache.js（纯函数，有单测）。
+ */
+
+/** 测试用：清掉缓存 */
+export function __resetSapiCaches() {
+  voicesCache = null
+  recognizersCache = null
+}
 
 /** 语音合成用的默认音色偏好顺序：优先中文女声 */
 const PREFERRED_VOICES = ['Microsoft Huihui Desktop', 'Microsoft Huihui', 'Microsoft Yaoyao']
@@ -33,20 +53,24 @@ const PREFERRED_VOICES = ['Microsoft Huihui Desktop', 'Microsoft Huihui', 'Micro
  * @returns {Promise<Array<{name:string, culture:string, gender:string, age:string}>>}
  */
 export async function listSapiVoices({ log } = {}) {
-  if (voicesCache) return voicesCache
+  const cached = cacheHit(voicesCache)
+  if (cached) return cached
   return serialize(async () => {
-    if (voicesCache) return voicesCache
+    const again = cacheHit(voicesCache)
+    if (again) return again
     const dir = makeScratchDir(scratchRoot(), 'voices')
     try {
       const resultFile = join(dir, 'r.json')
       const r = await runPowerShell(ttsScript(), ['-Mode', 'voices', '-ResultFile', resultFile], {
-        timeoutMs: 20000,
+        timeoutMs: ENUM_TIMEOUT_MS,
         log
       })
       const data = readJsonFile(resultFile)
       const list = data && Array.isArray(data.voices) ? data.voices : []
-      if (!r.ok && !list.length) log && log('[voice] 读取系统语音失败：' + (r.error || data?.error || '未知'))
-      voicesCache = list
+      if (!r.ok && !list.length) {
+        log && log('[voice] 读取系统语音失败：' + (r.error || data?.error || '未知') + '（30 秒后可重试）')
+      }
+      voicesCache = cacheEntry(list)
       return list
     } finally {
       cleanupDir(dir)
@@ -114,16 +138,25 @@ export async function sapiSpeak({ text, voice, rate = 0, volume = 100 } = {}, { 
  * @returns {Promise<Array<{id:string, culture:string, description:string}>>}
  */
 export async function listRecognizers({ log } = {}) {
-  if (recognizersCache) return recognizersCache
+  const cached = cacheHit(recognizersCache)
+  if (cached) return cached
   return serialize(async () => {
-    if (recognizersCache) return recognizersCache
+    const again = cacheHit(recognizersCache)
+    if (again) return again
     const dir = makeScratchDir(scratchRoot(), 'recog')
     try {
       const out = join(dir, 'r.json')
-      await runPowerShell(asrScript(), ['-ListRecognizers', out], { timeoutMs: 20000, log })
+      const r = await runPowerShell(asrScript(), ['-ListRecognizers', out], {
+        timeoutMs: ENUM_TIMEOUT_MS,
+        log
+      })
       const data = readJsonFile(out)
-      recognizersCache = data && Array.isArray(data.recognizers) ? data.recognizers : []
-      return recognizersCache
+      const list = data && Array.isArray(data.recognizers) ? data.recognizers : []
+      if (!r.ok && !list.length) {
+        log && log('[voice] 读取本机识别引擎失败：' + (r.error || data?.error || '未知') + '（30 秒后可重试）')
+      }
+      recognizersCache = cacheEntry(list)
+      return list
     } finally {
       cleanupDir(dir)
     }

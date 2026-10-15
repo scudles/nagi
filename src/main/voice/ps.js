@@ -17,6 +17,12 @@ import { join } from 'node:path'
 let queue = Promise.resolve()
 
 /**
+ * 超时之后再宽限多久才真的判失败（见 runPowerShell 里那段注释）。
+ * 设 8 秒：足够让一个排队的 close 事件落下来，又不至于把用户晾太久。
+ */
+const GRACE_AFTER_TIMEOUT_MS = 8000
+
+/**
  * 把任务排进串行队列（同一时刻只有一个 PowerShell 在跑）。
  * @template T
  * @param {() => Promise<T>} fn
@@ -61,15 +67,25 @@ export function runPowerShell(scriptPath, args = [], opts = {}) {
     let stdout = ''
     let stderr = ''
     let settled = false
+    let graceTimer = null
     const timer = setTimeout(() => {
       if (settled) return
-      settled = true
-      try {
-        child.kill()
-      } catch {
-        /* ignore */
-      }
-      resolve({ ok: false, code: null, stdout, stderr, error: 'timeout (' + timeoutMs + 'ms)' })
+      // 别急着判死：主线程被别的事占满时（启动期加载模型 / 大文件解压），
+      // 子进程的 close 事件会在队列里排着，而定时器在 timers 阶段先跑 ——
+      // 于是「脚本其实跑完了」也被报成超时（2026-10-16 实测：应用内枚举
+      // 报 timeout 20s，同样的脚本从 node 直接调只要 1.5~4.4s）。
+      // 所以先给一段宽限，只有宽限期内仍没退出，才真的算超时并杀掉。
+      graceTimer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        try {
+          child.kill()
+        } catch {
+          /* ignore */
+        }
+        resolve({ ok: false, code: null, stdout, stderr, error: 'timeout (' + timeoutMs + 'ms)' })
+      }, GRACE_AFTER_TIMEOUT_MS)
+      graceTimer.unref?.()
     }, timeoutMs)
     timer.unref?.()
 
@@ -77,18 +93,23 @@ export function runPowerShell(scriptPath, args = [], opts = {}) {
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (d) => (stdout += d))
     child.stderr.on('data', (d) => (stderr += d))
-    child.on('error', (err) => {
+    const finish = (fn) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolve({ ok: false, code: null, stdout, stderr, error: err.message })
+      if (graceTimer) clearTimeout(graceTimer)
+      fn()
+    }
+    child.on('error', (err) => {
+      finish(() => resolve({ ok: false, code: null, stdout, stderr, error: err.message }))
     })
     child.on('close', (code) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      if (code !== 0 && log) log('[voice] PowerShell 退出码 ' + code + (stderr ? '：' + stderr.trim().slice(0, 300) : ''))
-      resolve({ ok: code === 0, code, stdout, stderr })
+      finish(() => {
+        if (code !== 0 && log) {
+          log('[voice] PowerShell 退出码 ' + code + (stderr ? '：' + stderr.trim().slice(0, 300) : ''))
+        }
+        resolve({ ok: code === 0, code, stdout, stderr })
+      })
     })
   })
 }

@@ -227,6 +227,9 @@ export async function downloadSherpaCli(opts = {}) {
   }
   if (!got) return { ok: false, error: lastError || '下载失败' }
 
+  // 解压没有中间进度可报（tar.bz2 一次性展开），但这一步实测要 20~30 秒，
+  // 不推一条状态的话界面会卡在「100%」像死了（2026-10-16 实测）。
+  opts.onProgress?.({ stage: 'extract', received: SHERPA_CLI_BYTES, total: SHERPA_CLI_BYTES })
   const ex = await extractTarBz2(archive, root, log)
   try {
     rmSync(archive, { force: true })

@@ -1014,18 +1014,24 @@ function wireVoiceSettings(on) {
     if (btn) btn.disabled = true
     if (out) out.textContent = '正在下载离线识别（约 98MB，首次较慢）…'
     document.getElementById('asr-progress')?.classList.remove('hidden')
+    let failMsg = ''
     try {
       const r = await window.nagi.voice.downloadModel()
-      if (!r || !r.ok) {
-        ui.addToolLog('离线识别安装失败：' + (r?.error || '未知原因'))
-      } else {
-        ui.addToolLog('离线识别已装好，之后完全离线可用')
-      }
+      if (!r || !r.ok) failMsg = '离线识别安装失败：' + (r?.error || '未知原因')
     } catch (err) {
-      ui.addToolLog('离线识别安装失败：' + err.message)
+      failMsg = '离线识别安装失败：' + (err && err.message ? err.message : String(err))
     } finally {
       document.getElementById('asr-progress')?.classList.add('hidden')
       await refreshVoice()
+      // 失败原因要留在状态行上：refreshVoice() 会把这里刷回「未安装」，
+      // 只写工具日志的话用户看到的就是「点完什么都没发生」（2026-10-16）。
+      if (failMsg) {
+        if (out) out.textContent = failMsg
+        ui.addToolLog(failMsg)
+      } else {
+        ui.addToolLog('离线识别已装好，之后完全离线可用')
+      }
+      if (btn) btn.disabled = false
     }
   })
 
@@ -1051,8 +1057,13 @@ function wireVoiceSettings(on) {
     const pct = p.total ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0
     bar.style.width = pct + '%'
     if (out) {
-      const what = p.stage === 'cli' || (!p.file && !p.stage) ? '识别程序' : '识别模型'
-      out.textContent = `正在下载${what} · ${pct}%`
+      // 解压没有百分比，只换文案 —— 否则会显示成「正在下载识别程序 · 100%」卡住不动
+      if (p.stage === 'extract') {
+        out.textContent = '正在解压识别程序…'
+      } else {
+        const what = p.stage === 'cli' || (!p.file && !p.stage) ? '识别程序' : '识别模型'
+        out.textContent = `正在下载${what} · ${pct}%`
+      }
     }
     const btn = document.getElementById('btn-asr-download')
     if (btn) btn.disabled = true
