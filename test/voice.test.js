@@ -405,3 +405,22 @@ test('voice 的 PowerShell 脚本必须是纯 ASCII（无 BOM、无非 ASCII 字
     assert.equal(bad, -1, `${name} 第 ${bad} 字节是非 ASCII，请改成英文注释`)
   }
 })
+
+test('asr-sapi.ps1 必须逐次捕获 Recognize()（SAPI 读完音频是抛异常，不是返回 null）', () => {
+  // 2026-10-16 实测根因：WAV 读完后 SAPI 的 Recognize() 会抛
+  // 「没有将任何音频输入提供给此识别器」，而不是像脚本原先假设的那样返回 $null。
+  // 那段循环原本写在顶层 try 里，异常一冒泡就走 catch —— 于是**已经识别出来的
+  // 所有短语全部被丢弃**，整段转写报失败。表现就是「她完全听不到我说话」。
+  // 修法：每次 Recognize() 自己包一层 try/catch，读到异常就带着已有文本退出。
+  const p = join(process.cwd(), 'resources', 'voice', 'asr-sapi.ps1')
+  const src = readFileSync(p, 'utf8')
+  const loopStart = src.indexOf('while ($guard -lt 30)')
+  assert.notEqual(loopStart, -1, '找不到 Recognize 循环')
+  const body = src.slice(loopStart, src.indexOf('$engine.Dispose()', loopStart))
+  assert.ok(/try\s*\{/.test(body), '循环体里必须有 try —— 否则异常会冒泡到顶层 try 丢掉全部已识别文本')
+  const tryIdx = body.indexOf('try')
+  const recIdx = body.indexOf('$engine.Recognize()')
+  const catchIdx = body.indexOf('catch')
+  assert.ok(tryIdx !== -1 && recIdx !== -1 && catchIdx !== -1, 'try / Recognize() / catch 必须都在循环体里')
+  assert.ok(tryIdx < recIdx && recIdx < catchIdx, '顺序必须是 try { Recognize() } catch')
+})

@@ -71,7 +71,17 @@ try {
   $guard = 0
   while ($guard -lt 30) {
     $guard++
-    $res = $engine.Recognize()
+    # At the END of a wave file SAPI does NOT return $null -- it THROWS
+    # "No audio input was supplied to this recognizer". So each Recognize()
+    # MUST be guarded on its own: if the throw escapes to the top-level try,
+    # every phrase already recognized is discarded and the whole transcription
+    # is reported as a failure (bug found 2026-10-16, reproduced 3/3).
+    try {
+      $res = $engine.Recognize()
+    } catch {
+      $res = $null
+      break
+    }
     if (-not $res) { break }
     if ($res.Text) {
       $parts += $res.Text
