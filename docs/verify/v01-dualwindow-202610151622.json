@@ -1,0 +1,115 @@
+{
+  "at": "2026-10-15T16:22:52.947Z",
+  "scenario": "NAGI_MODE=workbench；工作台发起对话；桌宠隐藏；TTS=sapi",
+  "base": {
+    "pet": {
+      "installedAt": 1792081322105,
+      "agentDone": 0,
+      "petEvents": 0,
+      "stateSeen": 0,
+      "speakingSeen": 0,
+      "sessions": []
+    },
+    "wb": {
+      "installedAt": 1792081322345,
+      "agentDone": 0,
+      "petEvents": 0,
+      "stateSeen": 0,
+      "speakingSeen": 0,
+      "sessions": []
+    }
+  },
+  "final": {
+    "pet": {
+      "installedAt": 1792081322105,
+      "agentDone": 1,
+      "petEvents": 0,
+      "stateSeen": 0,
+      "speakingSeen": 0,
+      "sessions": []
+    },
+    "wb": {
+      "installedAt": 1792081322345,
+      "agentDone": 1,
+      "petEvents": 0,
+      "stateSeen": 289,
+      "speakingSeen": 289,
+      "sessions": [
+        "90c3f1cf"
+      ]
+    }
+  },
+  "navLog": [],
+  "timeline": [
+    "  t+0.1s  pet: state=0 sessions=[] | wb: state=3 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+1.0s  pet: state=0 sessions=[] | wb: state=10 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+2.2s  pet: state=0 sessions=[] | wb: state=24 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+2.8s  pet: state=0 sessions=[] | wb: state=30 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+3.4s  pet: state=0 sessions=[] | wb: state=36 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+4.5s  pet: state=0 sessions=[] | wb: state=43 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+5.1s  pet: state=0 sessions=[] | wb: state=53 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+5.6s  pet: state=0 sessions=[] | wb: state=59 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+6.2s  pet: state=0 sessions=[] | wb: state=65 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+6.8s  pet: state=0 sessions=[] | wb: state=71 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+7.3s  pet: state=0 sessions=[] | wb: state=76 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+7.9s  pet: state=0 sessions=[] | wb: state=81 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+8.4s  pet: state=0 sessions=[] | wb: state=87 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+9.0s  pet: state=0 sessions=[] | wb: state=93 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+9.6s  pet: state=0 sessions=[] | wb: state=98 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+10.2s  pet: state=0 sessions=[] | wb: state=104 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+10.7s  pet: state=0 sessions=[] | wb: state=110 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+11.3s  pet: state=0 sessions=[] | wb: state=115 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+11.8s  pet: state=0 sessions=[] | wb: state=121 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+12.4s  pet: state=0 sessions=[] | wb: state=126 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+13.1s  pet: state=0 sessions=[] | wb: state=133 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+13.6s  pet: state=0 sessions=[] | wb: state=139 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+14.2s  pet: state=0 sessions=[] | wb: state=145 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+14.8s  pet: state=0 sessions=[] | wb: state=150 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+15.4s  pet: state=0 sessions=[] | wb: state=156 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+15.9s  pet: state=0 sessions=[] | wb: state=162 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+16.5s  pet: state=0 sessions=[] | wb: state=167 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+17.2s  pet: state=0 sessions=[] | wb: state=174 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+17.8s  pet: state=0 sessions=[] | wb: state=179 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+18.3s  pet: state=0 sessions=[] | wb: state=185 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+18.9s  pet: state=0 sessions=[] | wb: state=190 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+19.4s  pet: state=0 sessions=[] | wb: state=196 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+20.1s  pet: state=0 sessions=[] | wb: state=202 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+20.7s  pet: state=0 sessions=[] | wb: state=209 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+21.3s  pet: state=0 sessions=[] | wb: state=214 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+21.8s  pet: state=0 sessions=[] | wb: state=220 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+22.4s  pet: state=0 sessions=[] | wb: state=225 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+23.0s  pet: state=0 sessions=[] | wb: state=231 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+23.5s  pet: state=0 sessions=[] | wb: state=237 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+24.2s  pet: state=0 sessions=[] | wb: state=243 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+25.2s  pet: state=0 sessions=[] | wb: state=253 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+25.7s  pet: state=0 sessions=[] | wb: state=259 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+26.3s  pet: state=0 sessions=[] | wb: state=265 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+26.8s  pet: state=0 sessions=[] | wb: state=270 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+27.4s  pet: state=0 sessions=[] | wb: state=275 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+27.9s  pet: state=0 sessions=[] | wb: state=281 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)",
+    "  t+28.7s  pet: state=0 sessions=[] | wb: state=289 sessions=[\"90c3f1cf\"] (DONE: pet=1 wb=1, PET: pet=0 wb=0)"
+  ],
+  "petSessions": [],
+  "wbSessions": [
+    "90c3f1cf"
+  ],
+  "v01Confirmed": false,
+  "v01Fixed": true,
+  "results": [
+    {
+      "name": "双窗并存（pet + workbench 页面都存在）",
+      "pass": true,
+      "detail": "pet=true wb=true"
+    },
+    {
+      "name": "工作台窗（发起窗）产生新朗读会话",
+      "pass": true,
+      "detail": "90c3f1cf"
+    },
+    {
+      "name": "桌宠窗（隐藏窗）未产生新朗读会话（唯一播放者）",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

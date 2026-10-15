@@ -89,7 +89,6 @@ function clampEmotion(e) {
  * @param {Function} opts.confirm          async ({id,name,args,risk}) => boolean
  * @param {Function} opts.emit             (event) => void   向前端广播
  * @param {number}   opts.maxSteps
- * @param {{confirmHighRisk?:boolean}} opts.safety
  * @param {AbortSignal} opts.signal
  * @returns {Promise<{text:string, steps:number, aborted:boolean}>}
  */
@@ -103,7 +102,6 @@ export async function runAgentLoop(opts) {
     confirm,
     emit,
     maxSteps = DEFAULT_MAX_STEPS,
-    safety = {},
     signal
   } = opts
 
@@ -206,7 +204,7 @@ export async function runAgentLoop(opts) {
           const risk = getToolRisk(tc.name)
           emit({ type: AGENT_EVENT.TOOL_CALL, id: tc.id, name: tc.name, args, risk })
 
-          const decision = needsConfirm({ name: tc.name, args }, { confirmHighRisk: safety.confirmHighRisk })
+          const decision = needsConfirm({ name: tc.name, args })
           let result
           if (decision.blocked) {
             result = { ok: false, summary: '该命令被安全策略永久拒绝（黑名单）' }
@@ -235,7 +233,7 @@ export async function runAgentLoop(opts) {
           if (!result) {
             emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.ACTING, detail: tc.name })
             try {
-              result = (await executeTool(tc.name, args, { id: tc.id })) || { ok: false, summary: '工具无返回' }
+              result = (await executeTool(tc.name, args, { id: tc.id, safe: decision.safe })) || { ok: false, summary: '工具无返回' }
             } catch (err) {
               result = { ok: false, summary: '工具执行异常：' + (err && err.message ? err.message : String(err)) }
             }

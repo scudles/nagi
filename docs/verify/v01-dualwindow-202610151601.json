@@ -1,0 +1,83 @@
+{
+  "at": "2026-10-15T16:01:37.607Z",
+  "scenario": "NAGI_MODE=workbench；工作台发起对话；桌宠隐藏；TTS=sapi",
+  "base": {
+    "pet": {
+      "installedAt": 1792079772453,
+      "agentDone": 0,
+      "petEvents": 13,
+      "stateSeen": 0,
+      "speakingSeen": 0,
+      "sessions": []
+    },
+    "wb": {
+      "installedAt": 1792079772458,
+      "agentDone": 0,
+      "petEvents": 13,
+      "stateSeen": 0,
+      "speakingSeen": 0,
+      "sessions": []
+    }
+  },
+  "final": {
+    "pet": {
+      "installedAt": 1792079772453,
+      "agentDone": 1,
+      "petEvents": 13,
+      "stateSeen": 73,
+      "speakingSeen": 73,
+      "sessions": [
+        "5489430a"
+      ]
+    },
+    "wb": {
+      "installedAt": 1792079772458,
+      "agentDone": 1,
+      "petEvents": 13,
+      "stateSeen": 0,
+      "speakingSeen": 0,
+      "sessions": []
+    }
+  },
+  "navLog": [],
+  "timeline": [
+    "  t+0.0s  pet: state=0 sessions=[] | wb: state=0 sessions=[] (DONE: pet=0 wb=0, PET: pet=13 wb=13)",
+    "  t+0.8s  pet: state=5 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+1.3s  pet: state=13 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+1.9s  pet: state=18 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+2.4s  pet: state=23 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+2.9s  pet: state=28 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+3.4s  pet: state=33 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+4.0s  pet: state=39 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+4.5s  pet: state=44 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+5.0s  pet: state=49 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+5.5s  pet: state=54 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+6.0s  pet: state=60 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+6.6s  pet: state=65 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+7.1s  pet: state=70 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)",
+    "  t+7.6s  pet: state=73 sessions=[\"5489430a\"] | wb: state=0 sessions=[] (DONE: pet=1 wb=1, PET: pet=13 wb=13)"
+  ],
+  "petSessions": [
+    "5489430a"
+  ],
+  "wbSessions": [],
+  "v01Confirmed": false,
+  "v01Fixed": false,
+  "results": [
+    {
+      "name": "双窗并存（pet + workbench 页面都存在）",
+      "pass": true,
+      "detail": "pet=true wb=true"
+    },
+    {
+      "name": "工作台窗（发起窗）产生新朗读会话",
+      "pass": false,
+      "detail": ""
+    },
+    {
+      "name": "桌宠窗（隐藏窗）未产生新朗读会话（唯一播放者）",
+      "pass": false,
+      "detail": "5489430a"
+    }
+  ]
+}

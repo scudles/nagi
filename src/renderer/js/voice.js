@@ -186,6 +186,8 @@ export async function speak(text, opts = {}) {
     return { ok: false, error: err && err.message ? err.message : String(err) }
   }
   if (!started || !started.ok) {
+    // 非归属窗口（形态切换后/双窗场景）：主进程仲裁未放行，正常静默，不当报错
+    if (started && started.reason === 'not-owner') return { ok: false, reason: 'not-owner' }
     console.warn('[voice] 合成未开始：', started && started.error)
     return { ok: false, error: started?.error || '语音合成失败' }
   }
@@ -514,6 +516,11 @@ export function initVoice(opts = {}) {
   // 离线模型下载进度 → 交给设置页展示（设置页自己也会订阅，这里只兜底打日志）
   window.nagi.on(VOICE_EVT.PROGRESS, (p) => {
     if (p && p.done) console.log('[voice] 离线模型下载结束：', p.ok ? '成功' : p.error)
+  })
+
+  // 失去语音归属（形态切换）：立刻闭嘴，避免隐藏的窗继续发声、和新归属者重叠（V01 修复）
+  window.nagi.on(VOICE_EVT.OWNER_LOST, () => {
+    stopSpeaking()
   })
 
   // 切窗口/关窗时闭嘴并停录，免得她对着空房间说话

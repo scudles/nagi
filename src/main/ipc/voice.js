@@ -10,6 +10,7 @@
 
 import { ipcMain, BrowserWindow } from 'electron'
 import { VOICE_IPC, VOICE_EVT } from '../../shared/voice-protocol.js'
+import { getVoiceOwner, findWindowByWebContents } from '../windows.js'
 import {
   voiceStatus,
   startSpeech,
@@ -51,7 +52,13 @@ export function registerVoiceIpc() {
 
   /* ---------------- 语音输出 ---------------- */
 
-  ipcMain.handle(VOICE_IPC.SPEAK, (_e, payload = {}) => {
+  ipcMain.handle(VOICE_IPC.SPEAK, (e, payload = {}) => {
+    // V01 修复：一次回复只允许一个窗口朗读（当前形态所在窗口）。
+    // 桌宠窗与工作台窗都订阅 AGENT DONE，没有这道闸门就会各自合成、重叠发声，
+    // 隐藏的桌宠窗也会在用户看不见的地方出声。
+    const owner = getVoiceOwner()
+    const caller = findWindowByWebContents(e.sender)
+    if (owner && caller !== owner) return { ok: false, reason: 'not-owner' }
     const r = startSpeech(payload.text, { mood: payload.mood, engine: payload.engine })
     return r
   })

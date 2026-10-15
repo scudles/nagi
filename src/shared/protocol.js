@@ -129,7 +129,6 @@ export const DEFAULT_SETTINGS = {
     // 默认胸像 —— 形象永不越界、也不会盖到 UI 上（详见 core/frame.js）
     frame: 'bust',
     eyeBlink: true,
-    focusFollow: true,
     petWidth: 400, // 桌宠窗口尺寸（可用右下角手柄/Ctrl+滚轮自由调）
     petHeight: 600,
     idleBoost: true // 待机加成：一段时间无互动时放大一点、换个姿势
@@ -140,7 +139,6 @@ export const DEFAULT_SETTINGS = {
   },
   tools: {
     cdpPort: 9222,
-    confirmHighRisk: true,
     fileRoot: '',
     browserMode: 'cdp' // 'cdp' | 'managed'
   },

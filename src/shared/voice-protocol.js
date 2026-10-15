@@ -40,7 +40,9 @@ export const VOICE_EVT = {
   /** 离线模型下载进度 { kind:'download', stage:'cli'|'model', file, received, total } */
   PROGRESS: 'voice:progress',
   /** 语音合成失败 / 引擎降级提示 { kind:'fallback'|'error', from, to, message } */
-  NOTICE: 'voice:notice'
+  NOTICE: 'voice:notice',
+  /** 失去语音归属（形态切换）：收到就停止朗读，避免隐藏的窗继续发声（V01 修复） */
+  OWNER_LOST: 'voice:owner-lost'
 }
 
 /**

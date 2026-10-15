@@ -60,6 +60,46 @@ export function parseMemoryOps(raw) {
 }
 
 /**
+ * 合并增删指令并报告真实变化。纯函数。
+ *
+ * 与 applyMemoryOps 的区别：除了条目数组，还返回 changed/added/removed，
+ * 供持久层按「内容变化」判断写盘（修复满额淘汰后数量不变导致不落盘的问题）。
+ *
+ * @param {Array<{id?:string,text:string,at?:number}>} entries
+ * @param {{add?:string[],remove?:string[]}} ops
+ * @param {number} now
+ * @returns {{entries:Array, changed:boolean, added:string[], removed:string[]}}
+ *   added   = 实际进入清单的新文本（去重跳过、超限淘汰不算"成功新增"）
+ *   removed = 实际被删掉的旧文本
+ *   changed = 清单内容是否发生变化（含满额淘汰与无效条目清理）
+ */
+export function mergeMemoryEntries(entries = [], ops = {}, now = Date.now()) {
+  const norm = (s) => String(s || '').replace(/\s+/g, '').trim()
+  const removeSet = new Set((ops.remove || []).map(norm))
+  const removed = entries
+    .filter((e) => e && typeof e.text === 'string' && removeSet.has(norm(e.text)))
+    .map((e) => e.text.trim())
+  let out = entries
+    .filter((e) => e && typeof e.text === 'string' && e.text.trim())
+    .filter((e) => !removeSet.has(norm(e.text)))
+
+  const seen = new Set(out.map((e) => norm(e.text)))
+  const added = []
+  for (const text of ops.add || []) {
+    const n = norm(text)
+    if (!n || seen.has(n)) continue
+    seen.add(n)
+    const entry = { id: 'm' + now.toString(36) + '_' + out.length, text: text.trim(), at: now }
+    out.push(entry)
+    added.push(entry.text)
+  }
+
+  if (out.length > MEMORY_LIMIT) out = out.slice(out.length - MEMORY_LIMIT)
+  const changed = JSON.stringify(entries) !== JSON.stringify(out)
+  return { entries: out, changed, added, removed }
+}
+
+/**
  * 应用增删指令，返回全新条目数组。纯函数。
  * - add：新条目入队；与已有条目（去空格后）相同则跳过
  * - remove：按原文精确匹配删除
@@ -69,20 +109,5 @@ export function parseMemoryOps(raw) {
  * @param {number} now
  */
 export function applyMemoryOps(entries = [], ops = {}, now = Date.now()) {
-  const norm = (s) => String(s || '').replace(/\s+/g, '').trim()
-  const removeSet = new Set((ops.remove || []).map(norm))
-  let out = entries
-    .filter((e) => e && typeof e.text === 'string' && e.text.trim())
-    .filter((e) => !removeSet.has(norm(e.text)))
-
-  const seen = new Set(out.map((e) => norm(e.text)))
-  for (const text of ops.add || []) {
-    const n = norm(text)
-    if (!n || seen.has(n)) continue
-    seen.add(n)
-    out.push({ id: 'm' + now.toString(36) + '_' + out.length, text: text.trim(), at: now })
-  }
-
-  if (out.length > MEMORY_LIMIT) out = out.slice(out.length - MEMORY_LIMIT)
-  return out
+  return mergeMemoryEntries(entries, ops, now).entries
 }

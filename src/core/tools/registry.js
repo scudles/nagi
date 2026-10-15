@@ -154,7 +154,7 @@ export function planHomeService(args) {
 export function createToolRunner(deps) {
   const unknown = (name) => ({ ok: false, summary: `未知工具：${name}` })
 
-  return async function executeTool(name, args = {}) {
+  return async function executeTool(name, args = {}, opts = {}) {
     switch (name) {
       case 'web_search': {
         const { webSearch } = await import('./search.js')
@@ -175,7 +175,7 @@ export function createToolRunner(deps) {
         return deps.files.list(args)
 
       case 'run_command':
-        return deps.system.run(args)
+        return deps.system.run(args, { safe: opts?.safe })
       case 'open_app':
         return deps.system.open(args)
 

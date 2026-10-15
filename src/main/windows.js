@@ -6,6 +6,8 @@ import { BrowserWindow, screen, shell } from 'electron'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { MODE, EVT, DEFAULT_SETTINGS } from '../shared/protocol.js'
+import { VOICE_EVT } from '../shared/voice-protocol.js'
+import { pickVoiceOwner } from '../core/voice/owner.js'
 import { getSettings, saveSettings } from './settings-store.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -179,6 +181,29 @@ export function getWorkbenchWindow() {
   return workbenchWindow && !workbenchWindow.isDestroyed() ? workbenchWindow : null
 }
 
+/**
+ * 语音播放归属者（V01 修复）：当前形态所在窗口，且唯一。
+ * 主进程侧权威判定，ipc/voice.js 据此放行/拒绝 speak 请求——
+ * 双窗都订阅了 AGENT DONE，没有这道闸门就会各自合成、重叠发声。
+ */
+export function getVoiceOwner() {
+  const which = pickVoiceOwner(currentMode, {
+    pet: !!(petWindow && !petWindow.isDestroyed()),
+    workbench: !!(workbenchWindow && !workbenchWindow.isDestroyed())
+  })
+  if (which === 'workbench') return getWorkbenchWindow()
+  if (which === 'pet') return getPetWindow()
+  return null
+}
+
+/** 按 webContents 反查窗口（IPC 层判定调用方身份用；找不到返回 null） */
+export function findWindowByWebContents(wc) {
+  for (const win of [petWindow, workbenchWindow, diaryWindow]) {
+    if (win && !win.isDestroyed() && win.webContents === wc) return win
+  }
+  return null
+}
+
 /* ---------------- 内心独白日史查看器（D2：按需打开的独立小窗） ---------------- */
 export function createDiaryWindow() {
   if (diaryWindow && !diaryWindow.isDestroyed()) return diaryWindow
@@ -220,6 +245,7 @@ export function openDiaryWindow() {
 
 /** 切换形态：显示目标窗、隐藏另一个 */
 export function switchMode(mode) {
+  const prevMode = currentMode
   currentMode = mode === MODE.WORKBENCH ? MODE.WORKBENCH : MODE.PET
   if (currentMode === MODE.WORKBENCH) {
     createWorkbenchWindow()
@@ -230,6 +256,18 @@ export function switchMode(mode) {
     createPetWindow()
     petWindow.showInactive()
     if (workbenchWindow && !workbenchWindow.isDestroyed()) workbenchWindow.hide()
+  }
+  if (prevMode !== currentMode) {
+    // V01：形态切换后，让失去归属的旧窗停止朗读——隐藏的窗不该继续发声，
+    // 否则它的残留音频会和新归属者的朗读重叠
+    const stale = prevMode === MODE.WORKBENCH ? workbenchWindow : petWindow
+    if (stale && !stale.isDestroyed()) {
+      try {
+        stale.webContents.send(VOICE_EVT.OWNER_LOST)
+      } catch {
+        /* 窗口正在销毁，忽略 */
+      }
+    }
   }
   broadcast(EVT.SETTINGS_CHANGED, { mode: currentMode })
   return currentMode

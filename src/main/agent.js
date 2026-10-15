@@ -12,6 +12,16 @@ import { initCloudBrain, cloudBrainStatus, cloudChatStream } from '../core/llm/c
 import { createMood } from '../core/emotion/mood.js'
 import { NagiPersona } from '../core/persona.js'
 import { buildContextBlock, recentAssistantReplies, timeSlot } from '../core/context.js'
+import {
+  buildDiaryMessages,
+  formatMoodJourney,
+  isTooSimilar,
+  pickFallbackDiary,
+  sanitizeDiaryLine,
+  shouldOfferCache,
+  shouldWriteNow
+} from '../core/diary.js'
+import { dateKey } from '../core/journal.js'
 import { MEMORY_EXTRACT_PROMPT, parseMemoryOps } from '../core/memory.js'
 import {
   loadHistory,
@@ -36,7 +46,8 @@ import { createNativeTools } from './native-tools.js'
 import { getSettings } from './settings-store.js'
 import { getSecret, hasSecret } from './keystore.js'
 import { broadcast, getWorkbenchWindow } from './windows.js'
-import { appendDiary } from './diary.js'
+import { appendDiary, recentDiaryLines, cacheLeakCount, noteCacheLeak } from './diary.js'
+import { noteEvent, todayEvents, pruneJournals } from './journal.js'
 import { startMonitor, stopMonitor } from './monitor/index.js'
 import {
   startReminderEngine,
@@ -183,6 +194,11 @@ export function restoreState() {
   } catch {
     /* 清理失败不影响启动 */
   }
+  try {
+    pruneJournals()
+  } catch {
+    /* 同上 */
+  }
 }
 
 // Agent 事件出口：EMOTION 只记最后一帧（DONE 时才提议情绪，流式中途不翻脸），其余直广播
@@ -208,7 +224,13 @@ function emitAgentEvent(e) {
 let moodTickTimer = null
 let diaryTimer = null
 
-/** 启动情绪心跳（15s）与独白日史定时器（42s × 50%）；app ready 后调用 */
+/** 独白节流状态：单日计数跨天归零（只活在内存里，重启重算） */
+let diaryDay = null
+let diaryCount = 0
+let lastDiaryAt = 0
+let diaryBusy = false
+
+/** 启动情绪心跳（15s）与独白日史检查（60s，是否动笔由节流决定）；app ready 后调用 */
 export function startMoodEngine() {
   if (moodTickTimer) return
   moodTickTimer = setInterval(() => {
@@ -216,11 +238,16 @@ export function startMoodEngine() {
     broadcastMood()
   }, 15000)
   // 内心独白写日史文件（D2 决策：UI 不常驻，用户在日记查看器/文件夹里按需打开）
+  // 2026-10-15：不再是「掷骰子从固定池抽一句」——每分钟醒一次，按节流决定是否动笔；
+  // 动笔时把「今天发生的事 + 情绪轨迹 + 关于他的记忆」交给她即兴生成（见 writeDiaryLine）。
   diaryTimer = setInterval(() => {
-    if (Math.random() < 0.5) {
-      appendDiary(mood.current(), mood.pickMonologue())
-    }
-  }, 42000)
+    maybeWriteDiary('ambient')
+  }, 60000)
+  // 无头自测：强制写一条（延迟 10s，等无头脚本先把测试消息聊完），
+  // 验证「采素材 → 生成 → 落盘」整条链路（NAGI_SELFTEST_DIARY_WRITE=1）
+  if (process.env.NAGI_SELFTEST && process.env.NAGI_SELFTEST_DIARY_WRITE === '1') {
+    setTimeout(() => void writeDiaryLine({ now: Date.now() }), 10000)
+  }
 }
 
 export function stopMoodEngine() {
@@ -228,6 +255,129 @@ export function stopMoodEngine() {
   if (diaryTimer) clearInterval(diaryTimer)
   moodTickTimer = null
   diaryTimer = null
+}
+
+/* ---------------- 内心独白：按「今天真实发生的事」即兴生成（2026-10-15） ----------------
+ * 修的是什么：原先每 42 秒掷一次骰子，中了就从固定句子池里抽一条——所以日记篇篇是模板，
+ * 跟"今天到底过了什么"没关系。现在：节流决定"该不该写"，内容由她看着今天的经历即兴写。
+ * 固定池只剩一个用途：模型不可用时的离线兜底（且兜底也反重复）。
+ */
+
+/** 跨天重置单日计数 */
+function ensureDiaryDay(now = Date.now()) {
+  const day = dateKey(now)
+  if (diaryDay !== day) {
+    diaryDay = day
+    diaryCount = 0
+  }
+}
+
+/** 今天的心情轨迹（从情绪时间线压缩成一句，喂给生成用） */
+function todayMoodJourney(now = Date.now()) {
+  try {
+    const { days } = readTimeline(1, now)
+    const last = days && days.length ? days[days.length - 1] : null
+    return formatMoodJourney(last ? last.points : [], now)
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 无头自测用的假日记模型：它只能看到上下文，却回一句引用了「今天素材」的话——
+ * 若日记里出现这句话，就证明上下文真的传到了（NAGI_FAKE_DIARY=1）。
+ */
+function fakeDiaryLine(messages) {
+  const ctx = (messages.find((m) => m.role === 'user') || {}).content || ''
+  const hit = ctx.match(/- (\d{2}:\d{2}) 他：(.{0,18})/m)
+  if (hit) return `……（自测）${hit[1]} 他说的那句「${hit[2]}」，我记下了。`
+  return '……（自测）今天很安静。安静也算一种事。'
+}
+
+/**
+ * 生成并落盘一条「心里话」。任何失败都静默——她记不记得写笔记，不该影响对话。
+ * @returns {Promise<boolean>} 是否真的写了一条
+ */
+async function writeDiaryLine({ now = Date.now() } = {}) {
+  if (diaryBusy) return false
+  diaryBusy = true
+  try {
+    const snap = mood.current()
+    const recent = recentDiaryLines(6) // 不该重复自己最近写过的话
+    const useCache = shouldOfferCache({ now, weekCount: cacheLeakCount(now) }) // 深夜残片：5% × 每周上限 1
+    const fakeDiary = process.env.NAGI_FAKE_DIARY === '1'
+    const settings = getSettings()
+    const llm = resolveLlm(settings.llm || {})
+    const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
+    const useCloud = llm.provider === 'workbuddy' && process.env.NAGI_FAKE_LLM !== '1' && !fakeDiary
+    const canGenerate = fakeDiary || hasKey || useCloud
+
+    let text = ''
+    if (canGenerate) {
+      if (useCloud && !cloudBrainStatus().ok) {
+        try {
+          await initCloudBrain()
+        } catch {
+          /* 初始化失败交给离线兜底 */
+        }
+      }
+      const messages = buildDiaryMessages({
+        now,
+        mood: snap,
+        moodJourney: todayMoodJourney(now),
+        events: todayEvents(now),
+        memories: memoryLines(),
+        relation: relationSummary(),
+        recentDiaries: recent,
+        cacheAllowed: useCache
+      })
+      try {
+        if (fakeDiary) {
+          text = sanitizeDiaryLine(fakeDiaryLine(messages))
+        } else {
+          const client = hasKey ? createClient({ apiKey: getSecret(SECRET_KEYS.LLM_API_KEY), baseURL: llm.baseURL }) : null
+          // temperature 给高一点：这是"心里话"，不该像客服话术一样收敛
+          text = sanitizeDiaryLine(await callModelOnce({ client, llm, useCloud, messages, temperature: 0.9 }))
+        }
+      } catch (err) {
+        console.warn('[diary] 生成失败，转离线兜底：', err && err.message)
+      }
+    }
+
+    const generated = !!text
+    if (!text || recent.some((r) => isTooSimilar(text, r))) {
+      text = pickFallbackDiary({ mood: snap, recent })
+      if (text && recent.some((r) => isTooSimilar(text, r))) text = '' // 兜底也全撞车：这一条宁可不写
+    }
+    if (!text) return false
+
+    appendDiary(snap, text, { kind: 'inner' })
+    // 泄露计数：只在"真的由模型写出来、且当时给了缓存许可"时记一笔（护栏：极低频）
+    if (useCache && generated) noteCacheLeak(now)
+    lastDiaryAt = now
+    ensureDiaryDay(now)
+    diaryCount++
+    console.log(`[diary] ${generated ? '生成' : '兜底'}一条（${snap.label}）：${text}`)
+    return true
+  } catch (err) {
+    console.warn('[diary] 写日记出错：', err && err.message)
+    return false
+  } finally {
+    diaryBusy = false
+  }
+}
+
+/**
+ * 节流后决定是否动笔。刻意不 await——写日记不该阻塞任何事。
+ * @param {'ambient'|'after-chat'} trigger
+ */
+function maybeWriteDiary(trigger = 'ambient') {
+  const now = Date.now()
+  ensureDiaryDay(now)
+  const d = shouldWriteNow({ now, lastWriteAt: lastDiaryAt, todayCount: diaryCount }, trigger)
+  if (!d.go) return false
+  void writeDiaryLine({ now })
+  return true
 }
 
 /* ---------------- 活动监测（M3）：她看你在做什么，忍不住主动开口 ---------------- */
@@ -246,6 +396,12 @@ function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monit
   const snap = mood.current()
   if (force || !busy) broadcast(EVT.PET, { kind, text, expr: snap.expr })
   appendDiary(snap, text)
+  // 记进「今天发生的事」：她开过口、提醒过什么，都是她这一天的一部分
+  try {
+    noteEvent({ kind: kind === 'reminder' ? 'reminder' : 'proactive', text })
+  } catch {
+    /* 记流水失败不影响开口 */
+  }
   return true
 }
 
@@ -457,7 +613,7 @@ export async function runTurn(userText, emit) {
 
   const fileRoot = settings.tools?.fileRoot || app.getPath('documents')
   const files = createFileTools({ fileRoot })
-  const system = createSystemTools({ cwd: app.getPath('home') })
+  const system = createSystemTools({ cwd: app.getPath('home'), fileRoot })
   const ha = getHa()
   const executeTool = createToolRunner({
     files,
@@ -500,7 +656,6 @@ export async function runTurn(userText, emit) {
         }, 30000).unref?.()
       }),
     emit,
-    safety: { confirmHighRisk: settings.tools?.confirmHighRisk !== false },
     signal: currentAbort.signal
   })
 
@@ -526,14 +681,24 @@ export async function handleChatSend(text) {
   mood.noteInteraction() // 连聊 burst 统计 + 刷新互动时间
   noteRelationInteraction() // 关系层记账：认识多久、聊过多少次、活跃几天
   const emit = (e) => emitAgentEvent(e)
+  let reply = ''
   try {
-    await runTurn(t, emit)
+    reply = await runTurn(t, emit)
     return { ok: true }
   } catch (err) {
     emit({ type: AGENT_EVENT.ERROR, message: err && err.message ? err.message : String(err) })
     emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.IDLE })
     return { ok: false, error: err?.message }
   } finally {
+    // 记进「今天发生的事」：不管这一轮成没成，他找她说过话这件事都发生过——
+    // 日记里不该出现"空白的一天"。素材少一段，也比白纸强。
+    try {
+      noteEvent({ kind: 'chat', user: t, reply: String(reply || '') })
+    } catch {
+      /* 记流水失败不影响对话 */
+    }
+    // 刚聊完，是她最可能想记一笔的时刻（写不写由节流内部决定）
+    maybeWriteDiary('after-chat')
     busy = false
     currentAbort = null
   }
@@ -550,6 +715,11 @@ export function getMoodSnapshot() {
 export function handlePoke() {
   mood.noteInteraction() // 戳她也是互动：刷新冷落计时
   noteRelationInteraction() // 关系层同样记一笔（戳也算搭理她）
+  try {
+    noteEvent({ kind: 'poke' })
+  } catch {
+    /* 记流水失败不影响反应 */
+  }
   const p = mood.pickPoke()
   broadcastMood()
   broadcast(EVT.PET, { kind: 'poke', text: p.text, expr: p.expr })

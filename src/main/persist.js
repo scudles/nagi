@@ -10,7 +10,7 @@
 import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { MEMORY_LIMIT, formatMemories, applyMemoryOps } from '../core/memory.js'
+import { formatMemories, mergeMemoryEntries } from '../core/memory.js'
 
 const usersFile = (name) => join(app.getPath('userData'), name)
 
@@ -101,7 +101,7 @@ export function addMemory(text) {
   loadMemories()
   const t = String(text || '').trim()
   if (!t) return listMemories()
-  memories = applyMemoryOps(memories, { add: [t] }, Date.now())
+  memories = mergeMemoryEntries(memories, { add: [t] }, Date.now()).entries
   persistMemories()
   return listMemories()
 }
@@ -110,22 +110,23 @@ export function addMemory(text) {
 export function removeMemory({ id, text } = {}) {
   loadMemories()
   if (id) memories = memories.filter((e) => e.id !== id)
-  else if (text) memories = applyMemoryOps(memories, { remove: [text] }, Date.now())
+  else if (text) memories = mergeMemoryEntries(memories, { remove: [text] }, Date.now()).entries
   persistMemories()
   return listMemories()
 }
 
 /**
  * 合并模型抽取出的增删指令。
- * @returns {{before:number, after:number, added:string[]}}
+ * 按「内容变化」判断写盘：满额淘汰后数量不变，内容确实变了也必须落盘（D01 修复）。
+ * @returns {{before:number, after:number, added:string[], removed:string[]}}
  */
 export function mergeMemoryOps(ops, now = Date.now()) {
   loadMemories()
-  const before = memories.length
-  memories = applyMemoryOps(memories, ops || {}, now)
-  const after = memories.length
-  if (after !== before || (ops?.remove || []).length) persistMemories()
-  return { before, after, added: (ops?.add || []).slice(0, MEMORY_LIMIT) }
+  const before = memories
+  const r = mergeMemoryEntries(before, ops || {}, now)
+  memories = r.entries
+  if (r.changed) persistMemories()
+  return { before: before.length, after: memories.length, added: r.added, removed: r.removed }
 }
 
 /* ---------------- 情绪状态（S4：跨重启延续） ---------------- */

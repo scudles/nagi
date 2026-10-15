@@ -1,0 +1,79 @@
+{
+  "at": "2026-10-15T15:15:50.597Z",
+  "scenario": "NAGI_MODE=workbench 启动；工作台窗可见并发起对话；桌宠窗隐藏；TTS=sapi",
+  "watch": {
+    "pet": {
+      "agentDone": 1,
+      "stateSeen": 174,
+      "speakingSeen": 174,
+      "sessions": [
+        "fa8aea54",
+        "fa8aea54",
+        "fa8aea54",
+        "fa8aea54",
+        "fa8aea54",
+        "fa8aea54",
+        "fa8aea54",
+        "fa8aea54"
+      ]
+    },
+    "workbench": {
+      "agentDone": 1,
+      "stateSeen": 198,
+      "speakingSeen": 198,
+      "sessions": [
+        "36bceb9e",
+        "36bceb9e",
+        "36bceb9e",
+        "36bceb9e",
+        "36bceb9e",
+        "36bceb9e",
+        "36bceb9e",
+        "36bceb9e"
+      ]
+    }
+  },
+  "instant": {
+    "pet": {
+      "state": null,
+      "speaking": false
+    },
+    "workbench": {
+      "state": null,
+      "speaking": false
+    }
+  },
+  "v01Confirmed": true,
+  "results": [
+    {
+      "name": "双窗并存（pet + workbench 页面都存在）",
+      "pass": true,
+      "detail": "pet=true wb=true"
+    },
+    {
+      "name": "pet 窗语音链路已初始化",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "workbench 窗语音链路已初始化",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "隔离环境 TTS 引擎为 sapi（不依赖外网）",
+      "pass": true,
+      "detail": "由 settings.json 预设，上方 engine 字段确认"
+    },
+    {
+      "name": "工作台窗（发起窗）触发朗读",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "桌宠窗（隐藏窗）未跟读（唯一播放者）",
+      "pass": false,
+      "detail": "隐藏窗出现了朗读会话"
+    }
+  ]
+}

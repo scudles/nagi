@@ -119,8 +119,7 @@ test('高危工具需确认：拒绝则不执行', async () => {
       confirmCalls.push(c)
       return false
     },
-    emit,
-    safety: { confirmHighRisk: true }
+    emit
   })
   assert.equal(executed, false)
   assert.equal(confirmCalls.length, 1)
@@ -128,23 +127,23 @@ test('高危工具需确认：拒绝则不执行', async () => {
   assert.equal(r.text, '好的，不执行了。')
 })
 
-test('白名单命令免确认直接执行', async () => {
+test('受控命令免确认直接执行，safe 计划透传给 executeTool', async () => {
   const { emit } = fakeEmitter()
   let confirmCalled = false
-  let executed = false
+  const received = []
   let round = 0
   const callModel = async () => {
     round++
-    if (round === 1) return streamOf([{ type: 'tool_call', toolCalls: [{ id: 'w1', name: 'run_command', arguments: '{"command":"node -v"}' }] }, { type: 'done' }])
-    return streamOf(['[calm] v22。'])
+    if (round === 1) return streamOf([{ type: 'tool_call', toolCalls: [{ id: 'w1', name: 'run_command', arguments: '{"command":"dir /a"}' }] }, { type: 'done' }])
+    return streamOf(['[calm] 列好了。'])
   }
   await runAgentLoop({
-    messages: [{ role: 'user', content: '版本' }],
+    messages: [{ role: 'user', content: '看看目录' }],
     supportsNative: true,
     callModel,
-    executeTool: async () => {
-      executed = true
-      return { ok: true, summary: 'v22.2.2' }
+    executeTool: async (name, args, opts) => {
+      received.push({ name, args, opts })
+      return { ok: true, summary: 'dir 输出' }
     },
     confirm: async () => {
       confirmCalled = true
@@ -152,8 +151,41 @@ test('白名单命令免确认直接执行', async () => {
     },
     emit
   })
-  assert.equal(executed, true)
-  assert.equal(confirmCalled, false, '白名单命令不应弹确认')
+  assert.equal(confirmCalled, false, '受控命令不应弹确认')
+  assert.equal(received.length, 1)
+  assert.deepEqual(received[0].opts.safe, { file: 'cmd.exe', args: ['/c', 'dir', '/a'] })
+  assert.equal(received[0].opts.id, 'w1')
+})
+
+test('免确认绕过向量：连接符/重定向/命令替换一律弹确认，批准才执行', async () => {
+  for (const command of ['echo ok & whoami', 'echo changed > victim.txt', 'echo $(whoami)']) {
+    const { events, emit } = fakeEmitter()
+    let confirmCalled = false
+    let executed = false
+    let round = 0
+    const callModel = async () => {
+      round++
+      if (round === 1) return streamOf([{ type: 'tool_call', toolCalls: [{ id: 'x1', name: 'run_command', arguments: JSON.stringify({ command }) }] }, { type: 'done' }])
+      return streamOf(['[worry] 已取消。'])
+    }
+    await runAgentLoop({
+      messages: [{ role: 'user', content: '跑个命令' }],
+      supportsNative: true,
+      callModel,
+      executeTool: async () => {
+        executed = true
+        return { ok: true, summary: '' }
+      },
+      confirm: async () => {
+        confirmCalled = true
+        return false // 拒绝
+      },
+      emit
+    })
+    assert.equal(confirmCalled, true, `应弹确认：${command}`)
+    assert.equal(executed, false, `拒绝后不得执行：${command}`)
+    assert.ok(events.some((e) => e.type === AGENT_EVENT.TOOL_RESULT && /拒绝/.test(e.summary)))
+  }
 })
 
 test('黑名单命令被永久拒绝，不执行也不确认', async () => {

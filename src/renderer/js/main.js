@@ -21,6 +21,7 @@ document.body.dataset.mode = mode
 let settings = null
 let l2dReady = false
 let currentMood = null // 主进程情绪状态机的最新快照
+let chatEmotion = null // 本轮对话流式情绪（只记录，回复返回后才翻脸）
 let lastMoodKey = null // 用于区分「情绪真的变了」和「心跳重复广播」
 
 /* ---------------- 待机醒目：一段时间没互动就放大一点、换个姿势 ---------------- */
@@ -137,13 +138,20 @@ async function boot() {
   if (mode === MODE.PET) maybeShowMonitorNotice()
 
   // 对话
+  // 立绘动作由对话状态驱动（2026-10-15 起，不再跟随鼠标）：
+  //   · 生成期间（思考/执行/等待）→ 思考姿态：目光偏移 + 轻微低侧头
+  //   · 回复返回后 → 按回答内容的情绪与语气选表情 + 轻微动作；判断不出 → 中立脸
+  //   · 空闲 → 呼吸/眨眼/待机动作照旧（姿态全部归零即交还给模型自身）
   initChat({
+    // 流式情绪只记录、不当场翻脸：状态机的正式情绪仍以 MOOD 广播为准，
+    // 而"她这一句是什么情绪"等回复返回后在 onDone 落地
     onEmotion: (emotion) => {
-      // 流式情绪只驱动当场表情 + 动作（状态机的正式情绪以 MOOD 广播为准）
-      if (l2dReady) l2d.setEmotion(emotion, { motion: true })
+      chatEmotion = EMOTIONS.includes(emotion) ? emotion : null
     },
     onStatus: (state) => {
       if (state === 'thinking') ui.showBubble('……', { autoHide: 0 })
+      // 非 idle（思考/执行/等待）都算"生成回复期间"
+      if (l2dReady) l2d.setPose(state === 'idle' ? null : 'thinking')
     },
     // 说话口型：文本在流，嘴就动
     onTextDelta: () => {
@@ -151,7 +159,13 @@ async function boot() {
       if (l2dReady) l2d.startTalking()
     },
     onDone: () => {
-      if (l2dReady) l2d.stopTalking()
+      if (l2dReady) {
+        l2d.stopTalking()
+        l2d.setPose(null) // 思考姿态平滑收回，交还呼吸/待机
+        // 回答内容的情绪与语气 → 表情 + 轻微动作；无法判断 → 中立
+        l2d.setEmotion(chatEmotion || 'calm', { motion: !!chatEmotion })
+      }
+      chatEmotion = null
     }
   })
 
@@ -516,8 +530,7 @@ async function tryLoadLive2D(canvas, placeholder) {
       mirror: !!cfg.mirror,
       // 取景：默认「胸像」（只显示上半身）。模型目录 nagi-emotion.json 里的 frame 优先级更高
       frame: cfg.frame || undefined,
-      eyeBlink: cfg.eyeBlink !== false,
-      focusFollow: cfg.focusFollow !== false
+      eyeBlink: cfg.eyeBlink !== false
     })
     l2dReady = true
     placeholder?.classList.add('hidden')
@@ -622,7 +635,6 @@ function fillSettingsForm() {
   const tools = settings?.tools || {}
   document.getElementById('set-fileroot').value = tools.fileRoot || ''
   document.getElementById('set-cdp').value = tools.cdpPort ?? 9222
-  document.getElementById('set-confirm').checked = tools.confirmHighRisk !== false
   document.getElementById('set-l2d-scale').value = settings?.live2d?.scale ?? 1
   // 桌宠大小
   const sizeEl = document.getElementById('set-pet-size')
@@ -718,7 +730,7 @@ async function refreshModels() {
 /* ---------------- 语音设置（设置页 · 语音区块） ---------------- */
 
 /** 试听默认文本：用她的语气，方便判断「像不像她」 */
-const VOICE_PREVIEW_TEXT = '我是凪。不是帮你，是顺手。'
+const VOICE_PREVIEW_TEXT = '我是凪。住在这里，仅此而已。'
 
 /** 最近一次能力快照（引擎可用性 / 本机语音清单 / 离线模型状态） */
 let voiceSnapshot = null
@@ -1121,8 +1133,7 @@ function wireSettingsPage() {
     await window.nagi.settings.set({
       tools: {
         fileRoot: document.getElementById('set-fileroot').value.trim(),
-        cdpPort: Number(document.getElementById('set-cdp').value) || 9222,
-        confirmHighRisk: document.getElementById('set-confirm').checked
+        cdpPort: Number(document.getElementById('set-cdp').value) || 9222
       }
     })
     settings = await window.nagi.settings.get()
@@ -1455,6 +1466,13 @@ window.__nagiSetMirror = (v) => l2d.setMirror(v)
 window.__nagiSetFrame = (f) => l2d.setFrame(f)
 // 调试：探测画面实际范围（读回这一帧像素求 alpha 包围盒，比数学矩形可信）
 window.__nagiArtBox = () => l2d.measureArtBox()
+// 调试：对话状态驱动的姿态（'thinking' 思考 / null 收回中立）
+window.__nagiSetPose = (n) => l2d.setPose(n)
+window.__nagiGetPose = () => l2d.getPose()
+// 调试：在姿态生效的瞬间采样姿态参数（帧外读不到，Cubism 每帧末尾会还原快照）
+window.__nagiPoseParams = (ids) => l2d.probePoseOnce(ids)
+// 调试：焦点控制器内部状态（验证"目光不跟随鼠标"：它应该一直是 0）
+window.__nagiFocusState = () => l2d.focusState()
 // 调试：关系页
 window.__nagiRelation = () => window.nagi.relation.get()
 window.__nagiTimeline = (days) => window.nagi.relation.timeline({ days: days || 7 })

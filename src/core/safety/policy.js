@@ -73,42 +73,72 @@ export function isPathWithin(root, target) {
 
 /**
  * 判断一次工具调用是否需要用户确认。
+ *
+ * 安全约束（2026-10-15 S01 修复，不可放宽）：
+ * 1. run_command 只有命中「受控只读命令映射」才免确认，且必须通过元字符校验；
+ * 2. 不在映射内的命令串一律 HIGH 确认，无任何开关可绕过；
+ * 3. 模型永远只能指定「受控命令 + 受限参数」，不能指定可执行文件本身。
+ *
  * @param {{name:string,args:object}} call
- * @param {{confirmHighRisk?:boolean, allowedTools?:string[]}} opts
+ * @param {{allowedTools?:string[]}} opts
  */
 export function needsConfirm(call, opts = {}) {
   const risk = getToolRisk(call.name)
   if (call.name === 'run_command') {
     if (isCommandBlocked(call.args?.command)) return { confirm: true, blocked: true, risk }
-    // 白名单内的只读命令可免确认
-    if (isWhitelistedCommand(call.args?.command)) return { confirm: false, blocked: false, risk: RISK.LOW }
+    const safe = planSafeCommand(call.args?.command)
+    if (safe) return { confirm: false, blocked: false, risk: RISK.LOW, safe }
+    return { confirm: true, blocked: false, risk: RISK.HIGH } // 其余 shell 命令一律确认
   }
-  if (risk === RISK.HIGH && opts.confirmHighRisk !== false) return { confirm: true, blocked: false, risk }
+  if (risk === RISK.HIGH) return { confirm: true, blocked: false, risk } // 不再有开关
   if (opts.allowedTools && !opts.allowedTools.includes(call.name) && risk !== RISK.LOW) {
     return { confirm: true, blocked: false, risk }
   }
   return { confirm: false, blocked: false, risk }
 }
 
-/** 安全只读命令白名单（免确认） */
-export const COMMAND_WHITELIST = [
-  /^dir\b/i,
-  /^ls\b/i,
-  /^echo\b/i,
-  /^type\b/i,
-  /^cat\b/i,
-  /^ipconfig\b/i,
-  /^systeminfo\b/i,
-  /^tasklist\b/i,
-  /^where\b/i,
-  /^which\b/i,
-  /^node -v$/i,
-  /^npm -v$/i,
-  /^git status\b/i
-]
+/**
+ * 受控只读命令映射：模型可免确认执行的唯一入口。
+ * 键 = 规范化后的完整命令前缀；win = Windows 实际 argv（execFile shell:false 执行）。
+ * 扩充条件：只读、无副作用、键本身不含任何 shell 元字符。
+ */
+const SAFE_COMMANDS = {
+  dir: { win: ['cmd.exe', ['/c', 'dir']] },
+  ipconfig: { win: ['ipconfig', []] },
+  tasklist: { win: ['tasklist', []] },
+  systeminfo: { win: ['systeminfo', []] },
+  where: { win: ['where', []] },
+  ver: { win: ['cmd.exe', ['/c', 'ver']] },
+  'node -v': { win: ['node', ['-v']] },
+  'npm -v': { win: ['npm', ['-v']] },
+  'git status': { win: ['git', ['status']] }
+}
 
-export function isWhitelistedCommand(cmd) {
-  const s = String(cmd || '').trim()
-  if (isCommandBlocked(s)) return false
-  return COMMAND_WHITELIST.some((re) => re.test(s))
+/** 受限参数：仅字母数字与路径字符，禁空格/通配符/引号/一切元字符 */
+const SAFE_ARG = /^[A-Za-z0-9_\-./:]+$/
+
+/** shell 元字符（cmd 与 bash 交集）：出现即无免确认资格 */
+const SHELL_META = /[&|;<>`$(){}[\]*?~^!'"\n\r]/
+
+/**
+ * 生成受控执行计划。只有完整命中「受控命令 + 全受限参数」才返回计划，否则 null。
+ * 注意：必须先查原始串再规范化——`\s+` 会把换行抹成空格，
+ * 若先规范化，'dir\ntype x' 这类换行分隔命令就能混过元字符检查。
+ * @returns {{file:string,args:string[]}|null}
+ */
+export function planSafeCommand(cmd) {
+  const raw = String(cmd || '')
+  if (!raw.trim() || SHELL_META.test(raw)) return null
+  const s = raw.trim().replace(/\s+/g, ' ')
+  const lower = s.toLowerCase()
+  for (const [key, spec] of Object.entries(SAFE_COMMANDS)) {
+    if (lower === key) return { file: spec.win[0], args: [...spec.win[1]] }
+    if (lower.startsWith(key + ' ')) {
+      const rest = s.slice(key.length + 1).split(' ')
+      if (rest.length && rest.every((t) => SAFE_ARG.test(t))) {
+        return { file: spec.win[0], args: [...spec.win[1], ...rest] }
+      }
+    }
+  }
+  return null
 }
