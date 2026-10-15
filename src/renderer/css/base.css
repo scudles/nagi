@@ -477,6 +477,7 @@ body[data-mode="workbench"] {
 .sp-body textarea { resize: vertical; min-height: 64px; line-height: 1.6; }
 .sp-body input:focus, .sp-body select:focus, .sp-body textarea:focus { border-color: var(--accent); }
 .sp-row { display: flex; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+#set-local-llm.hidden, #set-cloud-key-wrap.hidden { display: none; }
 .sp-row button {
   padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line);
   background: transparent; color: var(--text); cursor: pointer; font-size: 12px;

@@ -5,6 +5,8 @@ import { app, ipcMain, dialog, BrowserWindow } from 'electron'
 import { readdirSync, statSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { IPC, EVT, SECRET_KEYS, MODE } from '../../shared/protocol.js'
+import { LLM_IPC } from '../../shared/llm-protocol.js'
+import { checkOllama } from '../../core/llm/ollama.js'
 import { getSettings, saveSettings, settingsPath } from '../settings-store.js'
 import { setSecret, hasSecret, deleteSecret } from '../keystore.js'
 import { broadcast, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow, resizePetWindow, movePetWindow } from '../windows.js'
@@ -45,6 +47,7 @@ function listModels() {
 
 export function registerSettingsIpc() {
   ipcMain.handle(IPC.SETTINGS_GET, () => getSettings())
+  ipcMain.handle(LLM_IPC.LOCAL_STATUS, (_e, payload) => checkOllama(payload || {}))
 
   ipcMain.handle(IPC.SETTINGS_SET, (_e, patch) => {
     const next = saveSettings(patch || {})

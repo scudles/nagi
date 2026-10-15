@@ -6,6 +6,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, EVT } from '../shared/protocol.js'
 import { VOICE_IPC, VOICE_EVT } from '../shared/voice-protocol.js'
 import { RAG_IPC, RAG_EVT } from '../shared/rag-protocol.js'
+import { LLM_IPC } from '../shared/llm-protocol.js'
 
 const ALLOWED_EVENTS = new Set([
   EVT.AGENT,
@@ -20,6 +21,9 @@ const ALLOWED_EVENTS = new Set([
 ])
 
 const api = {
+  llm: {
+    localStatus: (payload) => ipcRenderer.invoke(LLM_IPC.LOCAL_STATUS, payload || {})
+  },
   settings: {
     get: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
     set: (patch) => ipcRenderer.invoke(IPC.SETTINGS_SET, patch)

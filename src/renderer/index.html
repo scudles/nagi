@@ -221,14 +221,21 @@
         <label>Base URL <input id="set-baseurl" type="text" /></label>
         <label>模型 <input id="set-model" type="text" /></label>
         <label>Temperature <input id="set-temp" type="number" step="0.1" min="0" max="2" /></label>
-        <label>API Key <span id="set-key-status" class="dim">未配置</span>
-          <input id="set-apikey" type="password" placeholder="粘贴后点保存" />
-        </label>
-        <div class="sp-row">
-          <button id="btn-save-llm">保存大脑设置</button>
-          <button id="btn-save-key">保存 Key</button>
-          <button id="btn-del-key" class="danger">删除 Key</button>
+        <div id="set-local-llm" class="llm-local hidden">
+          <div class="sp-row"><button id="btn-check-local-llm">检测本地服务</button><span id="set-local-llm-status" class="dim"></span></div>
+          <label>已安装模型 <select id="set-local-model-list"><option value="">（检测后列出）</option></select></label>
+          <p class="dim">本机 Ollama 无需 API Key。选择模型后请保存大脑设置。</p>
         </div>
+        <div id="set-cloud-key-wrap">
+          <label>API Key <span id="set-key-status" class="dim">未配置</span>
+            <input id="set-apikey" type="password" placeholder="粘贴后点保存" />
+          </label>
+          <div class="sp-row">
+            <button id="btn-save-key">保存 Key</button>
+            <button id="btn-del-key" class="danger">删除 Key</button>
+          </div>
+        </div>
+        <div class="sp-row"><button id="btn-save-llm">保存大脑设置</button></div>
 
         <h3>Live2D</h3>
         <label>模型

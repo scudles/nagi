@@ -7,6 +7,7 @@
 import { PROVIDER_PRESETS, SECRET_KEYS, MODE, EMOTIONS, EVT } from '../../shared/protocol.js'
 import { VOICE_EVT, mergeVoiceSettings } from '../../shared/voice-protocol.js'
 import { RAG_EVT, mergeRagSettings } from '../../shared/rag-protocol.js'
+import { ollamaTagsUrl } from '../../core/llm/ollama.js'
 import { EDGE_VOICES, TTS_ENGINES, ASR_ENGINES } from '../../core/voice/index.js'
 import { toSegments } from '../../core/relation/timeline.js'
 import * as ui from './ui.js'
@@ -622,6 +623,7 @@ function fillSettingsForm() {
         document.getElementById('set-baseurl').value = p.baseURL
         document.getElementById('set-model').value = p.model
       }
+      updateLocalLlmUi()
     })
   }
   const llm = settings?.llm || {}
@@ -629,6 +631,7 @@ function fillSettingsForm() {
   document.getElementById('set-baseurl').value = llm.baseURL || ''
   document.getElementById('set-model').value = llm.model || ''
   document.getElementById('set-temp').value = llm.temperature ?? 0.7
+  updateLocalLlmUi()
 
   const ha = settings?.homeassistant || {}
   document.getElementById('set-ha-url').value = ha.baseURL || ''
@@ -662,6 +665,44 @@ function fillSettingsForm() {
   refreshMemory()
   refreshVoice()
   refreshRag()
+}
+
+function updateLocalLlmUi() {
+  const provider = document.getElementById('set-provider')?.value
+  const local = provider === 'ollama'
+  document.getElementById('set-local-llm')?.classList.toggle('hidden', !local)
+  document.getElementById('set-cloud-key-wrap')?.classList.toggle('hidden', local || provider === 'workbuddy')
+  if (local) void refreshLocalLlmStatus()
+}
+
+async function refreshLocalLlmStatus() {
+  if (document.getElementById('set-provider')?.value !== 'ollama') return
+  const baseURL = document.getElementById('set-baseurl').value.trim()
+  const model = document.getElementById('set-model').value.trim()
+  const status = document.getElementById('set-local-llm-status')
+  const list = document.getElementById('set-local-model-list')
+  status.textContent = '正在检测…'
+  try {
+    const result = await window.nagi.llm.localStatus({ baseURL, model })
+    if (document.getElementById('set-provider')?.value !== 'ollama' ||
+        document.getElementById('set-baseurl').value.trim() !== baseURL ||
+        document.getElementById('set-model').value.trim() !== model) return
+    status.textContent = result.ok ? '本地大脑已就绪' : result.error
+    list.replaceChildren()
+    const placeholder = document.createElement('option')
+    placeholder.value = ''
+    placeholder.textContent = result.models?.length ? '选择已安装模型' : '（没有已安装模型）'
+    list.appendChild(placeholder)
+    for (const name of result.models || []) {
+      const option = document.createElement('option')
+      option.value = name
+      option.textContent = name
+      list.appendChild(option)
+    }
+    list.value = result.models?.includes(model) ? model : result.models?.includes(`${model}:latest`) ? `${model}:latest` : ''
+  } catch {
+    status.textContent = '检测失败，请重试'
+  }
 }
 
 async function refreshSecretStatus() {
@@ -1279,10 +1320,16 @@ function wireSettingsPage() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn)
 
   on('btn-save-llm', async () => {
+    const provider = document.getElementById('set-provider').value
+    const baseURL = document.getElementById('set-baseurl').value.trim()
+    if (provider === 'ollama' && !ollamaTagsUrl(baseURL)) {
+      document.getElementById('set-local-llm-status').textContent = 'Ollama 地址必须是本机 http://localhost:端口/v1'
+      return
+    }
     await window.nagi.settings.set({
       llm: {
-        provider: document.getElementById('set-provider').value,
-        baseURL: document.getElementById('set-baseurl').value.trim(),
+        provider,
+        baseURL,
         model: document.getElementById('set-model').value.trim(),
         temperature: Number(document.getElementById('set-temp').value) || 0.7
       }
@@ -1290,6 +1337,14 @@ function wireSettingsPage() {
     settings = await window.nagi.settings.get()
     ui.setBrain(brainLabel())
     ui.addToolLog('大脑设置已保存')
+    if (provider === 'ollama') void refreshLocalLlmStatus()
+  })
+
+  on('btn-check-local-llm', refreshLocalLlmStatus)
+  document.getElementById('set-local-model-list')?.addEventListener('change', (event) => {
+    if (!event.target.value) return
+    document.getElementById('set-model').value = event.target.value
+    void refreshLocalLlmStatus()
   })
 
   on('btn-save-key', async () => {

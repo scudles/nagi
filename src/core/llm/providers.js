@@ -2,8 +2,22 @@
 // 各家 OpenAI 兼容提供商的预设与解析。
 
 import { PROVIDER_PRESETS } from '../../shared/protocol.js'
+import { OLLAMA_PLACEHOLDER_KEY, ollamaTagsUrl } from './ollama.js'
 
 export const PROVIDERS = PROVIDER_PRESETS
+
+export function isLocalLlm(cfg = {}) {
+  return cfg.provider === 'ollama'
+}
+
+/** OpenAI SDK 要求非空 key；本机 Ollama 不验证它，也不使用云端保存的 Key。 */
+export function apiKeyForLlm(cfg = {}, savedKey = null) {
+  if (isLocalLlm(cfg)) {
+    if (!ollamaTagsUrl(cfg.baseURL)) throw new Error('Ollama 地址必须是本机 http://localhost:端口/v1')
+    return OLLAMA_PLACEHOLDER_KEY
+  }
+  return savedKey || null
+}
 
 export function listProviders() {
   return Object.entries(PROVIDERS).map(([key, v]) => ({ key, ...v }))
@@ -30,6 +44,7 @@ export function supportsNativeTools(cfg = {}) {
   }
   // 混元仅部分型号支持；hunyuan-chat 不支持 → 默认兜底
   if (key === 'hunyuan') return /turbos|t1|functioncall/i.test(String(cfg.model || ''))
-  if (key === 'ollama') return false
+  // Ollama 的兼容接口支持 tools，但具体模型能否正确调用仍需真机验证。
+  if (key === 'ollama') return true
   return false
 }

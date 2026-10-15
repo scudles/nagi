@@ -83,27 +83,35 @@ node scripts/fetch-sample-model.mjs          # 默认 Mao；也可 Hiyori / Haru
 
 ## 二、配置大脑（LLM）
 
-应用统一走 **OpenAI 兼容协议**，换 `baseURL + key + model` 即可切换各家模型。
+应用的对话、工具调用和日记共用 **OpenAI 兼容协议**。在「设置 → 大脑（LLM）」切换提供商和模型，不需要迁移记忆。
 
-**默认大脑 = 凪云（免密钥）**：应用内置 WorkBuddy 云服务公开键配置（`cloud-config.js`），
-开箱即用无需注册，实测支持 OpenAI 原生 function calling（含混元系列，网关侧做协议转换）。
-云端不可用时自动降级本地 persona 关键词大脑（会提示原因，不会静默装死）。
+**默认大脑 = 凪云**。交接版 `cloud-config.js` 已把原作者的云应用配置替换为占位符；
+要使用凪云需填自己的 WorkBuddy 应用配置。未配置时会提示原因并降级到本地关键词大脑。
 
 需要换自己的模型时，「设置 → 大脑（LLM）」：
 
 | 提供商 | Base URL | 备注 |
 |---|---|---|
-| 凪云（免密钥，默认） | —（内置） | WorkBuddy 云服务，原生 tools |
+| 凪云（默认） | —（需自行配置） | WorkBuddy 云服务，原生 tools |
 | OpenAI ChatGPT | `https://api.openai.com/v1` | 需海外网络 + 支付 |
 | 腾讯混元 | `https://api.hunyuan.cloud.tencent.com/v1` | 原生 tools |
 | DeepSeek | `https://api.deepseek.com` | 国内直连、便宜 |
 | 通义 Qwen | `https://dashscope.aliyuncs.com/compatible-mode/v1` | |
 | Kimi | `https://api.moonshot.cn/v1` | |
 | 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | |
-| 本地 Ollama | `http://localhost:11434/v1` | 离线 |
+| 本地 Ollama | `http://localhost:11434/v1` | 无需 API Key，须先安装 Ollama 和模型 |
 | OpenRouter | `https://openrouter.ai/api/v1` | 多模型聚合 |
 
 API Key 通过 Electron `safeStorage` 加密落盘（`userData/secrets.json`），**渲染进程拿不到明文**。
+
+### M6：接入本地大脑
+
+先从 [Ollama 官方下载页](https://ollama.com/download/windows) 安装并启动 Ollama，在终端运行 `ollama pull qwen2.5`。
+然后在凪的「设置 → 大脑（LLM）」选「本地 Ollama」，点击「检测本地服务」，选已安装模型并保存。
+本地通道只接受 `http://localhost:端口/v1`、`127.0.0.1` 或 IPv6 回环地址；不会读取已经保存的云端 API Key。
+切回其他提供商后，原设置和记忆仍在。模型或服务不可用时会显示明确错误。
+
+这一阶段只把 **LLM 推理**搬到本机。Edge TTS 仍需网络；要实现完全断网语音，还需选择和验证本地 TTS。
 
 ### 情感系统（合并自桌宠原型，2026-10-14）
 

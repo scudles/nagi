@@ -10,7 +10,7 @@
 import { app } from 'electron'
 import { join } from 'node:path'
 import { createClient, chatStream } from '../../core/llm/openai-compatible.js'
-import { resolveLlm } from '../../core/llm/providers.js'
+import { apiKeyForLlm, isLocalLlm, resolveLlm } from '../../core/llm/providers.js'
 import { initCloudBrain, cloudBrainStatus, cloudChatStream } from '../../core/llm/cloud-workbuddy.js'
 import { getSettings } from '../settings-store.js'
 import { getSecret, hasSecret } from '../keystore.js'
@@ -77,8 +77,8 @@ async function callLlmOnce(messages, temperature = 0.4) {
       if (!cloudBrainStatus().ok) return ''
       return await collect(await cloudChatStream({ messages }))
     }
-    if (!hasKey) return ''
-    const client = createClient({ apiKey: getSecret(SECRET_KEYS.LLM_API_KEY), baseURL: llm.baseURL })
+    if (!hasKey && !isLocalLlm(llm)) return ''
+    const client = createClient({ apiKey: apiKeyForLlm(llm, hasKey && !isLocalLlm(llm) ? getSecret(SECRET_KEYS.LLM_API_KEY) : null), baseURL: llm.baseURL })
     return await collect(await chatStream(client, { model: llm.model, messages, temperature }))
   } catch {
     return ''

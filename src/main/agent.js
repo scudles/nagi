@@ -7,7 +7,8 @@ import { join } from 'node:path'
 import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/protocol.js'
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createClient, chatStream } from '../core/llm/openai-compatible.js'
-import { resolveLlm, supportsNativeTools } from '../core/llm/providers.js'
+import { apiKeyForLlm, isLocalLlm, resolveLlm, supportsNativeTools } from '../core/llm/providers.js'
+import { checkOllama } from '../core/llm/ollama.js'
 import { initCloudBrain, cloudBrainStatus, cloudChatStream } from '../core/llm/cloud-workbuddy.js'
 import { createMood } from '../core/emotion/mood.js'
 import { NagiPersona } from '../core/persona.js'
@@ -310,8 +311,9 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
     const settings = getSettings()
     const llm = resolveLlm(settings.llm || {})
     const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
+    const local = isLocalLlm(llm)
     const useCloud = llm.provider === 'workbuddy' && process.env.NAGI_FAKE_LLM !== '1' && !fakeDiary
-    const canGenerate = fakeDiary || hasKey || useCloud
+    const canGenerate = fakeDiary || hasKey || useCloud || local
 
     let text = ''
     if (canGenerate) {
@@ -336,7 +338,9 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
         if (fakeDiary) {
           text = sanitizeDiaryLine(fakeDiaryLine(messages))
         } else {
-          const client = hasKey ? createClient({ apiKey: getSecret(SECRET_KEYS.LLM_API_KEY), baseURL: llm.baseURL }) : null
+          const client = !useCloud && !fakeDiary
+            ? createClient({ apiKey: apiKeyForLlm(llm, hasKey && !local ? getSecret(SECRET_KEYS.LLM_API_KEY) : null), baseURL: llm.baseURL })
+            : null
           // temperature 给高一点：这是"心里话"，不该像客服话术一样收敛
           text = sanitizeDiaryLine(await callModelOnce({ client, llm, useCloud, messages, temperature: 0.9 }))
         }
@@ -623,8 +627,9 @@ export async function runTurn(userText, emit) {
   const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
   const fakeLlm = process.env.NAGI_FAKE_LLM === '1'
   const useCloud = llm.provider === 'workbuddy' && !fakeLlm
+  const local = isLocalLlm(llm)
 
-  if (!hasKey && !fakeLlm && !useCloud) {
+  if (!hasKey && !fakeLlm && !useCloud && !local) {
     const first = !mockAnnounced
     mockAnnounced = true
     return mockRun(userText, emit, { announce: first })
@@ -639,8 +644,13 @@ export async function runTurn(userText, emit) {
     }
   }
 
-  const apiKey = hasKey ? getSecret(SECRET_KEYS.LLM_API_KEY) : null
-  const client = hasKey ? createClient({ apiKey, baseURL: llm.baseURL }) : null
+  if (local && !fakeLlm) {
+    const status = await checkOllama({ baseURL: llm.baseURL, model: llm.model })
+    if (!status.ok) throw new Error(status.error)
+  }
+
+  const apiKey = apiKeyForLlm(llm, hasKey && !local ? getSecret(SECRET_KEYS.LLM_API_KEY) : null)
+  const client = !useCloud && !fakeLlm ? createClient({ apiKey, baseURL: llm.baseURL }) : null
 
   // 云端（凪云）网关实测支持原生 function calling（2026-10-14 验证，hunyuan-chat 亦可），
   // 与 openai 通道一致；假大脑固定走 JSON 兜底通道
