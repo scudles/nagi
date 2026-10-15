@@ -112,6 +112,7 @@ export const ASR_FALLBACK = ['sherpa', 'sapi', 'cloud']
  * 凪的默认声线参数。
  * rate / pitch 用「百分比」，各引擎自行折算（edge 直接用 %；SAPI 的 Rate 是 -10~10，按 /10 折算）。
  * 默认值取自《声线参考短名单》：语速略慢（三无的「不慌不忙」）、音高微降（压掉少女音的甜感）。
+ * 2026-10-15 用户听完 docs/voice-samples/ 三份样本后定稿选 A（edge 晓晓·温暖）。
  */
 export const NAGI_VOICE = {
   edge: { voice: 'zh-CN-XiaoxiaoNeural', rate: -10, pitch: -2, volume: 100 },

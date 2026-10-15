@@ -55,8 +55,13 @@ export const DEFAULT_VOICE_SETTINGS = {
   ttsEnabled: true,
   /** TTS 引擎 id（见 core/voice/engines.js 的 TTS_ENGINES） */
   ttsEngine: 'edge',
-  /** 每个引擎各自记住的音色：{ edge: 'zh-CN-XiaoxiaoNeural', sapi: 'Microsoft Huihui Desktop' } */
-  voiceByEngine: {},
+  /**
+   * 每个引擎各自记住的音色。
+   * edge 预填 zh-CN-XiaoxiaoNeural：2026-10-15 用户听完 docs/voice-samples/ 三份样本
+   * （A 晓晓·温暖 / B 晓伊·活泼 / C SAPI 慧慧）后定稿选 A。写在这里而不是依赖
+   * EDGE_VOICES[0]，是为了让「默认音色」成为显式数据——列表日后调整顺序也不会变默认。
+   */
+  voiceByEngine: { edge: 'zh-CN-XiaoxiaoNeural' },
   /** 在凪的基准声线上的额外语速偏移（百分比，负=更慢） */
   rate: 0,
   /** 音量 0–100 */

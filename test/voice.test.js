@@ -18,6 +18,7 @@ import {
   peak,
   pcmDurationMs
 } from '../src/core/voice/wav.js'
+import { DEFAULT_VOICE_SETTINGS, mergeVoiceSettings } from '../src/shared/voice-protocol.js'
 import { secMsGec, buildSsml } from '../src/main/voice/edge.js'
 import {
   buildSherpaFrame,
@@ -368,6 +369,27 @@ test('parseSherpaReply：正常 JSON 取 .text，非 JSON 原文兜底，空格�
   assert.equal(parseSherpaReply('{"text":"a  \n b"}').text, '{"text":"a b"}', 'JSON 字符串里放裸换行是非法 JSON，按纯文本兜底')
   assert.equal(parseSherpaReply('null').text, 'null', 'JSON null 不是对象，按纯文本处理')
   assert.ok(parseSherpaReply('{"text":"x","lang":"zh"}').json, '能解析时应把原始对象带上')
+})
+
+/* ---------------- 默认声线定稿（2026-10-15 用户选 A） ---------------- */
+
+test('默认声线定稿为 edge 晓晓（zh-CN-XiaoxiaoNeural）', () => {
+  // 2026-10-15 用户听完 docs/voice-samples/ 三份样本后选 A（晓晓·温暖）。
+  // 这里把「默认是谁」锁死：换默认 = 改这两处 + 改本测试，不许悄悄漂移。
+  assert.equal(DEFAULT_VOICE_SETTINGS.ttsEngine, 'edge')
+  assert.equal(DEFAULT_VOICE_SETTINGS.voiceByEngine.edge, 'zh-CN-XiaoxiaoNeural')
+  assert.equal(NAGI_VOICE.edge.voice, 'zh-CN-XiaoxiaoNeural')
+  // 预填的音色必须真实存在于 edge 音色表里，否则设置页下拉会落空
+  assert.ok(EDGE_VOICES.some((v) => v.id === DEFAULT_VOICE_SETTINGS.voiceByEngine.edge))
+})
+
+test('mergeVoiceSettings 保留 voiceByEngine 的 edge 默认音色', () => {
+  // 用户只写过 ttsEngine 时，edge 的默认音色不能被抹掉
+  const m = mergeVoiceSettings({ ttsEngine: 'edge' })
+  assert.equal(m.voiceByEngine.edge, 'zh-CN-XiaoxiaoNeural')
+  // 用户显式换过音色时以用户为准
+  const m2 = mergeVoiceSettings({ voiceByEngine: { edge: 'zh-CN-XiaoyiNeural' } })
+  assert.equal(m2.voiceByEngine.edge, 'zh-CN-XiaoyiNeural')
 })
 
 /* ---------------- 资源脚本的编码约定 ---------------- */

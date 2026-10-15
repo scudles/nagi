@@ -340,6 +340,7 @@ console.log('\n--- 设置页语音区块 ---')
       ttsEngines: opts(ttsEng),
       asrEngines: opts(asrEng),
       voices: opts($('set-tts-voice')),
+      selectedVoice: $('set-tts-voice')?.value || '',
       selectedTts: ttsEng ? ttsEng.value : '',
       selectedAsr: asrEng ? asrEng.value : '',
       modelWrapHidden: $('set-asr-model-wrap')?.classList.contains('hidden'),
@@ -360,6 +361,9 @@ console.log('\n--- 设置页语音区块 ---')
   check('识别引擎下拉已填充', snap.asrEngines.length >= 2, snap.asrEngines.map((o) => o.v).join(','))
   check('默认识别引擎 = 离线模型 sherpa', snap.selectedAsr === 'sherpa', snap.selectedAsr)
   check('edge 音色下拉列出可选神经音色', snap.voices.length >= 6, `共 ${snap.voices.length} 个`)
+  // 2026-10-15 用户听完样本定稿选 A（晓晓·温暖）；默认音色锁在 voiceByEngine，
+  // 设置页打开时必须落在晓晓上（不依赖音色列表顺序）
+  check('默认音色 = 晓晓（定稿 A）', snap.selectedVoice === 'zh-CN-XiaoxiaoNeural', snap.selectedVoice)
   check('离线模型状态文字已渲染', snap.modelStatus.length > 0, snap.modelStatus)
   // 装了 → 下载按钮该置灰；没装/装一半 → 该可点。两边必须一致，否则用户会以为点了没反应。
   const modelReady = /已装好/.test(snap.modelStatus)

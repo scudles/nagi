@@ -834,7 +834,7 @@ S4 补的正是这一环：她记得自己刚才的心情，也记得和你多�
 
 | 方向 | 引擎 | 是否离线 | 说明 |
 |---|---|---|---|
-| TTS | **edge-tts**（默认） | 否 | 微软神经音色（晓晓等 8 个），免密钥；**非官方接口，会抽风** |
+| TTS | **edge-tts**（默认，晓晓已定稿） | 否 | 微软神经音色（晓晓等 8 个），免密钥；**非官方接口，会抽风** |
 | TTS | Windows SAPI | 是 | 系统自带，最稳，音质偏「机器朗读」，作为 edge 失效时的兜底 |
 | TTS | 云端 / GPT-SoVITS | – | 接口已预留（云端需 Key；GPT-SoVITS 用凪的语音样本训练专属音色） |
 | ASR | **sherpa-onnx**（默认偏好） | 是 | Paraformer 中文小模型，长句/数字/标点明显更好；首次需下载约 98MB |
@@ -948,9 +948,13 @@ sherpa-onnx CLI（15MB，ghproxy/GitHub 双源）+ Paraformer 中文模型（78M
    2-3 秒），`timeupdate` 事件实际正常推进。口型测试要等 `at > 0`（时钟真的走起来）
    再采样，提前采样会把「还没出声」误判成「嘴不动」。
 
-### 待定
+### 声线定稿（2026-10-15）
 
-TTS 默认引擎待听完 `docs/voice-samples/` 三份样本后由你定夺（当前默认 edge-tts）。
+TTS 默认引擎与默认音色已定稿：**edge-tts「晓晓 · 温暖」**（`zh-CN-XiaoxiaoNeural`）。
+用户听完 `docs/voice-samples/` 三份样本（A 晓晓·温暖 / B 晓伊·活泼 / C SAPI 慧慧·离线）后选 A。
+默认音色作为显式数据写在 `shared/voice-protocol.js` 的 `voiceByEngine`（不依赖音色列表顺序）；
+语速/音高的基准在 `core/voice/engines.js` 的 `NAGI_VOICE`（rate -10「不慌不忙」、pitch -2 压甜感），
+设置页里的「语速」是在此基准上的额外偏移。想换随时在设置页切换、试听。
 
 
 
