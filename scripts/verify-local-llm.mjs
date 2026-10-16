@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { createServer } from 'node:http'
 import { chromium } from 'playwright'
 
 process.env.NO_PROXY = '127.0.0.1,localhost'
@@ -46,6 +47,7 @@ async function withTimeout(promise, ms) {
 
 let child
 let logs = ''
+let fixture
 try {
   const env = { ...process.env, NAGI_SELFTEST: '1', NAGI_SELFTEST_DIARY_WRITE: '1' }
   delete env.ELECTRON_RUN_AS_NODE
@@ -161,12 +163,91 @@ try {
         recalled?.text?.includes('不要逐字说出'), String(recalled?.text || recalled?.reason || '').slice(0, 180))
     }
   }
+
+  // 在同一 Electron 会话里真实往返一次兼容提供商，验证设置保存与对话路由。
+  const fixtureRequests = []
+  fixture = createServer(async (request, response) => {
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    fixtureRequests.push({
+      path: request.url,
+      authorization: request.headers.authorization,
+      body: Buffer.concat(chunks).toString('utf8')
+    })
+    response.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'close' })
+    response.write('data: ' + JSON.stringify({
+      id: 'fixture', object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { role: 'assistant', content: '[calm] 兼容提供商已回复。' }, finish_reason: null }]
+    }) + '\n\n')
+    response.write('data: ' + JSON.stringify({
+      id: 'fixture', object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+    }) + '\n\n')
+    response.end('data: [DONE]\n\n')
+  })
+  await new Promise((resolve, reject) => {
+    fixture.once('error', reject)
+    fixture.listen(0, '127.0.0.1', resolve)
+  })
+  const fixtureURL = `http://127.0.0.1:${fixture.address().port}/v1`
+  await page.evaluate(async ({ fixtureURL }) => {
+    await window.nagi.secrets.set('llmApiKey', 'fixture-secret')
+    document.getElementById('btn-pet-settings')?.click()
+    const provider = document.getElementById('set-provider')
+    provider.value = 'custom'
+    provider.dispatchEvent(new Event('change', { bubbles: true }))
+    document.getElementById('set-baseurl').value = fixtureURL
+    document.getElementById('set-model').value = 'fixture-model'
+    document.getElementById('btn-save-llm')?.click()
+  }, { fixtureURL })
+  await page.waitForFunction((fixtureURL) => window.nagi.settings.get().then((value) =>
+    value.llm?.provider === 'custom' && value.llm?.baseURL === fixtureURL), fixtureURL)
+  await page.evaluate(() => { window.__m6Events = [] })
+  const compatible = await withTimeout(page.evaluate(() => window.nagi.chat.send('请确认兼容通道可以回复。')), 30000)
+  const compatibleEvents = await page.evaluate(() => window.__m6Events)
+  check('保存兼容提供商后同会话流式回复', compatible.ok &&
+    compatibleEvents.some((event) => event.type === 'text-delta') &&
+    compatibleEvents.some((event) => event.type === 'done' && event.text?.includes('兼容提供商已回复')))
+  check('兼容通道使用独立保存的 Key 与模型', fixtureRequests.some((request) => {
+    try {
+      const body = JSON.parse(request.body)
+      return request.path === '/v1/chat/completions' && request.authorization === 'Bearer fixture-secret' && body.model === 'fixture-model'
+    } catch { return false }
+  }))
+  check('提供商切换时延续同一段会话历史', fixtureRequests.some((request) => {
+    try {
+      const body = JSON.parse(request.body)
+      return body.messages?.some((message) => message.role === 'user' && message.content?.includes('请用一句简短中文介绍你自己'))
+    } catch { return false }
+  }))
+
+  await page.evaluate(({ baseURL, model }) => {
+    const provider = document.getElementById('set-provider')
+    provider.value = 'ollama'
+    provider.dispatchEvent(new Event('change', { bubbles: true }))
+    document.getElementById('set-baseurl').value = baseURL
+    document.getElementById('set-model').value = model
+    document.getElementById('btn-save-llm')?.click()
+  }, { baseURL, model })
+  await page.waitForFunction(({ baseURL, model }) => window.nagi.settings.get().then((value) =>
+    value.llm?.provider === 'ollama' && value.llm?.baseURL === baseURL && value.llm?.model === model), { baseURL, model })
+  await page.evaluate(() => { window.__m6Events = [] })
+  const back = await withTimeout(page.evaluate(() => window.nagi.chat.send('现在请用一句中文确认你已经回来。')), 120000)
+  const backEvents = await page.evaluate(() => window.__m6Events)
+  check('保留云端 Key 后切回本地仍可对话', back.ok &&
+    backEvents.some((event) => event.type === 'text-delta') &&
+    backEvents.some((event) => event.type === 'done' && event.text?.length > 0))
+  const saved = await page.evaluate(() => window.nagi.settings.get())
+  check('往返切换后本地配置仍持久化', saved.llm?.provider === 'ollama' &&
+    saved.llm?.baseURL === baseURL && saved.llm?.model === model)
   // connectOverCDP 下不调用 browser.close()，否则会关掉目标 Electron。
 } catch (error) {
   console.error('✘ 验收中断：', error.message)
   console.error(logs.slice(-2000))
   process.exitCode = 1
 } finally {
+  fixture?.closeAllConnections()
+  if (fixture) await new Promise((resolve) => fixture.close(resolve))
   if (child?.pid) {
     await new Promise((resolve) => {
       const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
