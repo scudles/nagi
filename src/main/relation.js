@@ -12,6 +12,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, unlink
 import { emptyStats, normalizeStats, noteInteraction, describeRelation } from '../core/relation/familiarity.js'
 import { normalizePoints, appendPoint, dailyBuckets, staleDates, TIMELINE, dateKeyOf } from '../core/relation/timeline.js'
 import { loadRelationStats, saveRelationStats } from './persist.js'
+import { recordLedger } from './ledger.js'
 
 const DAY_MS = 86400000
 /** 单次清理上限：避免一次删掉太多文件（也避开"单回合批量删除"类保护） */
@@ -43,6 +44,9 @@ export function noteRelationInteraction(now = Date.now()) {
   if (!stats) initRelation(now)
   stats = noteInteraction(stats, now)
   saveRelationStats(stats)
+  recordLedger({ category: 'aggregate', text: `关系统计：互动累计 ${stats.interactionCount} 次。`,
+    source: { type: 'relation-live', ref: `${now}:${stats.interactionCount}` }, occurredAt: now,
+    certainty: 'aggregate', meta: { interactionCount: stats.interactionCount } })
   return stats
 }
 
@@ -94,6 +98,9 @@ export function recordMoodPoint(snapshot, now = Date.now()) {
   if (next === today.points) return false
   today.points = next
   flushToday()
+  recordLedger({ category: 'subjective', text: `凪当时的情绪采样：${snapshot.mood}`,
+    source: { type: 'timeline-live', ref: String(now) }, occurredAt: now,
+    certainty: 'system-estimate', meta: { intensity: snapshot.intensity } })
   return true
 }
 

@@ -15,6 +15,7 @@ import { registerReminderIpc } from './ipc/reminders.js'
 import { registerVoiceIpc } from './ipc/voice.js'
 import { registerRagIpc } from './ipc/rag.js'
 import { initRag } from './rag/index.js'
+import { migrateLegacyLedger } from './ledger.js'
 import { loadSettings, saveSettings } from './settings-store.js'
 import { disposeAgent, startMoodEngine, startActivityMonitor, startReminders, restoreState } from './agent.js'
 import { prewarmVoice, disposeVoice } from './voice/index.js'
@@ -63,6 +64,14 @@ if (!gotLock) {
     const settings = loadSettings()
     if (!settings.privacy?.noticeShown && settings.privacy?.monitorEnabled === false) {
       saveSettings({ privacy: { monitorEnabled: true } })
+    }
+
+    // 旧数据只建立来源索引，不把模型推测升级为事实，也不把旧日记重新灌入 RAG。
+    try {
+      const migration = migrateLegacyLedger()
+      if (migration.migrated) console.log(`[ledger] 旧数据已建索引：${migration.count} 条`)
+    } catch (err) {
+      console.warn('[ledger] 迁移待下次重试：', err?.message)
     }
 
     // 恢复上次的情绪（按离线时长自然衰减）与关系统计，并清理过期时间线

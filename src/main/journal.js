@@ -8,6 +8,8 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'node:fs'
 import { JOURNAL, dateKey, normalizeEntries, appendEntry, pruneOld } from '../core/journal.js'
+import { randomUUID } from 'node:crypto'
+import { recordLedger } from './ledger.js'
 
 let cache = { date: null, entries: [], dirty: false }
 let flushTimer = null
@@ -61,7 +63,7 @@ export function flushJournal() {
  * 记一条今天发生的事。失败不影响主流程。
  * @param {{kind:'chat'|'proactive'|'reminder'|'poke'|string, text?:string, user?:string, reply?:string}} evt
  */
-export function noteEvent(evt, now = Date.now()) {
+export function noteEvent(evt, now = Date.now(), ragIds = []) {
   try {
     ensureDay(now)
     const next = appendEntry(cache.entries, { ...evt, t: now })
@@ -69,6 +71,12 @@ export function noteEvent(evt, now = Date.now()) {
       cache.entries = next
       cache.dirty = true
       flushSoon()
+      const body = evt.kind === 'chat'
+        ? [evt.user && `他：${evt.user}`, evt.reply && `我：${evt.reply}`].filter(Boolean).join('\n')
+        : evt.kind === 'poke' ? '用户戳了凪' : String(evt.text || '')
+      if (body) return recordLedger({ category: 'experience', text: body,
+        source: { type: 'journal-live', ref: randomUUID() }, occurredAt: now,
+        certainty: 'observed', ragIds, meta: { eventKind: evt.kind } })
     }
   } catch (err) {
     console.warn('[journal] 记事件失败：', err && err.message)

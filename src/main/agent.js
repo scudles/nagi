@@ -587,7 +587,7 @@ function extractMemoriesAsync({ client, llm, useCloud, userText, assistantText }
     .then((raw) => {
       const ops = parseMemoryOps(raw)
       if (!ops.add.length && !ops.remove.length) return
-      const r = mergeMemoryOps(ops)
+      const r = mergeMemoryOps(ops, Date.now(), { userText: u })
       console.log('[memory] 记忆更新：', r.before, '→', r.after, ops.add.length ? '新增 ' + ops.add.join(' / ') : '')
       // 同步一份进向量档案：memory.json 只在「条数不多」时全量注入提示词，
       // 攒多了就注不下去了；向量侧靠语义检索，条数不是问题。
@@ -741,18 +741,19 @@ export async function handleChatSend(text) {
   } finally {
     // 记进「今天发生的事」：不管这一轮成没成，他找她说过话这件事都发生过——
     // 日记里不该出现"空白的一天"。素材少一段，也比白纸强。
-    try {
-      noteEvent({ kind: 'chat', user: t, reply: String(reply || '') })
-    } catch {
-      /* 记流水失败不影响对话 */
-    }
+    let ragId = null
     // 这轮对话进长期档案（向量检索用）。
     // 放在 finally 里：不管这轮是 mock 大脑、真大脑还是中途出错，只要她开了口，
     // 这段对话就真实发生过，该进档案。RAG 未就绪时这只是一行 pending 文本。
     try {
-      if (reply) getRag().ingestTurn({ user: t, assistant: reply, mood: mood.current().mood })
+      if (reply) ragId = getRag().ingestTurn({ user: t, assistant: reply, mood: mood.current().mood })?.id || null
     } catch {
       /* 进档案失败不影响对话 */
+    }
+    try {
+      noteEvent({ kind: 'chat', user: t, reply: String(reply || '') }, Date.now(), ragId ? [ragId] : [])
+    } catch {
+      /* 记流水失败不影响对话 */
     }
     // 刚聊完，是她最可能想记一笔的时刻（写不写由节流内部决定）
     maybeWriteDiary('after-chat')

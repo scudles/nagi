@@ -11,6 +11,8 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import { mkdirSync, appendFileSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { getRag } from './rag/index.js'
+import { randomUUID } from 'node:crypto'
+import { recordLedger } from './ledger.js'
 
 function diaryDir() {
   return join(app.getPath('userData'), 'monologue')
@@ -43,11 +45,17 @@ export function appendDiary(snapshot, text, { kind } = {}) {
     const line = `- ${timeStr(at)} ［${snapshot.label}·${Math.round(snapshot.intensity * 100)}%］ ${mark}${text}\n`
     appendFileSync(join(dir, `diary-${dateStr(at)}.md`), line, 'utf8')
     // RAG 的任何失败都不能让独白变成「没写」。文本先落日记文件，再尝试入档。
+    let ragId = null
     try {
-      getRag().ingestDiary({ text, at: now, kind: kind === 'inner' ? 'inner' : 'spoken', mood: snapshot.label, intensity: snapshot.intensity })
+      const result = getRag().ingestDiary({ text, at: now, kind: kind === 'inner' ? 'inner' : 'spoken', mood: snapshot.label, intensity: snapshot.intensity })
+      ragId = result?.id || null
     } catch {
       /* 日记文件是原件；检索档案失效时仍保留原件。 */
     }
+    recordLedger({ category: 'subjective', text: `${mark}${text}`,
+      source: { type: 'diary-live', ref: randomUUID() }, occurredAt: now,
+      certainty: 'subjective', ragIds: ragId ? [ragId] : [],
+      meta: { file: `diary-${dateStr(at)}.md`, kind: kind === 'inner' ? 'inner' : 'spoken', mood: snapshot.label } })
     return true
   } catch (err) {
     console.error('[diary] 写入失败：', err && err.message)

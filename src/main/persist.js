@@ -11,6 +11,7 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { formatMemories, mergeMemoryEntries } from '../core/memory.js'
+import { recordLedger, deleteLedgerSource } from './ledger.js'
 
 const usersFile = (name) => join(app.getPath('userData'), name)
 
@@ -101,7 +102,13 @@ export function addMemory(text) {
   loadMemories()
   const t = String(text || '').trim()
   if (!t) return listMemories()
-  memories = mergeMemoryEntries(memories, { add: [t] }, Date.now()).entries
+  const result = mergeMemoryEntries(memories, { add: [t] }, Date.now())
+  memories = result.entries
+  for (const entry of memories.filter((item) => result.added.includes(item.text))) {
+    recordLedger({ category: 'claim', text: entry.text,
+      source: { type: 'memory-manual', ref: entry.id }, occurredAt: entry.at,
+      certainty: 'user-stated', meta: { memoryId: entry.id } })
+  }
   persistMemories()
   return listMemories()
 }
@@ -109,8 +116,12 @@ export function addMemory(text) {
 /** 删除一条（按 id 或原文） */
 export function removeMemory({ id, text } = {}) {
   loadMemories()
+  const before = memories.filter((entry) => id ? entry.id === id : text && entry.text === text)
   if (id) memories = memories.filter((e) => e.id !== id)
   else if (text) memories = mergeMemoryEntries(memories, { remove: [text] }, Date.now()).entries
+  for (const entry of before) {
+    for (const type of ['memory-manual', 'memory-model', 'memory']) deleteLedgerSource(type, entry.id)
+  }
   persistMemories()
   return listMemories()
 }
@@ -120,11 +131,21 @@ export function removeMemory({ id, text } = {}) {
  * 按「内容变化」判断写盘：满额淘汰后数量不变，内容确实变了也必须落盘（D01 修复）。
  * @returns {{before:number, after:number, added:string[], removed:string[]}}
  */
-export function mergeMemoryOps(ops, now = Date.now()) {
+export function mergeMemoryOps(ops, now = Date.now(), provenance = {}) {
   loadMemories()
   const before = memories
   const r = mergeMemoryEntries(before, ops || {}, now)
   memories = r.entries
+
+  for (const entry of before.filter((item) => r.removed.includes(item.text))) {
+    for (const type of ['memory-manual', 'memory-model', 'memory']) deleteLedgerSource(type, entry.id)
+  }
+
+  for (const entry of memories.filter((item) => r.added.includes(item.text))) {
+    recordLedger({ category: 'claim', text: entry.text,
+      source: { type: 'memory-model', ref: entry.id }, occurredAt: now,
+      certainty: 'unverified', meta: { memoryId: entry.id, derivedFromUserText: String(provenance.userText || '') } })
+  }
   if (r.changed) persistMemories()
   return { before: before.length, after: memories.length, added: r.added, removed: r.removed }
 }

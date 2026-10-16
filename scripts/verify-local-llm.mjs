@@ -165,6 +165,14 @@ try {
     : []
   const diaryChunk = pending.find((item) => item.kind === 'diary' && item.meta?.kind === 'inner')
   check('新独白进入记忆档案并标注为心里话', !!diaryChunk)
+  const ledgerFile = join(profile, 'ledger', 'entries.jsonl')
+  const ledger = existsSync(ledgerFile)
+    ? readFileSync(ledgerFile, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    : []
+  check('真实对话写入可追溯经历账本', ledger.some((entry) => entry.source?.type === 'journal-live' &&
+    entry.occurredAt && entry.text.includes('请用一句简短中文介绍你自己')))
+  check('新日记以主观记录入账且关联 RAG 来源', ledger.some((entry) => entry.source?.type === 'diary-live' &&
+    entry.category === 'subjective' && entry.ragIds.includes(diaryChunk?.id)))
   if (process.env.NAGI_VERIFY_RAG_RECALL === '1' && diaryChunk) {
     const downloaded = await page.evaluate(() => window.nagi.rag.downloadModel())
     check('本机嵌入模型下载完成', downloaded?.ok === true, downloaded?.error || '')

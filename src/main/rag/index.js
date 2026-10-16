@@ -34,6 +34,7 @@ import {
   EMBED_ENGINES
 } from '../../core/rag/index.js'
 import { RagStoreIo } from './store-io.js'
+import { recordLedger } from '../ledger.js'
 import {
   embedLocalStatus,
   downloadEmbedModel,
@@ -397,6 +398,9 @@ export class RagService {
       if (!text) return { ok: false, reason: 'llm-empty' }
       const chunk = makeSummaryChunk({ text, covers: turns.map((c) => c.id), at: Date.now() })
       const r = this._ingestChunk(chunk)
+      if (r.ok && r.id) recordLedger({ category: 'subjective', text,
+        source: { type: 'rag-summary', ref: r.id }, occurredAt: chunk.at,
+        certainty: 'model-summary', ragIds: [r.id], meta: { covers: turns.map((c) => c.id) } })
       if (r.ok) this.log(`[rag] 滚动摘要一条（覆盖 ${turns.length} 轮）`)
       return r
     } finally {
