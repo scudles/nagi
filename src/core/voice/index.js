@@ -43,6 +43,11 @@ export {
 } from './sherpa-frame.js'
 
 export {
+  isAsciiPath,
+  sherpaLaunchPlan
+} from './sherpa-launch.js'
+
+export {
   TTS_ENGINES,
   ASR_ENGINES,
   TTS_FALLBACK,

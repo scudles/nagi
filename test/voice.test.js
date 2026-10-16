@@ -27,6 +27,7 @@ import {
   parseSherpaReply,
   SHERPA_HEADER_BYTES
 } from '../src/core/voice/sherpa-frame.js'
+import { isAsciiPath, sherpaLaunchPlan } from '../src/core/voice/sherpa-launch.js'
 import {
   TTS_ENGINES,
   ASR_ENGINES,
@@ -370,6 +371,35 @@ test('parseSherpaReply：正常 JSON 取 .text，非 JSON 原文兜底，空格�
   assert.equal(parseSherpaReply('{"text":"a  \n b"}').text, '{"text":"a b"}', 'JSON 字符串里放裸换行是非法 JSON，按纯文本兜底')
   assert.equal(parseSherpaReply('null').text, 'null', 'JSON null 不是对象，按纯文本处理')
   assert.ok(parseSherpaReply('{"text":"x","lang":"zh"}').json, '能解析时应把原始对象带上')
+})
+
+/* ---------------- 服务启动参数（Windows 非 ASCII 路径坑，2026-10-17 修复） ---------------- */
+
+test('isAsciiPath：纯 ASCII 放行，中文/日文/引号拦下', () => {
+  assert.equal(isAsciiPath('C:\\Users\\Administrator\\AppData\\Roaming\\nagi'), true)
+  assert.equal(isAsciiPath(''), true, '空串按 ASCII 处理（调用方有 ready 校验兜底）')
+  assert.equal(isAsciiPath(null), true, 'null/undefined 不应抛')
+  // 「凪」U+6BAA 不在 GBK：打包版 userData「凪 Nagi」的真实场景
+  assert.equal(isAsciiPath('C:\\Users\\Administrator\\AppData\\Roaming\\凪 Nagi'), false)
+  assert.equal(isAsciiPath('C:\\ユーザー'), false)
+  assert.equal(isAsciiPath('C:\\say"hi'), false, '双引号会破坏 argv 引号规则')
+})
+
+test('sherpaLaunchPlan：ASCII 目录保持「绝对路径 + cwd=binDir」的既有行为', () => {
+  const plan = sherpaLaunchPlan('C:\\voice\\sherpa\\model', 'C:\\voice\\sherpa\\bin')
+  assert.equal(plan.relative, false)
+  assert.equal(plan.cwd, 'C:\\voice\\sherpa\\bin')
+  assert.equal(plan.modelDir, 'C:\\voice\\sherpa\\model')
+})
+
+test('sherpaLaunchPlan：非 ASCII 目录切「相对路径 + cwd=模型目录」', () => {
+  // 2026-10-17 实测复现：userData「凪 Nagi」让服务端 argv 里的绝对路径被 GBK
+  // 代码页打成乱码、启动即退出；cwd 走 UTF-16 不经代码页，相对文件名是纯 ASCII。
+  const modelDir = 'C:\\Users\\Administrator\\AppData\\Roaming\\凪 Nagi\\voice\\sherpa\\model'
+  const plan = sherpaLaunchPlan(modelDir, 'C:\\whatever\\bin')
+  assert.equal(plan.relative, true)
+  assert.equal(plan.cwd, modelDir, 'cwd 必须是模型目录本身（参数随之相对化）')
+  assert.equal(plan.modelDir, modelDir)
 })
 
 /* ---------------- 默认声线定稿（2026-10-15 用户选 A） ---------------- */
