@@ -436,6 +436,24 @@
         <label>两次归来汇报至少间隔（分钟，30–1440） <input id="set-presence-cooldown" type="number" min="30" max="1440" step="10" /></label>
         <label>每天最多归来汇报几次（0–3） <input id="set-presence-daily" type="number" min="0" max="3" step="1" /></label>
 
+        <h3>她留下的东西</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          她会把独处时的点滴、帮你做过的事安静地记下来，只存在本机这份应用数据里。<strong>默认关闭</strong>；
+          打开后只从打开之后开始记，关掉即清空并删除文件（不回填、不补造）。
+        </p>
+        <label class="check"><input id="set-notes-enabled" type="checkbox" /> 记下她想留下的便签（每天最多 3 条，间隔至少 30 分钟；勿扰/只陪着时不展示）</label>
+        <label class="check"><input id="set-traces-enabled" type="checkbox" /> 记下帮你做过的事（只记工具名与是否返回，不含命令正文、文件内容）</label>
+        <label class="check"><input id="set-anchors-enabled" type="checkbox" /> 允许她偶尔想起共同经历（每次不超过 5%，每天最多 1 次；来源被忘记就不再提起）</label>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          写到桌面或授权目录：<strong>暂未开放</strong>——需要把已有的目录授权与逐次写入确认接进来；
+          做好之前只显示应用内便签，不会假装写成功。
+        </p>
+        <div class="sp-row">
+          <button id="btn-save-notes">保存「她留下的东西」</button>
+          <button id="btn-open-notes-from-settings">现在看看</button>
+        </div>
+        <div id="notes-status" class="dim" aria-live="polite"></div>
+
         <h3>主动陪伴</h3>
         <label class="check"><input id="set-only-presence" type="checkbox" /> 只陪着（不监测活动、不主动开口；手动聊天仍可用）</label>
         <label>每天最多主动搭话 <input id="set-companion-max" type="number" min="0" max="10" step="1" /></label>

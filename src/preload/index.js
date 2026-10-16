@@ -8,6 +8,7 @@ import { VOICE_IPC, VOICE_EVT } from '../shared/voice-protocol.js'
 import { RAG_IPC, RAG_EVT } from '../shared/rag-protocol.js'
 import { LLM_IPC } from '../shared/llm-protocol.js'
 import { PRESENCE_IPC, PRESENCE_EVENT } from '../shared/presence-protocol.js'
+import { NOTES_IPC, NOTES_EVENT } from '../shared/notes-protocol.js'
 
 const ALLOWED_EVENTS = new Set([
   PRESENCE_EVENT,
@@ -19,13 +20,19 @@ const ALLOWED_EVENTS = new Set([
   VOICE_EVT.PROGRESS,
   VOICE_EVT.NOTICE,
   VOICE_EVT.OWNER_LOST,
-  RAG_EVT.PROGRESS
+  RAG_EVT.PROGRESS,
+  NOTES_EVENT
 ])
 
 const api = {
   presence: {
     status: () => ipcRenderer.invoke(PRESENCE_IPC.STATUS),
     clear: () => ipcRenderer.invoke(PRESENCE_IPC.CLEAR)
+  },
+  /** 她留下的东西（BLUE-3）：只读列表 + 清除；开关走 settings */
+  notes: {
+    list: () => ipcRenderer.invoke(NOTES_IPC.LIST),
+    clear: () => ipcRenderer.invoke(NOTES_IPC.CLEAR)
   },
   llm: {
     localStatus: (payload) => ipcRenderer.invoke(LLM_IPC.LOCAL_STATUS, payload || {})

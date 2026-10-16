@@ -4,7 +4,7 @@
 
 - **2026-10-16 起为单人开发制**：ChatGPT 侧额度耗尽，WorkBuddy 全权接手。原双工具红蓝边界废止；架构契约、安全门与人格硬约束继续有效（见 [DECISIONS](DECISIONS.md) 与 [实感架构契约](实感架构契约.md)）。
 - 源码：`E:\凪\凪_交接包_2026-10-16\02_工程源码_nagi`。最新验证基线（2026-10-16 BLUE-1 后，Node 24.19.0）：全量测试 **409 项，408 通过、0 失败、1 跳过**（跳过为无符号链接权限环境项）；`npm run build` 退出 0；`verify-presence` 11/11、`verify:s4` 9/9、`verify:m4` 19/19（BLUE-1 未改 presence 核心，真机三项沿用 RED123 收口结果）。
-- **2026-10-17 工作区实测（含 BLUE-2 时段表现收尾，非干净基线）**：Node 24.19.0 全量 **442 项 441 通过、0 失败、1 跳过**；`npm run build` 退出 0；`npm run verify:rhythm` 真机 **15/15**（端到端广播链路、night/afternoon 参数方向性、平滑切换、关开关收回、无预设时段、设置页回显/保存/非法拦截/隐私按钮均通过）。BLUE-1 试听反馈 OBS-1 记为待观察项，暂不改动角色设定。
+- **2026-10-17 工作区实测（含 BLUE-3 环境留痕，非干净基线）**：Node 24.19.0 全量 **489 项 488 通过、0 失败、1 跳过**；`npm run build` 退出 0；`npm run verify:notes` 真机 **12/12**（默认关闭不落盘、设置页开关、真实聊天→工具→留痕全链路、查看器、回忆物聚合、关闭即删文件、清除接口）；`npm run verify:rhythm` 真机 **15/15**。
 - **2026-10-17 媒体/坐标感知修复（BLUE-5）**：Node 24.19.0 全量 **442 项 441 通过、0 失败、1 跳过**；`npm run build` 退出 0；真机 `scripts/verify-signals.mjs` **10/10**（含授权→真实读取→独立撤销闭环，媒体观测落在网易云音乐「约定 / 王菲」，位置观测回退 IP 成功）。排查报告见 `E:\凪\媒体与坐标感知_排查与修复方案_2026-10-17.md`。
 - 记录规则：完成必须有实际结果（测试命令/退出码/跳过数）；尝试、模拟通过、人工通过分别记录；未验证写「未验证」；待真机项不得标完成。
 - 本机环境：测试/真机验证须将 Node 24 目录前置 PATH（默认 node 22 会令 7 个 electron mock 测试假失败）；受限环境真机验证加 `NAGI_RENDERER_SANDBOX=0`（GPU 进程沙箱内 0xC0000005 崩溃）；手动起 electron 先 `unset ELECTRON_RUN_AS_NODE`。
@@ -25,7 +25,7 @@
 | RED-2 实感核心 | ✅ 已完成并验证（2026-10-16） | `core/presence/{circadian,away,reunion,engine,hooks}.js` + main 接线 + 3 个测试文件 + `scripts/verify-presence.mjs`；epoch 失效补丁补验通过（`presence-store.test.js` 5/5）；全量 397/396/0/1、构建 0、真机 11/11 |
 | RED-3 不完美机制方案 | ✅ 方案已成文（契约第 5 节），业务未实现 | 零遗忘保证、概率门、低气压、补救回路、配额；BLUE-4 的输入 |
 | BLUE-1 语音情绪参数映射 | 🔧 代码完成，待真机试听迭代（2026-10-16） | 已建 `core/voice/voice-profile.js`（纯函数：情绪×强度+时段+语气 → `{voice,rate,pitch,volume}`，数值集中在 `VOICE_PROFILE` 常量表）+ `main/extensions/voice-profile.js`（glob 自动加载，经 `registerVoiceParamsProvider` 接线，**未改 voice 编排本体**）+ 设置页「语音情绪映射」开关（`presence.voiceProfileEnabled`，默认 false）；单测 12 项全绿（情绪×时段方向性、夜晚必降音量、强度幅度、null/异常安全回退、hooks 校验域兼容、SAPI 无 pitch 基准、用户偏移折叠）；全量 409/408/0/1、构建 0；试听清单已交用户，按反馈只改常量表 || BLUE-2 时段表现与设置页 | ✅ 已完成并真机验证（2026-10-17） | 实现 `core/presence/rhythm-pose.js` 纯映射：night/afternoon 参数叠加预设 + 模型参数过滤 + 抑制随机待机 + 归来便签入口门；`renderer/js/live2d.js` 加 `beforeModelUpdate` rhythmHook（与 redGuard/poseHook 三 hook 叠加，add 指数平滑）；`renderer/js/presence.js` 订阅主进程广播并驱动 `applyCurrentRhythm` / `onReunion` 入口；`renderer/js/main.js` 设置页「陪伴·时间感」与「高级」「打扰控制」「隐私」接线（时段表 5 边界编辑器、保存前 core 预校验、非法递增/阈值倒挂拦截）；单测 `test/rhythm-pose.test.js` 19 项；真机 `npm run verify:rhythm` **15/15**。设置页表单、时段表保存、非法边界/阈值拦截、隐私按钮真机验证通过 |
-| BLUE-3 环境留痕 | 待办 | 3a 应用内便签入口+查看器（可复用日记查看器形态）；授权目录写入默认关闭、复用文件授权与逐次确认，未授权必须被拒（补安全边界测试）；3b 行动留痕持久化（有上限、可被记忆引用、不谎报）；3c 回忆物锚点（熟悉度门槛、≤5% 概率、每天 ≤1 次）；3d HA 规则引擎接口位+禁用态配置 |
+| BLUE-3 环境留痕 | ✅ 已完成并真机验证（2026-10-17，外部写入按设计未开放） | 3a：`core/presence/notes.js` 候选闸（三类可信事实 + 幂等 + 每天≤3 + 间隔≥30min + 勿扰不展示 + 默认关闭 + 不虚构正文）+ 应用内查看器（工作台/桌宠入口，只读列表，如实标注「外部写入暂未开放」）；3b：`core/presence/traces.js` 规范化（白名单字段/240 字截断/幂等/条数与天数上限/`completionVerified` 恒 false）+ `main/extensions/traces.js` 接线 + `main/presence-notes.js` 落盘（默认不创建、关闭即清内存并删文件）；3c：`core/presence/anchors.js`（来源重验 + 熟悉度门槛 + ≤5% + 每天≤1 + 无锚点不掷骰），查看器只读展示、不自动开口；3d：`core/presence/ha-rules.js` 接口位（默认禁用、只产候选、逐次授权标记、不接受外部覆盖字段）。测试：`test/notes.test.js` 16 项 + `test/anchors.test.js` 16 项 + `test/notes-store.test.js` 12 项；真机 `npm run verify:notes` **12/12** |
 | BLUE-4 不完美机制 | 待办（依赖 RED-3 方案） | 按契约第 5 节：承诺等级判定、低风险概率门（≤10% 可配、默认 0）、100+ 次虚拟模拟证明重要事项零遗忘；低气压与安慰恢复；吐槽过火补救回路；每日上限与全局开关；**不得改 reminders 调度、承诺证据语义或安全门**；persona brief 引导文案保持「引导式自由」 |
 | BLUE-5 媒体与坐标感知 | ✅ 已完成并真机验证（2026-10-17） | 根因：①网易云桌面端（Qt/Win32）不注册 SMTC 会话，而旧实现只读 `GetCurrentSession()` 单会话 → 曲目全丢；②`musicContext()` 非 playing 一律不产出 → 暂停/停止/未知三态盲；③坐标能力从未实现。修法（A/B/C 三级全做）：A `resources/music/smtc.ps1` 改 `GetSessions()` 全量枚举 + `core/signals/music.js` 重写（`pickActiveSession` 按 playing>paused>stopped>unknown 排序选主会话，四态均出 context，无会话时明确说「没在播放」）；B 新增 `core/signals/players.js` + `resources/music/player-title.ps1`（`Get-Process.MainWindowTitle`，兼容最小化窗口）作窗口标题兜底，与 SMTC 按优先级合并；C 新增 `core/signals/geo-store.js` + `main/signals/geo.js`（WinRT Geolocator 优先，本机不可用→ipwho.is/ip-api 回退）+ `main/ipc/geo.js` + 设置页「位置信号」区。附带修：`core/monitor/privacy.js` 加 `repairBlacklist()` 修复用户设置里 GBK 乱码中文隐私规则失效；媒体探针纳入 `serialize()` 串行队列。新增/扩展测试 `test/{music-signal,players,geo-signal,monitor}.test.js`；全量 442/441/0/1、构建 0、真机 `verify-signals` 10/10 |
 | RED-4 最终复核 | 待 BLUE 全部完成后 | 只看关键文件+测试：契约符合性、hook 未被绕过、配额生效、无人设硬约束违背 |
@@ -63,6 +63,7 @@
 | B20 媒体/坐标人工验收 | 待用户（2026-10-17 代码+真机已通，等日常确认） | 六条人工清单：① 网易云放歌→问「我在听什么」应答歌名/艺人；② Edge 放视频→问「我在看什么」应答片名；③ 暂停→问应答「暂停」而非「不知道」；④ 授权坐标→问「我在哪」应答城市/坐标且说明是粗略位置；⑤ 撤销授权→再问答「你没让我知道」；⑥ 勿扰开关生效期间全部静默。已知限制：窗口标题兜底只报曲名艺人、**播放状态未证实（`playbackStatus:'unknown'`）**；WinRT Geolocator 本机不可用，坐标走 IP 回退（城市级） |
 | B10 RAG 长期容量 | 待数据 | 长期数据量/磁盘碎片/查询延迟/删除后召回；判断是否需调度策略 |
 | B09 cloud-config | ✅ 已处理（2026-10-16） | 真实 endpoint/publishableKey 经审查为公开配置（设计进 git），随实感收口提交 |
+| B23 外部便签写入安全桥接 | 待办（BLUE-3 明确未开放，界面已如实标注） | 契约 §4 要求：外部便签文件默认关闭、必须复用已有原生目录授权 + 逐次写操作确认、不得从订阅回调直接 fs 写桌面。现只有应用内候选（`externalWriteAvailable:false`）。实现时需把 writer 接到授权根校验与确认流，并补「未授权必须被拒」的安全边界测试 |
 
 ## E. 暂停功能（等用户恢复指示，不擅自动）
 

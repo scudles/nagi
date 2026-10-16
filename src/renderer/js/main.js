@@ -11,6 +11,7 @@ import { ollamaTagsUrl } from '../../core/llm/ollama.js'
 import { EDGE_VOICES, TTS_ENGINES, ASR_ENGINES } from '../../core/voice/index.js'
 import { toSegments } from '../../core/relation/timeline.js'
 import { presenceConfig } from '../../core/presence/circadian.js'
+import { NOTES_EVENT } from '../../shared/notes-protocol.js'
 import * as ui from './ui.js'
 import { initChat, sendText } from './chat.js'
 import * as l2d from './live2d.js'
@@ -98,6 +99,111 @@ function showNotesEntry(durationMs) {
   notesEntryTimer = setTimeout(() => btn.classList.add('hidden'), 10 * 60 * 1000)
 }
 
+/* ---------------- 她留下的东西（BLUE-3：便签 / 行动留痕 / 回忆物） ---------------- */
+
+const NOTE_KIND_LABEL = { activity: '独处', reunion: '归来', action: '行动' }
+
+function notesTimeText(at) {
+  if (!Number.isFinite(at)) return ''
+  return new Date(at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+/** 渲染查看器内容（数据来自主进程只读列表；写不写、存不存都由设置开关决定） */
+function renderNotesPanel(body, data) {
+  body.textContent = ''
+  const enabled = data?.enabled || {}
+  const anyOn = enabled.notes || enabled.traces || enabled.anchors
+  if (!anyOn) {
+    const p = document.createElement('p')
+    p.className = 'dim'
+    p.style.margin = '0'
+    p.textContent = '「她留下的东西」现在是关着的。到「设置 → 她留下的东西」里打开，她会把独处时的点滴、帮你做过的事安静地记在这里。'
+    body.appendChild(p)
+    return
+  }
+  const section = (title, empty, items) => {
+    const h = document.createElement('div')
+    h.className = 'np-sec'
+    h.textContent = title
+    body.appendChild(h)
+    if (!items.length) {
+      const e = document.createElement('p')
+      e.className = 'dim'
+      e.style.margin = '0 0 10px'
+      e.textContent = empty
+      body.appendChild(e)
+      return
+    }
+    for (const it of items) body.appendChild(it)
+  }
+
+  // 便签
+  if (enabled.notes) {
+    const items = (data.notes || []).slice().reverse().map((n) => {
+      const el = document.createElement('div')
+      el.className = 'np-item'
+      const meta = document.createElement('div')
+      meta.className = 'np-meta'
+      meta.textContent = `${notesTimeText(n.at)} · ${NOTE_KIND_LABEL[n.noteKind] || n.noteKind}${n.provenance === 'simulation' ? ' · 模拟活动' : ''}`
+      const text = document.createElement('div')
+      text.className = 'np-text'
+      text.textContent = n.text
+      el.append(meta, text)
+      return el
+    })
+    section('便签', '还没有便签。她需要一点独处的时间。', items)
+  }
+
+  // 行动留痕
+  if (enabled.traces) {
+    const items = (data.traces || []).slice().reverse().map((t) => {
+      const el = document.createElement('div')
+      el.className = 'np-item'
+      const meta = document.createElement('div')
+      meta.className = 'np-meta'
+      meta.textContent = `${notesTimeText(t.at)} · ${t.tool} · ${t.status === 'failed' ? '返回失败' : '已返回'}`
+      const text = document.createElement('div')
+      text.className = 'np-text'
+      text.textContent = t.summary || '（没有摘要）'
+      el.append(meta, text)
+      return el
+    })
+    section('帮你做过的事', '还没有记录。她替你跑过工具之后会记一笔（只说跑过、返回，不代表外部效果已生效）。', items)
+  }
+
+  // 回忆物（只读展示：她可能想起来的共同经历；是否提起由概率门决定，不会硬凑）
+  if (enabled.anchors) {
+    const items = (data.anchors || []).slice(0, 8).map((a) => {
+      const el = document.createElement('div')
+      el.className = 'np-item'
+      const meta = document.createElement('div')
+      meta.className = 'np-meta'
+      meta.textContent = `${notesTimeText(a.occurredAt)} · ${a.trust === 'user-stated' ? '你说过的' : a.trust === 'observed' ? '有来源的' : '她自己的感受'}`
+      const text = document.createElement('div')
+      text.className = 'np-text'
+      text.textContent = a.text || '（无正文）'
+      el.append(meta, text)
+      return el
+    })
+    section('可能想起来的', '还没有可回想的共同经历。', items)
+  }
+
+  // 边界说明：外部文件写入未实现（不伪装成功）
+  const foot = document.createElement('p')
+  foot.className = 'dim np-foot'
+  foot.textContent = '所有内容只留在本机这一份应用数据里；来源被忘记的，这里也会跟着消失。'
+  body.appendChild(foot)
+}
+
+async function refreshNotesPanel(body) {
+  try {
+    const data = await window.nagi.notes.list()
+    renderNotesPanel(body, data)
+  } catch (err) {
+    body.textContent = '读取失败：' + (err?.message || String(err))
+  }
+}
+
 function toggleNotesPanel() {
   const old = document.getElementById('notes-panel')
   if (old) {
@@ -109,10 +215,10 @@ function toggleNotesPanel() {
   card.className = 'notes-panel'
   const title = document.createElement('div')
   title.className = 'np-title'
-  title.textContent = '她留的便签'
+  title.textContent = '她留下的东西'
   const body = document.createElement('div')
   body.className = 'np-body dim'
-  body.textContent = '还没有内容。她独自待着时的点滴，以后会安静地出现在这里——现在先只有这个入口。'
+  body.textContent = '读取中…'
   const close = document.createElement('button')
   close.id = 'notes-panel-close'
   close.textContent = '关上'
@@ -125,6 +231,12 @@ function toggleNotesPanel() {
       if (!card.contains(e.target) && e.target.id !== 'notes-entry') card.remove()
     }, { once: true })
   }, 0)
+  // 变化时刷新（主进程广播同一份权威列表）
+  const offNotes = window.nagi.on(NOTES_EVENT, (data) => {
+    if (document.getElementById('notes-panel') === card) renderNotesPanel(body, data)
+    else offNotes()
+  })
+  void refreshNotesPanel(body)
 }
 
 function wireNotesEntry() {
@@ -1558,6 +1670,10 @@ function refreshPresenceSection() {
   set('set-presence-away', cfg.awayEnabled)
   set('set-presence-reunion', cfg.reunionEnabled)
   set('set-presence-persist', cfg.persistActivities)
+  // 「她留下的东西」（BLUE-3）：三个业务开关默认全关
+  set('set-notes-enabled', cfg.notesEnabled)
+  set('set-traces-enabled', cfg.tracesEnabled)
+  set('set-anchors-enabled', cfg.anchorsEnabled)
 
   const num = (id, minutes) => {
     const el = document.getElementById(id)
@@ -1672,6 +1788,34 @@ function wirePresenceSettings(on) {
     refreshPresenceSection()
     if (status) status.textContent = '隐私设置已保存，即时生效'
     ui.addToolLog('时间感隐私设置已保存')
+  })
+
+  // 「她留下的东西」（BLUE-3）：三个业务开关一起写；关掉全部时主进程会连文件一起清掉
+  on('btn-save-notes', async () => {
+    const status = document.getElementById('notes-status')
+    const notesEnabled = document.getElementById('set-notes-enabled').checked
+    const tracesEnabled = document.getElementById('set-traces-enabled').checked
+    const anchorsEnabled = document.getElementById('set-anchors-enabled').checked
+    try {
+      await window.nagi.settings.set({ presence: { notesEnabled, tracesEnabled, anchorsEnabled } })
+      settings = await window.nagi.settings.get()
+      // 让主进程立刻同步一次开关状态（关掉即清内存与文件）
+      await window.nagi.notes.list()
+    } catch (err) {
+      if (status) status.textContent = '保存失败：' + err.message
+      return
+    }
+    refreshPresenceSection()
+    if (status) {
+      status.textContent = notesEnabled || tracesEnabled || anchorsEnabled
+        ? '已保存：从现在开始记。点「现在看看」查看。'
+        : '已关闭：已保存的内容已清空，文件也删掉了。'
+    }
+    ui.addToolLog('「她留下的东西」设置已保存')
+  })
+  on('btn-open-notes-from-settings', () => {
+    closeSettings()
+    toggleNotesPanel()
   })
 }
 

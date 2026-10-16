@@ -54,6 +54,18 @@
 - 决定：**本步不修改角色设定或台词**，在 TASKS 记 OBS-1 待观察项。后续 BLUE-2（表现层）/ BLUE-4（不完美机制）/ RED-4（复核）三个环节重点复核「情绪表达是否足够鲜明、可辨识」。
 - 若后续确认问题存在，调整方向限定为：情绪分层、语气强度、表现方式（先评估再动手，改动需注明范围与验证）。
 
+### 2026-10-17：BLUE-3 环境留痕实现决策（全权接手后第三个蓝区任务）
+
+- 分层：纯逻辑放 `core/presence/{notes,traces,anchors,ha-rules}.js`（可 node --test），落盘与接线放 `main/presence-notes.js` + `main/extensions/traces.js`，只读出口放新文件 `main/ipc/notes.js` + `shared/notes-protocol.js`（**不改红区的 `shared/presence-protocol.js` 与 `main/ipc/presence.js`**）。
+- 默认关闭：`notesEnabled / tracesEnabled / anchorsEnabled` 全关时**不读盘、不建文件、不产生记录**；全关后同步一次即清内存并删 `userData/notes.json`。开关打开只记「打开之后」的事，不回填。
+- 不虚构：便签正文只能由「活动类型 + 时长 / 归来分档 / 工具名 + 返回状态」推出；模拟活动带 `provenance:'simulation'` + `activityId` 并在界面标「模拟活动」；动作类只写「跑过、返回了」，`completionVerified` **恒 false**（上游乱写也压回），摘要不含 args/stdout/二进制。
+- 撤回传播：`activity-forgotten` 事件会让派生便签一起消失（不能引用已删除的东西）。
+- 回忆物只做「可选 + 克制」：来源重验（每个 sourceId 都要在可访问登记表里且未删）、私密锚点（称呼/共同引用/承诺）需熟悉度 ≥ familiar、每次概率 ≤5%（配置写大也夹回 5%）、每天 ≤1 次、**没有可用锚点时连随机数都不掷**（不为凑概率制造回忆）。本期只在查看器里只读展示「可能想起来的」，**不自动开口**——说什么、怎么说属人格表达策略，与 OBS-1 一起评估。
+- HA 规则只落接口位：`evaluateHaRules` 默认禁用（禁用时连候选都不产）、只产候选、按目标标 `requiresAuthorization`、规范化只取白名单字段（B06 的 extra 覆盖在这里进不来），不接真机、不直调 REST。
+- 实现取舍（一处有意偏离契约字面）：扩展的订阅**恒建立**，开关关闭时靠回调里的闸短路。原因是若要「按开关决定是否订阅」，用户开启后必须重启才有反应；事件本身稀疏（工具返回/离开归来），短路成本可忽略，也不新增任何 timer。
+- 未开放项：外部便签文件写入（契约要求复用原生目录授权 + 逐次确认）本期**不做**，界面如实写「暂未开放」，`externalWriteAvailable:false`，绝不假装写成功；已登记 TASKS B20。
+- 验证：`test/notes.test.js` 16 项、`test/anchors.test.js` 16 项、`test/notes-store.test.js` 12 项（含「默认关闭不建文件」「关闭即删文件」「来源被忘记即撤回」「上限与保留天数」「HA 外部覆盖字段进不来」）；全量 489/488/0/1、构建 0；真机 `npm run verify:notes` 12/12（真实聊天 → 假大脑发出 file_list → 工具执行 → action-trace hook → 扩展 → 落盘，全程可核）。
+
 ### 2026-10-17：BLUE-2 时段表现实现决策（全权接手后第二个蓝区任务）
 
 - 分层明确：表情/面容归情绪状态机 `mood.applyRhythm`（RED-2 已接线），本模块**不夺面容**；参数叠加层由 `core/presence/rhythm-pose.js` 负责，映射到模型**实际存在**的参数（cdi3.json 321 项实扫），过滤后为空则不施加；动作组按模型实际存在的组回退。

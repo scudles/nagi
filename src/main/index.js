@@ -28,6 +28,7 @@ import { disposeAgent, startMoodEngine, startActivityMonitor, startReminders, re
 import { prewarmVoice, disposeVoice } from './voice/index.js'
 import { MODE } from '../shared/protocol.js'
 import { registerPresenceIpc } from './ipc/presence.js'
+import { registerNotesIpc } from './ipc/notes.js'
 import { presenceInput } from './presence.js'
 import { installPresenceExtensions } from './presence-extensions.js'
 import { runPresenceSelftest } from './presence-selftest.js'
@@ -75,6 +76,7 @@ if (!gotLock) {
     registerCalendarIpc()
     registerMusicIpc()
     registerPresenceIpc()
+    registerNotesIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
