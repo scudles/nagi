@@ -15,6 +15,7 @@ import { registerReminderIpc } from './ipc/reminders.js'
 import { registerVoiceIpc } from './ipc/voice.js'
 import { registerRagIpc } from './ipc/rag.js'
 import { registerLedgerIpc } from './ipc/ledger.js'
+import { registerYearbookIpc } from './ipc/yearbook.js'
 import { registerCompanionIpc } from './ipc/companion.js'
 import { registerCalendarIpc } from './ipc/calendar.js'
 import { registerMusicIpc } from './ipc/music.js'
@@ -64,6 +65,7 @@ if (!gotLock) {
     registerVoiceIpc()
     registerRagIpc()
     registerLedgerIpc()
+    registerYearbookIpc()
     registerCompanionIpc()
     registerCalendarIpc()
     registerMusicIpc()

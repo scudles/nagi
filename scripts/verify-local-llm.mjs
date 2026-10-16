@@ -208,10 +208,42 @@ try {
   check('来源与三层可信分类经受信 IPC 可查看', ledgerApi.ok &&
     ledgerApi.entries.some((entry) => entry.tier === 'recorded' && entry.source.type === 'journal-live') &&
     ledgerApi.entries.some((entry) => entry.tier === 'subjective' && entry.source.type === 'diary-live'))
+  const realExperience = ledgerApi.entries.find((entry) => entry.category === 'experience' && entry.tier === 'recorded' &&
+    entry.source.type === 'journal-live')
+  const yearbook = await page.evaluate(async (sourceId) => {
+    const rejected = await window.nagi.yearbook.add('missing-source')
+    const added = await window.nagi.yearbook.add(sourceId)
+    const edited = added.ok ? await window.nagi.yearbook.edit(added.page.id, '一段真实对话', '这段由用户编辑，不算事实。') : null
+    const listed = await window.nagi.yearbook.list()
+    return { rejected, added, edited, listed }
+  }, realExperience?.id)
+  check('双人年鉴只收录有来源的经历并保留可编辑页', !yearbook.rejected.ok &&
+    yearbook.added.ok && yearbook.edited?.ok &&
+    yearbook.listed.pages.some((item) => item.fact.id === realExperience?.id && item.note.includes('用户编辑')))
+  check('身世碎片由真实经历解锁且明确标为创作设定', yearbook.listed.fragments[0]?.unlocked &&
+    yearbook.listed.fragments[0]?.triggerSourceId === realExperience?.id &&
+    yearbook.listed.fragments[0]?.tier === 'creative-setting')
   await page.evaluate(() => document.getElementById('btn-pet-settings')?.click())
   await page.waitForFunction(() => document.querySelectorAll('#ledger-list .ledger-item').length > 0, null, { timeout: 10000 })
   check('设置页展示经历来源与纠错入口', await page.evaluate(() =>
     !!document.querySelector('#ledger-list details') && !!document.querySelector('#ledger-list .ledger-actions button')))
+  await page.waitForFunction(() => document.getElementById('yearbook-list')?.textContent?.includes('一段真实对话'))
+  check('设置页分开展示年鉴事实、用户编辑和身世设定', await page.evaluate(() =>
+    document.getElementById('yearbook-list')?.textContent?.includes('【有来源的真实记录】') &&
+    document.getElementById('yearbook-list')?.textContent?.includes('【用户编辑 / 创作】') &&
+    document.getElementById('yearbook-fragments')?.textContent?.includes('【创作设定')))
+  await page.evaluate(() => {
+    const row = document.querySelector('#yearbook-list .ledger-item')
+    Array.from(row.querySelectorAll('button')).find((button) => button.textContent === '编辑这页')?.click()
+    row.querySelector('input').value = '在界面里编辑的年鉴页'
+    row.querySelector('textarea').value = '这是用户亲自写的感想。'
+    Array.from(row.querySelectorAll('button')).find((button) => button.textContent === '保存这页')?.click()
+  })
+  await page.waitForFunction(() => document.getElementById('yearbook-list')?.textContent?.includes('在界面里编辑的年鉴页'))
+  check('设置页可编辑年鉴标题与用户感想并保存', await page.evaluate(async () => {
+    const listed = await window.nagi.yearbook.list()
+    return listed.pages.some((item) => item.title === '在界面里编辑的年鉴页' && item.note === '这是用户亲自写的感想。')
+  }))
   await page.waitForFunction(() => document.getElementById('companion-status')?.textContent?.includes('今天已主动搭话'), null, { timeout: 10000 })
   const companionUi = await page.evaluate(() => ({
     presence: !!document.getElementById('set-only-presence'),

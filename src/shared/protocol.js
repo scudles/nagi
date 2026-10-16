@@ -43,6 +43,11 @@ export const IPC = {
   LEDGER_CORRECT: 'ledger:correct',
   LEDGER_FORGET: 'ledger:forget',
   LEDGER_EXPORT: 'ledger:export',
+  YEARBOOK_LIST: 'yearbook:list',
+  YEARBOOK_ADD: 'yearbook:add',
+  YEARBOOK_EDIT: 'yearbook:edit',
+  YEARBOOK_REMOVE: 'yearbook:remove',
+  YEARBOOK_EXPORT: 'yearbook:export',
   COMPANION_STATUS: 'companion:status',
   COMPANION_IGNORE: 'companion:ignore',
   // 关系层（S4）：熟悉度 + 情绪时间线

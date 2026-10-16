@@ -1,5 +1,6 @@
 // 用户纠错/忘记的单一入口：先清所有可供提示词和检索读取的旧来源，再改账本状态。
 import { getLedger } from './ledger.js'
+import { getYearbook } from './yearbook.js'
 import { getRag } from './rag/index.js'
 import { removeJournalEntry } from './journal.js'
 import { removeDiaryEntry } from './diary.js'
@@ -74,6 +75,7 @@ export function forgetExperience(id) {
   const entry = ledger.get(id)
   if (!entry || entry.deletedAt) return { ok: false, error: '没有这条记录' }
   try {
+    getYearbook().pruneSource(id)
     const dropped = scrub(entry)
     forgetDerived(ledger, entry)
     markRagCopies(ledger, dropped, id)
@@ -91,6 +93,7 @@ export function correctExperience(id, text) {
   const entry = ledger.get(id)
   if (!entry || entry.deletedAt) return { ok: false, error: '没有这条记录' }
   try {
+    getYearbook().pruneSource(id)
     const dropped = scrub(entry)
     forgetDerived(ledger, entry)
     markRagCopies(ledger, dropped, id)

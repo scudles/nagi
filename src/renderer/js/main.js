@@ -750,6 +750,7 @@ function fillSettingsForm() {
   refreshModels()
   refreshMemory()
   refreshLedger()
+  refreshYearbook()
   refreshCompanionStatus()
   refreshVoice()
   refreshRag()
@@ -850,6 +851,88 @@ const sourceNames = {
   timeline: '旧情绪时间线', 'timeline-live': '情绪时间线', correction: '用户更正'
 }
 
+async function refreshYearbook() {
+  const box = document.getElementById('yearbook-list')
+  const fragmentsBox = document.getElementById('yearbook-fragments')
+  const status = document.getElementById('yearbook-status')
+  if (!box || !fragmentsBox || !window.nagi.yearbook) return
+  box.replaceChildren()
+  fragmentsBox.replaceChildren()
+  try {
+    const result = await window.nagi.yearbook.list()
+    if (!result.pages.length) box.textContent = '还没有年鉴页。到上方账本选择一段真实经历。'
+    for (const page of result.pages) {
+      const row = document.createElement('div')
+      row.className = 'ledger-item'
+      const title = document.createElement('strong')
+      title.textContent = page.title
+      const meta = document.createElement('div')
+      meta.className = 'ledger-meta'
+      meta.textContent = `经历 ID：${page.fact.id} · ${sourceNames[page.fact.source.type] || page.fact.source.type} · ${page.fact.occurredAt ? new Date(page.fact.occurredAt).toLocaleString() : '发生时间未记录'}`
+      const fact = document.createElement('div')
+      fact.className = 'ledger-text'
+      fact.textContent = `【有来源的真实记录】${page.fact.text}`
+      row.append(title, meta, fact)
+      for (const note of page.subjective) {
+        const diary = document.createElement('div')
+        diary.className = 'ledger-text'
+        diary.textContent = `【凪的主观记录 · ${note.id}】${note.text}`
+        row.append(diary)
+      }
+      if (page.note) {
+        const userNote = document.createElement('div')
+        userNote.className = 'yearbook-note'
+        userNote.textContent = `【用户编辑 / 创作】${page.note}`
+        row.append(userNote)
+      }
+      const actions = document.createElement('div')
+      actions.className = 'ledger-actions'
+      const edit = document.createElement('button')
+      edit.textContent = '编辑这页'
+      edit.addEventListener('click', () => {
+        if (row.querySelector('textarea')) return
+        const titleInput = document.createElement('input')
+        titleInput.className = 'yearbook-editor'
+        titleInput.value = page.title
+        titleInput.setAttribute('aria-label', '年鉴页标题')
+        const noteInput = document.createElement('textarea')
+        noteInput.className = 'yearbook-editor'
+        noteInput.value = page.note
+        noteInput.placeholder = '写下你的感想或创作；这里不会变成事实记忆'
+        noteInput.setAttribute('aria-label', '用户编辑或创作文字')
+        const save = document.createElement('button')
+        save.textContent = '保存这页'
+        save.addEventListener('click', async () => {
+          const updated = await window.nagi.yearbook.edit(page.id, titleInput.value, noteInput.value)
+          if (updated.ok) { status.textContent = '年鉴页已保存'; await refreshYearbook() }
+          else status.textContent = updated.error || '保存失败'
+        })
+        row.append(titleInput, noteInput, save)
+      })
+      const remove = document.createElement('button')
+      remove.textContent = '移出年鉴'
+      remove.addEventListener('click', async () => {
+        const removed = await window.nagi.yearbook.remove(page.id)
+        if (removed.ok) { status.textContent = '已从年鉴移出，原经历仍在账本'; await refreshYearbook() }
+        else status.textContent = removed.error || '移出失败'
+      })
+      actions.append(edit, remove)
+      row.append(actions)
+      box.append(row)
+    }
+    for (const fragment of result.fragments) {
+      const row = document.createElement('div')
+      row.className = 'ledger-item'
+      row.textContent = fragment.unlocked
+        ? `【创作设定 · ${fragment.title}】${fragment.text}（触发经历 ID：${fragment.triggerSourceId}）`
+        : `身世碎片「${fragment.title}」：收入 ${fragment.neededPages} 段真实经历后可查看。`
+      fragmentsBox.append(row)
+    }
+  } catch (err) {
+    status.textContent = '年鉴读取失败：' + err.message
+  }
+}
+
 async function refreshLedger(reset = true) {
   const box = document.getElementById('ledger-list')
   if (!box || !window.nagi.ledger) return
@@ -886,7 +969,7 @@ async function refreshLedger(reset = true) {
         submit.textContent = '提交更正'
         submit.addEventListener('click', async () => {
           const result = await window.nagi.ledger.correct(entry.id, editor.value)
-          if (result.ok) { status.textContent = '更正已保存，旧内容已清理'; await refreshLedger() }
+          if (result.ok) { status.textContent = '更正已保存，旧内容已清理'; await refreshLedger(); await refreshYearbook() }
           else if (!result.cancelled) status.textContent = result.error || '更正失败'
         })
         row.append(editor, submit)
@@ -896,10 +979,21 @@ async function refreshLedger(reset = true) {
       forget.className = 'danger'
       forget.addEventListener('click', async () => {
         const result = await window.nagi.ledger.forget(entry.id)
-        if (result.ok) { status.textContent = '已忘记这条记录'; await refreshLedger() }
+        if (result.ok) { status.textContent = '已忘记这条记录'; await refreshLedger(); await refreshYearbook() }
         else if (!result.cancelled) status.textContent = result.error || '忘记失败'
       })
       actions.append(correct, forget)
+      if (entry.category === 'experience' && entry.tier === 'recorded') {
+        const collect = document.createElement('button')
+        collect.textContent = '收进年鉴'
+        collect.addEventListener('click', async () => {
+          const added = await window.nagi.yearbook.add(entry.id)
+          const yearbookStatus = document.getElementById('yearbook-status')
+          if (added.ok) { yearbookStatus.textContent = added.existing ? '这段经历已在年鉴里' : '已收进双人年鉴'; await refreshYearbook() }
+          else yearbookStatus.textContent = added.error || '收录失败'
+        })
+        actions.append(collect)
+      }
       row.append(label, body, details, actions)
       box.appendChild(row)
     }
@@ -1621,6 +1715,14 @@ function wireSettingsPage() {
     const status = document.getElementById('ledger-status')
     if (result.ok) status.textContent = `已导出 ${result.count} 条到 ${result.path}`
     else if (!result.cancelled) status.textContent = result.error || '导出失败'
+  })
+  on('btn-yearbook-export', async () => {
+    const status = document.getElementById('yearbook-status')
+    try {
+      const result = await window.nagi.yearbook.export()
+      if (result.ok) status.textContent = `已导出 ${result.count} 页到 ${result.path}`
+      else if (!result.cancelled) status.textContent = result.error || '导出失败'
+    } catch (err) { status.textContent = '导出失败：' + err.message }
   })
   on('btn-history-clear', async () => {
     await window.nagi.memory.clearHistory()

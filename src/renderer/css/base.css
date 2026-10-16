@@ -560,6 +560,9 @@ body[data-mode="workbench"] {
 .ledger-item .ledger-actions { display: flex; gap: 6px; margin-top: 6px; }
 .ledger-item details { margin-top: 4px; color: var(--text-dim); overflow-wrap: anywhere; }
 .ledger-item textarea { box-sizing: border-box; width: 100%; min-height: 58px; margin-top: 6px; resize: vertical; }
+#yearbook-fragments { margin-top: 8px; }
+.yearbook-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+.yearbook-editor { box-sizing: border-box; width: 100%; margin-top: 6px; }
 .dim { color: var(--text-dim); font-size: 12px; }
 
 /* ============ 日记查看器 ============ */

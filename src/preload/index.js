@@ -91,6 +91,13 @@ const api = {
     forget: (id) => ipcRenderer.invoke(IPC.LEDGER_FORGET, { id }),
     export: () => ipcRenderer.invoke(IPC.LEDGER_EXPORT)
   },
+  yearbook: {
+    list: () => ipcRenderer.invoke(IPC.YEARBOOK_LIST),
+    add: (sourceId) => ipcRenderer.invoke(IPC.YEARBOOK_ADD, { sourceId }),
+    edit: (id, title, note) => ipcRenderer.invoke(IPC.YEARBOOK_EDIT, { id, title, note }),
+    remove: (id) => ipcRenderer.invoke(IPC.YEARBOOK_REMOVE, { id }),
+    export: () => ipcRenderer.invoke(IPC.YEARBOOK_EXPORT)
+  },
   companion: {
     status: () => ipcRenderer.invoke(IPC.COMPANION_STATUS),
     ignore: () => ipcRenderer.invoke(IPC.COMPANION_IGNORE)
