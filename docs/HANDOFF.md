@@ -1,5 +1,42 @@
 # 双工具交接：HANDOFF
 
+## 紧急交接 2026-10-16 23:11 ChatGPT
+
+**用户要求立即停止开发，以保存现场为唯一目标。本节优先于下方历史交接。** 全部 Git 可见改动已用 `git add -A` 抢救至 **`wip/紧急收口-RED123-1016`，提交 `f56b595`**；已切回 `main`。main 业务源码仍为已知绿灯 `d2aa65e`，本次只追加 HANDOFF/TASKS 文档，不重新测试、不修复、不继续实现。
+
+### 最后正在做的事 / 续做第一步
+
+- 下一次光标：WIP 的 `src/main/presence.js:56`，`createPresenceService().observe(input)`；刚加入暂停/黑名单样本、再次离开、休眠时递增 epoch，使已生成中的归来候选失效；同文件 `refresh()` 第 28 行刚加入设置保护签名 `lastGuard`。**这最后一笔尚未运行测试或构建。** 对应新回归在 `test/presence-store.test.js:55`。
+- 恢复第一条命令：`git checkout "wip/紧急收口-RED123-1016"`；先查看上述两处差异。获得继续授权后才运行定向测试：`node --experimental-test-module-mocks --test test/presence-store.test.js`，随后按实际结果决定全量测试/构建/verify；本轮不执行。
+
+### 半成品清单（百分比仅进度估计，不是验收结论）
+
+| 任务 / 完成度 | WIP 涉及文件与现状 |
+|---|---|
+| RED-1 / 90% | `docs/实感架构契约.md` 已有接口/schema/配置/两处 hook/BLUE 设计；尚需与最新实现核对、把完整 BLUE 输入输出验收登记 TASKS/HANDOFF。 |
+| RED-2 / 90% | 新增 `src/core/presence/{circadian,away,reunion,engine,hooks}.js`、`src/shared/presence-protocol.js`、`src/main/{presence,presence-store,presence-hooks,presence-extensions,presence-selftest}.js`、`src/main/ipc/presence.js`；已接入 `core/context.js`、`core/diary.js`、`core/emotion/mood.js`、`core/monitor/engine.js`、`main/agent.js`、`main/index.js`、`main/monitor/index.js`、`main/ipc/{settings,voice}.js`、`main/voice/index.js`、`preload/index.js`、`shared/protocol.js`。新增 `test/presence.test.js`、`presence-store.test.js`、`presence-voice.test.js` 和 `scripts/verify-presence.mjs`；最后 epoch 修改未验。 |
+| RED-3 / 90% | 契约第 5 节已有重要事项零遗忘、低风险可选表达延迟≤10%、低气压/安慰/补救方案；未实现业务。需最终核对 BLUE-4 能直接接的接口与后续红区接线边界，DECISIONS 尚未收口。 |
+| 既有他人修改 / 未评定 | README、cloud-config.js、`src/core/agent/emotion-map.js` 删除、用户提供的 `docs/实感补足任务书.md` 及 `.nagi-*` 测试残留，按本次“全部抢救”指令一并入 WIP，未审定、未单独验收。不得把整个 WIP 直接合并回 main。 |
+
+### 测试事实
+
+- main 基点 `d2aa65e` 的本轮实跑基线：375 项，373 通过、0 失败、2 环境跳过（链接权限/环境）；WorkBuddy 的前一环境记录为 374 通过/1 跳过，不能混写。
+- WIP 最后 epoch 补丁之前：全量 **396 项，394 通过、0 失败、2 跳过**；构建通过；真实 Electron `verify-presence` **11/11**；现有 `verify:s4` **9/9**、`verify:m4` **19/19**。这些结果不覆盖最后 epoch 补丁。
+- 遇到过：受限环境中 Electron 在应用启动前退出（2147483651）；授权在隔离临时 userData 运行后启动成功。归来验收曾失败，诊断证明旧 M3 自测规则先消耗预算（backoff）；隔离 M3 自测触发、不绕过预算后 11/11 通过。没有声称当前最终 WIP 已全绿。
+- 日志保留在 `E:\凪\.tools\presence-{baseline,full-test,build,verify,verify-s4,verify-m4}.log`（本机外部证据，未复制进仓库）。阶段 10 真机/发行包、语音听感、真实模型生成质量仍待验；用户已允许不阻塞本轮。忽略的 out 构建缓存不是 main 源码验收依据，下次启动开发模式会重建。
+
+### 未决问题 / 已定约束
+
+- 停在最后失效保护补丁后的未验证状态；原计划先验证此补丁，再对齐契约、记录 BLUE-1～4 和红区决策，最后独立提交。现已停止，不尝试最后修复。
+- 用户已批准以现有任务卡、人格 v2/增补和本轮要求补齐契约；已确认 WorkBuddy 停工并保留其改动；活动默认仅内存，显式开启后只保存之后的新活动到 userData，不回填开启前或关机期间活动。保留当前语音配置，不实现 voice-profile 映射、不接外部写操作。
+- 契约还需明确：`proactive-delivered` 事件、损坏活动文件保留策略、BLUE-4 仅方案接口与后续接线位置；本次不再改。蓝区历史 HA extra 目标覆盖与 R01 外部路径竞态仍未修，不能启用 HA 主动控制。
+
+### 给 WorkBuddy / 恢复路径
+
+- **禁止修改 WIP 红线半成品**：上表 RED-2 核心/编排/协议/桥接、RED-1/3 契约及相关核心测试；不能为了接蓝区补 hook、改 Agent 或安全门。实感 BLUE-1～4 暂缓，等待红区恢复并完成契约验收；本轮不授予继续开发权限。
+- 不依赖实感的历史蓝区任务（B05 人工 UI 验收、B07 发行/链接补验、B08 文档、B19 测试残留维护等）技术上不受影响，获用户授权后可在 main 继续。**请 WorkBuddy 修/处理**：其既有 README/config 差异与 emotion-map 删除的独立归属、`.nagi-*` 残留；先从 WIP 按文件审查恢复，不整体合并、不公布配置内容。
+- 下次只使用稳定版本就留在 `main`；恢复 RED-1/2/3 才 checkout 上述 WIP。最新紧急说明在 main，可在 WIP 用 `git show main:docs/HANDOFF.md` 查看。所有现场仅本地提交，未推送；WIP 包含未经审查的配置与测试残留，先审查再分享。
+
 ## 边界规则（先读）
 
 - 🔴 ChatGPT 红线区（只做这些）：架构契约、Agent Loop+双通道、安全门、Playwright 核心、关键复核、疑难会诊。
