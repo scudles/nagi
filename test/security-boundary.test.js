@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, lstatSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -35,6 +35,12 @@ test('文件工具：内部链接指向外部时读、写、列目录均拒绝',
   writeFileSync(join(outside, 'secret.txt'), 'secret')
   try {
     symlinkSync(join(outside, 'secret.txt'), join(root, 'linked.txt'), 'file')
+    // 无符号链接权限的环境里 symlinkSync 可能不报错、而是静默建成普通文件
+    // （2026-10-16 实测：Node 22 + 未提权 + 开发者模式关）。此时链接场景并未真正
+    // 建立，必须跳过，而不是让后续断言假失败、把环境问题记成代码问题。
+    if (!lstatSync(join(root, 'linked.txt')).isSymbolicLink()) {
+      return t.skip('当前环境不能创建真实符号链接（创建被静默降级为普通文件）')
+    }
     symlinkSync(outside, join(root, 'linked-dir'), 'junction')
   } catch (error) {
     if (error.code === 'EPERM' || error.code === 'EACCES') return t.skip('当前 Windows 权限不能创建测试链接')
@@ -52,6 +58,10 @@ test('文件工具：Windows 目录接合点单独验证越界', async (t) => {
   const { root, outside } = testDirs(t)
   try {
     symlinkSync(outside, join(root, 'linked-dir'), 'junction')
+    // 同链接测试：创建被静默降级为普通目录时，越界场景并未真正建立
+    if (!lstatSync(join(root, 'linked-dir')).isSymbolicLink()) {
+      return t.skip('当前环境不能创建真实目录接合点（创建被静默降级为普通目录）')
+    }
   } catch (error) {
     if (error.code === 'EPERM' || error.code === 'EACCES') return t.skip('当前 Windows 权限不能创建目录接合点')
     throw error
