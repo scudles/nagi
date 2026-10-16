@@ -20,6 +20,8 @@ import { registerCompanionIpc } from './ipc/companion.js'
 import { registerCalendarIpc } from './ipc/calendar.js'
 import { registerMusicIpc } from './ipc/music.js'
 import { startMusicMonitor, stopMusicMonitor } from './signals/music.js'
+import { registerGeoIpc } from './ipc/geo.js'
+import { startGeoMonitor, stopGeoMonitor } from './signals/geo.js'
 import { refreshHaSignals } from './signals/ha.js'
 import { initRag } from './rag/index.js'
 import { migrateLegacyLedger } from './ledger.js'
@@ -75,6 +77,7 @@ if (!gotLock) {
     registerCompanionIpc()
     registerCalendarIpc()
     registerMusicIpc()
+    registerGeoIpc()
     registerPresenceIpc()
     registerNotesIpc()
 
@@ -120,6 +123,7 @@ if (!gotLock) {
     // 活动监测：看你在用什么程序，适时主动开口（M3，受 settings.privacy 控制）
     startActivityMonitor()
     startMusicMonitor()
+    startGeoMonitor()
     refreshHaSignals()
 
     // 日程提醒：她替你记着的事，到点主动开口（M4）
@@ -170,6 +174,7 @@ if (!gotLock) {
   app.on('will-quit', (e) => {
     stopPresenceBindings()
     stopMusicMonitor()
+    stopGeoMonitor()
     if (!disposeAgent.__done) {
       disposeAgent.__done = true
       e.preventDefault()

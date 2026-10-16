@@ -66,6 +66,9 @@ export const IPC = {
   MUSIC_STATUS: 'music:status',
   MUSIC_ENABLE: 'music:enable',
   MUSIC_REVOKE: 'music:revoke',
+  GEO_STATUS: 'geo:status',
+  GEO_ENABLE: 'geo:enable',
+  GEO_REVOKE: 'geo:revoke',
   // 智能家居
   HA_TEST: 'ha:test',
   HA_LIST: 'ha:list',
@@ -179,5 +182,7 @@ export const DEFAULT_SETTINGS = {
     sampleSec: 20, // 多久看一眼（秒）
     blacklist: [...DEFAULT_BLACKLIST] // 命中即丢样本（窗口标题/应用名，支持 * 通配）
   },
+  // 媒体感知：窗口标题兜底时追加的播放器进程名（网易云等不注册系统媒体会话的播放器）
+  signals: { extraPlayerProcesses: [] },
   companion: { maxDaily: 3, minGapMinutes: 90 }
 }

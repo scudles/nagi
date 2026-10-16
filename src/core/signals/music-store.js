@@ -10,6 +10,7 @@ export class MusicSignal {
     this.probe = probe
     this.doNotDisturb = doNotDisturb
     this.last = null
+    this.lastError = null
     this.generation = 0
     this.inflight = null
   }
@@ -57,9 +58,15 @@ export class MusicSignal {
         const clear = () => { if (this.inflight === task) this.inflight = null }
         task.then(clear, clear)
       }
-      try { await this.inflight } catch (err) { this.last = null; throw err }
+      // 探针失败**不清空**上一次的成功观测：一次瞬时读取失败（PowerShell 在负载高时
+      // 被误判超时、或播放器正切歌）不该让她这一分钟变成"什么都不知道"。
+      // 观测本身有 120 秒 TTL，过期自然失效，所以保留旧值不会变成"编造"。
+      try { await this.inflight; this.lastError = null }
+      catch (err) { this.lastError = String(err?.message || err).slice(0, 200); throw err }
     }
-    return this.authorized() ? { authorized: true, authorizedAt, observation: this.last } : { authorized: false, observation: null }
+    return this.authorized()
+      ? { authorized: true, authorizedAt, observation: this.last, lastError: this.lastError }
+      : { authorized: false, observation: null }
   }
 
   context(now = Date.now()) {

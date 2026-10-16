@@ -82,3 +82,33 @@ export const DEFAULT_BLACKLIST = [
   '*银行*', '*bank*', '*支付*', '*支付宝*', '*微信支付*', '*收银*',
   '*身份证*', '*信用卡*', '*私密*', '*隐私*', '*private*', '*incognito*', '*无痕*'
 ]
+
+/** 干净条目被「UTF-8 字节当 GBK 读」之后的样子（*密码* → *瀵嗙爜*） */
+function mojibakeOf(clean) {
+  try {
+    return new TextDecoder('gbk').decode(Buffer.from(clean, 'utf8'))
+  } catch {
+    return null // 运行期没有 gbk 解码器：不猜、不修
+  }
+}
+
+/**
+ * 旧版本曾把中文黑名单以乱码写进 settings.json（*密码* → *瀵嗙爜*），
+ * 于是中文隐私规则一条都匹配不上，而这些规则正是用来挡标题里的敏感词的。
+ * 这里只在「确实读到乱码指纹」时把黑名单整体还原为默认值；
+ * 用户自定义的正常条目一律保留（指纹只在损坏形态下命中）。
+ * 纯逻辑、可单测。
+ */
+export function repairBlacklist(blacklist, defaults = DEFAULT_BLACKLIST) {
+  if (!Array.isArray(blacklist) || blacklist.length === 0) return [...defaults]
+  const fingerprints = new Set()
+  for (const clean of defaults) {
+    const m = mojibakeOf(clean)
+    // 只收「真被损坏」的形态：纯 ASCII 条目（*password*）乱码前后一致，
+    // 拿它当指纹会把用户的正常自定义误判成损坏。
+    if (m && m !== clean) fingerprints.add(m)
+  }
+  if (fingerprints.size === 0) return blacklist
+  const dirty = blacklist.some((entry) => fingerprints.has(String(entry)))
+  return dirty ? [...defaults] : blacklist
+}

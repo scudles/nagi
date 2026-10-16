@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { matchPattern, isBlocked, gateSample, redact, collectionAllowed, DEFAULT_BLACKLIST } from '../src/core/monitor/privacy.js'
+import { matchPattern, isBlocked, gateSample, redact, collectionAllowed, DEFAULT_BLACKLIST, repairBlacklist } from '../src/core/monitor/privacy.js'
 import { createTracker, classify, CATEGORY } from '../src/core/monitor/tracker.js'
 import { evaluateRules, RULE_PARAMS } from '../src/core/monitor/rules.js'
 import { createThrottle, MIN_GAP_MS } from '../src/core/monitor/throttle.js'
@@ -57,6 +57,24 @@ test('默认黑名单覆盖密码/银行/隐私类关键词', () => {
   assert.ok(DEFAULT_BLACKLIST.some((p) => matchPattern('password', p)))
   assert.ok(DEFAULT_BLACKLIST.some((p) => matchPattern('招商银行', p)))
   assert.ok(DEFAULT_BLACKLIST.some((p) => matchPattern('无痕窗口', p)))
+})
+
+test('repairBlacklist：旧版写入的乱码黑名单被还原，正常自定义保留', () => {
+  // 旧版本把中文以「UTF-8 字节当 GBK 读」的形态落盘（*密码* → *瀵嗙爜*）
+  const mojibake = new TextDecoder('gbk').decode(Buffer.from('*密码*', 'utf8'))
+  const dirty = ['*瀵嗙爜*', '*password*']
+  assert.notEqual(mojibake, '*密码*')
+  const fixed = repairBlacklist([mojibake, '*password*'], DEFAULT_BLACKLIST)
+  assert.deepEqual(fixed, DEFAULT_BLACKLIST)
+  // 用户自定义（非乱码）条目必须原样保留
+  const custom = ['*我的私密文档*', '*password*']
+  assert.deepEqual(repairBlacklist(custom, DEFAULT_BLACKLIST), custom)
+  // 空值 → 默认
+  assert.deepEqual(repairBlacklist(null, DEFAULT_BLACKLIST), DEFAULT_BLACKLIST)
+  assert.deepEqual(repairBlacklist([], DEFAULT_BLACKLIST), DEFAULT_BLACKLIST)
+  // 还原后中文规则真的能匹配上（乱码时匹配不上）
+  assert.ok(!DEFAULT_BLACKLIST.some((p) => matchPattern('瀵嗙爜', p)))
+  assert.ok(fixed.some((p) => matchPattern('我的密码本', p)))
 })
 
 /* ================= 统计器 ================= */

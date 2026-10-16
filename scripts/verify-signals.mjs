@@ -127,6 +127,16 @@ try {
   check('授权后真实读取 Windows 媒体会话并可独立撤销',
     music.enabled.authorized && !music.enabled.error && !!music.enabled.observation &&
     music.revoked.authorized === false)
+  console.log('  媒体观测：' + JSON.stringify(music.enabled.observation))
+  const geo = await page.evaluate(async () => {
+    const enabled = await window.nagi.geo.enable()
+    const revoked = await window.nagi.geo.revoke()
+    return { enabled, revoked }
+  })
+  check('授权后可读取位置（系统定位失败回退 IP），并可独立撤销',
+    geo.enabled.authorized && !geo.enabled.error && !!geo.enabled.observation &&
+    geo.revoked.authorized === false)
+  console.log('  位置观测：' + JSON.stringify(geo.enabled.observation))
 } catch (err) {
   console.error('✘ 验收中断：' + err.message)
   console.error(logs.slice(-1200))
@@ -141,5 +151,11 @@ try {
   console.log('隔离数据：' + profile)
   console.log('生活信号验收：' + checks.filter(Boolean).length + '/' + checks.length + ' 通过')
   if (checks.some((ok) => !ok)) process.exitCode = 1
+  // 一个检查都没跑到 = 应用根本没起来（本机 GPU 进程会崩，需 NAGI_RENDERER_SANDBOX=0）。
+  // 这种情况必须判失败，否则「0/0 通过」会被当成绿灯（2026-10-17 踩过）。
+  if (!checks.length) {
+    console.error('✘ 没有执行到任何检查——应用未就绪，视为失败。受限环境请加 NAGI_RENDERER_SANDBOX=0')
+    process.exitCode = 1
+  }
 }
 process.exit(process.exitCode || 0)

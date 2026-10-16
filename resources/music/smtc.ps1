@@ -12,19 +12,31 @@ function Wait-Operation($operation, $resultType) {
   return $task.Result
 }
 $manager = Wait-Operation ($managerType::RequestAsync()) $managerType
-$session = $manager.GetCurrentSession()
-if ($null -eq $session) {
-  $result = @{ available = $false; reason = 'no-session' }
-} else {
-  $props = Wait-Operation ($session.TryGetMediaPropertiesAsync()) $propsType
-  $status = $session.GetPlaybackInfo().PlaybackStatus.ToString()
-  $result = @{
-    available = $true
-    app = [string]$session.SourceAppUserModelId
-    title = [string]$props.Title
-    artist = [string]$props.Artist
-    playbackStatus = [string]$status
+# Enumerate ALL sessions, not just GetCurrentSession():
+# multiple apps can hold media sessions at once (browser video + music player),
+# and the "current" session is only the most recently touched one.
+$sessions = @()
+foreach ($session in $manager.GetSessions()) {
+  try {
+    $props = Wait-Operation ($session.TryGetMediaPropertiesAsync()) $propsType
+    $status = $session.GetPlaybackInfo().PlaybackStatus.ToString()
+    $updated = 0
+    try { $updated = [int64]([DateTimeOffset]$session.GetPlaybackInfo().Updated).ToUnixTimeMilliseconds() } catch { }
+    $sessions += [ordered]@{
+      app = [string]$session.SourceAppUserModelId
+      title = [string]$props.Title
+      artist = [string]$props.Artist
+      playbackStatus = [string]$status
+      updatedAt = $updated
+    }
+  } catch {
+    $sessions += [ordered]@{ app = [string]$session.SourceAppUserModelId; title = ''; artist = ''; playbackStatus = 'Unknown'; updatedAt = 0 }
   }
 }
-$json = ConvertTo-Json -InputObject $result -Compress -Depth 3
+if ($sessions.Count -eq 0) {
+  $result = @{ available = $false; reason = 'no-session' }
+} else {
+  $result = @{ available = $true; sessions = $sessions }
+}
+$json = ConvertTo-Json -InputObject $result -Compress -Depth 5
 [System.IO.File]::WriteAllText($OutFile, $json, (New-Object System.Text.UTF8Encoding $false))

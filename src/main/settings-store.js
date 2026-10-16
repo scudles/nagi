@@ -5,6 +5,7 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { DEFAULT_SETTINGS, PROVIDER_PRESETS } from '../shared/protocol.js'
+import { repairBlacklist } from '../core/monitor/privacy.js'
 
 let cache = null
 
@@ -46,6 +47,9 @@ export function loadSettings() {
   }
   // 旧版只有 llm 当前配置：装载时补进对应提供商档案，下一次保存一并落盘。
   cache = rememberActiveLlm(deepMerge(structuredClone(DEFAULT_SETTINGS), raw))
+  // 旧版本写进 settings.json 的乱码黑名单（*密码* → *瀵嗙爜*）会让中文隐私规则全部失效，
+  // 装载时就地还原；下一次保存会把干净值落盘。
+  if (cache.privacy) cache.privacy = { ...cache.privacy, blacklist: repairBlacklist(cache.privacy.blacklist) }
   return cache
 }
 

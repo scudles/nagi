@@ -140,6 +140,11 @@ const api = {
     enable: () => ipcRenderer.invoke(IPC.MUSIC_ENABLE),
     revoke: () => ipcRenderer.invoke(IPC.MUSIC_REVOKE)
   },
+  geo: {
+    status: () => ipcRenderer.invoke(IPC.GEO_STATUS),
+    enable: () => ipcRenderer.invoke(IPC.GEO_ENABLE),
+    revoke: () => ipcRenderer.invoke(IPC.GEO_REVOKE)
+  },
   /** 语音链路（M5）：她既能开口，也能听见 */
   voice: {
     /** 能力快照：各引擎可用性 + 本机语音清单 + 离线模型状态 */

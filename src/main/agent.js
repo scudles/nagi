@@ -66,6 +66,7 @@ import { runRecordedTool } from './promises.js'
 import { upcomingCalendarContext } from './signals/calendar.js'
 import { currentMusicContext } from './signals/music.js'
 import { deferOptionalExpression } from './extensions/imperfection.js'
+import { currentGeoContext } from './signals/geo.js'
 import {
   startReminderEngine,
   stopReminderEngine,
@@ -610,7 +611,7 @@ async function buildMessages(userText, supportsNative) {
     recalled: await recalledPieces(userText),
     recentReplies: recentAssistantReplies(history, 4),
     // 她替你记着的提醒：让她知道「有这几件事等着」，别把答应过的事忘了
-    extra: [...upcomingReminderLines(), ...upcomingCalendarContext(), ...currentMusicContext(), ...haContext()]
+    extra: [...upcomingReminderLines(), ...upcomingCalendarContext(), ...currentMusicContext(), ...currentGeoContext(), ...haContext()]
   })
   return [
     { role: 'system', content: buildSystemPrompt({ nativeTools: supportsNative, context }) },
