@@ -2,7 +2,7 @@
 // 前置：ollama serve && ollama pull qwen2.5；构建后运行 npm run verify:local-llm。
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
 import { chromium } from 'playwright'
@@ -11,7 +11,10 @@ process.env.NO_PROXY = '127.0.0.1,localhost'
 process.env.no_proxy = '127.0.0.1,localhost'
 
 const root = resolve(import.meta.dirname, '..')
-const electron = join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+const packagedExecutable = process.env.NAGI_VERIFY_EXECUTABLE
+const electron = packagedExecutable
+  ? resolve(packagedExecutable)
+  : join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
 const port = Number(process.env.CDP_PORT || 9340)
 const model = process.env.OLLAMA_TEST_MODEL || 'qwen2.5'
 const baseURL = process.env.OLLAMA_TEST_BASE_URL || 'http://127.0.0.1:11434/v1'
@@ -51,8 +54,8 @@ let fixture
 try {
   const env = { ...process.env, NAGI_SELFTEST: '1', NAGI_SELFTEST_DIARY_WRITE: '1' }
   delete env.ELECTRON_RUN_AS_NODE
-  child = spawn(electron, ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
-    cwd: root, env, stdio: ['ignore', 'pipe', 'pipe']
+  child = spawn(electron, [...(packagedExecutable ? [] : ['.']), `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
+    cwd: packagedExecutable ? dirname(electron) : root, env, stdio: ['ignore', 'pipe', 'pipe']
   })
   child.stdout.on('data', (data) => { logs += String(data) })
   child.stderr.on('data', (data) => { logs += String(data) })
@@ -142,9 +145,16 @@ try {
   const journal = existsSync(journalDir) ? readdirSync(journalDir).map((name) => readFileSync(join(journalDir, name), 'utf8')).join('\n') : ''
   check('本地对话写入日记素材流水', journal.includes('请用一句简短中文介绍你自己'))
 
-  for (let n = 0; n < 60 && !logs.includes('[diary] 生成一条'); n++) await sleep(1000)
   const diaryDir = join(profile, 'monologue')
-  check('本地模型生成独白并落盘', logs.includes('[diary] 生成一条') && existsSync(diaryDir) && readdirSync(diaryDir).some((name) => name.endsWith('.md')))
+  let diaryWritten = false
+  for (let n = 0; n < 60; n++) {
+    diaryWritten = existsSync(diaryDir) && readdirSync(diaryDir).some((name) =>
+      name.endsWith('.md') && readFileSync(join(diaryDir, name), 'utf8').trim().length > 0)
+    if (diaryWritten) break
+    await sleep(1000)
+  }
+  // portable 启动器不转发子进程 stdout；以用户实际拿到的文件为准。
+  check('本地模型生成独白并落盘', diaryWritten)
   const pendingFile = join(profile, 'rag', 'pending.jsonl')
   const pending = existsSync(pendingFile)
     ? readFileSync(pendingFile, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))

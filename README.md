@@ -33,6 +33,7 @@ npm run dev        # 开发模式启动
 | `npm run verify:s4` | 无头验证关系层（情绪跨重启延续 / 离线衰减 / 时间线落盘 / 保留策略） |
 | `npm run verify:m4` | 无头验证日程提醒（到点→主动开口→日记落盘 / 重复推进 / 错过作废） |
 | `npm run verify:pose` | 实机验证立绘行为（黑脸移除 / 鼠标不跟随 / 对话状态驱动姿态） |
+| `npm run verify:local-llm` | 隔离数据下验收本机 Ollama 对话、工具、记忆及提供商切换；需先启动 Ollama 并安装 qwen2.5 |
 
 打包产物（Windows x64）：
 - `dist/Nagi-Setup-<版本>.exe` —— NSIS 安装包（可选安装目录、建桌面/开始菜单快捷方式），
@@ -113,6 +114,7 @@ API Key 通过 Electron `safeStorage` 加密落盘（`userData/secrets.json`）�
 
 这一阶段只把 **LLM 推理**搬到本机。Edge TTS 仍需网络；要实现完全断网语音，还需选择和验证本地 TTS。
 端侧模型的实际延迟和人格边界对比见 [M6 端侧模型初测](docs/M6_端侧模型实测_2026-10-16.md)；当前尚未把任何本机模型设为默认。
+验收打包版时，在 PowerShell 设置 `$env:NAGI_VERIFY_EXECUTABLE=(Resolve-Path 'dist\win-unpacked\Nagi.exe').Path` 后运行 `npm run verify:local-llm`；也可指向 `dist\Nagi-Portable-<版本>.exe`。模型权重由本机 Ollama 管理，不包含在凪的安装包中。
 
 ### 情感系统（合并自桌宠原型，2026-10-14）
 
