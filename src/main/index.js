@@ -2,6 +2,8 @@
 // 主进程入口：初始化、建窗口、注册协议与 IPC。
 
 import { app, BrowserWindow, powerMonitor } from 'electron'
+import { statSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { registerScheme, registerHandler } from './local-protocol.js'
 import { modelsDir } from './paths.js'
 import { createPetWindow, createWorkbenchWindow, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow, rendererSandbox } from './windows.js'
@@ -47,6 +49,26 @@ if (softwareGl) {
 }
 if (!rendererSandbox) app.commandLine.appendSwitch('no-sandbox')
 
+/**
+ * 启动标记（排障用）：把「本实例加载的是哪个构建」落盘到 userData/boot.json。
+ *
+ * 起因（2026-10-17）：改了主进程代码、`npm run build` 也重新构建了，但应用没有退出重启——
+ * 跑着的还是旧 main 进程（模块已在内存里），而 `requestSingleInstanceLock()` 让「再点一次启动」
+ * 只会唤起旧窗口。表现就是「修复完全无效」，且从外部极难判断。有了这个标记，
+ * 对照 out/main/index.js 的修改时间就能一眼确认实例是不是陈旧的。
+ */
+function writeBootStamp() {
+  try {
+    let build = null
+    try { build = statSync(join(app.getAppPath(), 'out', 'main', 'index.js')).mtimeMs } catch { /* 打包态路径不同，留空即可 */ }
+    const stamp = { version: app.getVersion(), pid: process.pid, startedAt: Date.now(), packaged: app.isPackaged, build }
+    writeFileSync(join(app.getPath('userData'), 'boot.json'), JSON.stringify(stamp), 'utf8')
+    console.log('[boot] 实例已启动 pid=' + stamp.pid + ' 构建时间=' + (build ? new Date(build).toLocaleString('zh-CN') : '未知（打包态）'))
+  } catch (err) {
+    console.warn('[boot] 启动标记写入失败：', err?.message)
+  }
+}
+
 // 必须在 app ready 之前注册特权协议
 registerScheme()
 
@@ -60,6 +82,9 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
+    // 启动标记：先落盘，后面任何一步出问题都还能判断跑的是哪个构建
+    writeBootStamp()
+
     // 协议处理器
     registerHandler(modelsDir)
 

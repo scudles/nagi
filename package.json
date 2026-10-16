@@ -21,6 +21,7 @@
     "verify:maine": "node scripts/verify-maine.mjs",
     "verify:maine-live": "node scripts/verify-maine-live.mjs",
     "probe:maine": "node scripts/probe-maine-frame.mjs",
+    "probe:gpu": "node scripts/probe-electron-gpu.mjs",
     "verify:s4": "node scripts/verify-s4.mjs",
     "verify:m4": "node scripts/verify-m4.mjs",
     "viewer": "node tools/live2d-viewer/server.mjs",
