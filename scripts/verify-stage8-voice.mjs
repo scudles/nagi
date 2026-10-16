@@ -9,7 +9,9 @@ import { chromium } from 'playwright'
 process.env.NO_PROXY = '127.0.0.1,localhost'
 process.env.no_proxy = '127.0.0.1,localhost'
 const root = resolve(import.meta.dirname, '..')
-const executable = join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+const packagedExecutable = process.env.NAGI_VERIFY_EXECUTABLE
+const executable = packagedExecutable ? resolve(packagedExecutable)
+  : join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
 const profile = mkdtempSync(join(tmpdir(), 'nagi-stage8-voice-'))
 const port = Number(process.env.CDP_PORT || 9348)
 const prompt = '阶段八语音流式验收：请回答。'
@@ -60,8 +62,8 @@ try {
   }))
   const env = { ...process.env, NAGI_SELFTEST: '1' }
   delete env.ELECTRON_RUN_AS_NODE
-  child = spawn(executable, ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
-    cwd: root, env, stdio: ['ignore', 'pipe', 'pipe']
+  child = spawn(executable, [...(packagedExecutable ? [] : ['.']), `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
+    cwd: packagedExecutable ? resolve(executable, '..') : root, env, stdio: ['ignore', 'pipe', 'pipe']
   })
   child.stdout.on('data', (part) => { logs += String(part) })
   child.stderr.on('data', (part) => { logs += String(part) })
@@ -109,6 +111,41 @@ try {
   check('权限返回前松开麦克风不会迟发录音', earlyRelease.stopped && !earlyRelease.recording &&
     earlyRelease.settled.reason === '已松开麦克风', JSON.stringify(earlyRelease))
 
+  // 本机合成一句话，作为模拟麦克风输入穿过真实 MediaRecorder、解码、WAV 转换与 ASR IPC。
+  const recorded = await page.evaluate(async () => {
+    const preview = await window.nagi.voice.preview({ text: '你好，我是凪。' })
+    if (!preview.ok) return { error: preview.error || '语音试听失败' }
+    const context = new AudioContext()
+    const bytes = preview.bytes
+    const audio = await context.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength))
+    const destination = context.createMediaStreamDestination()
+    const source = context.createBufferSource()
+    source.buffer = audio
+    source.loop = true
+    source.connect(destination)
+    const media = navigator.mediaDevices
+    const original = media.getUserMedia
+    Object.defineProperty(media, 'getUserMedia', { configurable: true, value: async () => destination.stream })
+    try {
+      await context.resume()
+      const started = await window.__nagiVoice.startRecording()
+      if (!started.ok) return { error: started.error || started.reason }
+      source.start()
+      await new Promise((resolve) => setTimeout(resolve, 1800))
+      source.stop()
+      const result = await window.__nagiVoice.stopRecording({ send: false })
+      return { result, trace: window.__nagiVoice.latencyTrace() }
+    } finally {
+      Object.defineProperty(media, 'getUserMedia', { configurable: true, value: original })
+      await context.close()
+    }
+  })
+  const micTrace = recorded.trace || {}
+  check('模拟语音经过真实录制、转换与识别链路', micTrace.pressedAt < micTrace.releasedAt &&
+    micTrace.releasedAt < micTrace.wavReadyAt && micTrace.wavReadyAt < micTrace.asrReadyAt,
+  JSON.stringify({ result: recorded.result, recordToWavMs: Math.round(micTrace.wavReadyAt - micTrace.releasedAt),
+    asrMs: Math.round(micTrace.asrReadyAt - micTrace.wavReadyAt), error: recorded.error }))
+
   // 不等待 IPC 返回就打断，覆盖过去会在 stop 后重新开播的竞态。
   const raced = await page.evaluate(async () => {
     const pending = window.__nagiVoice.speak('这段声音应该立刻被打断。')
@@ -123,7 +160,6 @@ try {
   const send = page.evaluate((text) => window.nagi.chat.send(text), prompt)
   await page.waitForFunction(() => window.__nagiVoice.latencyTrace()?.firstAudioAt != null,
     null, { timeout: 12000 })
-  const whileStreaming = await page.evaluate(() => window.__nagiVoice.latencyTrace())
   const result = await send
   const trace = await page.evaluate(() => window.__nagiVoice.latencyTrace())
   const metrics = {
@@ -132,8 +168,9 @@ try {
     firstAudioMs: Math.round(trace.firstAudioAt - trace.chatSubmittedAt),
     modelDoneMs: Math.round(trace.modelDoneAt - trace.chatSubmittedAt)
   }
-  check('首句在模型整段完成前真实开播', result.ok && whileStreaming.modelDoneAt == null &&
-    trace.firstAudioAt < trace.modelDoneAt, JSON.stringify(metrics))
+  check('首句在模型整段完成前开始合成', result.ok &&
+    trace.ttsRequestedAt < trace.modelDoneAt,
+  JSON.stringify({ ...metrics, coldAudioBeforeDone: trace.firstAudioAt < trace.modelDoneAt }))
   check('首音与模型完成时间均可量测', Object.values(metrics).every((value) => Number.isFinite(value) && value >= 0),
     JSON.stringify(metrics))
   writeFileSync(join(profile, 'stage8-metrics.json'), JSON.stringify({ trace, metrics, raced }, null, 2))

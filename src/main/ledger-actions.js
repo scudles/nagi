@@ -75,10 +75,10 @@ export function forgetExperience(id) {
   const entry = ledger.get(id)
   if (!entry || entry.deletedAt) return { ok: false, error: '没有这条记录' }
   try {
-    getYearbook().pruneSource(id)
     const dropped = scrub(entry)
     forgetDerived(ledger, entry)
     markRagCopies(ledger, dropped, id)
+    getYearbook().pruneSource(id)
     if (!ledger.forget(id)) throw new Error('账本状态未写入')
     return { ok: true }
   } catch (err) {
@@ -93,10 +93,10 @@ export function correctExperience(id, text) {
   const entry = ledger.get(id)
   if (!entry || entry.deletedAt) return { ok: false, error: '没有这条记录' }
   try {
-    getYearbook().pruneSource(id)
     const dropped = scrub(entry)
     forgetDerived(ledger, entry)
     markRagCopies(ledger, dropped, id)
+    getYearbook().pruneSource(id)
     const rag = getRag().ingestFact({ text: body, source: 'user-correction' })
     addMemory(body, { recordLedgerEntry: false })
     flushPersist()

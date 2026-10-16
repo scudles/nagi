@@ -54,3 +54,24 @@ test('纠错或忘记来源后，年鉴引用与编辑正文都不再导出或�
     assert.equal(new YearbookStore(dir, ledger).load().list().pages.length, 0)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+test('年鉴写盘失败不会在内存中假装已收录或已编辑', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nagi-yearbook-disk-'))
+  try {
+    const ledger = new ExperienceLedger(dir).load()
+    const source = ledger.record({ category: 'experience', text: '真实的一次对话',
+      source: { type: 'journal-live', ref: 'disk-failure' }, occurredAt: Date.now() })
+    const book = new YearbookStore(dir, ledger).load()
+    const correctPath = book.path
+    book.path = join(dir, 'missing-parent', 'pages.json')
+    assert.throws(() => book.add(source.id), /ENOENT/)
+    book.path = correctPath
+    assert.equal(book.list().pages.length, 0)
+    const added = book.add(source.id)
+    book.path = join(dir, 'missing-parent', 'pages.json')
+    assert.throws(() => book.edit(added.page.id, { title: '并未写成', note: '并未保存' }), /ENOENT/)
+    book.path = correctPath
+    assert.equal(book.list().pages[0].title, added.page.title)
+    assert.equal(new YearbookStore(dir, ledger).load().list().pages[0].note, '')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})

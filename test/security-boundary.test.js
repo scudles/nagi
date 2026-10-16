@@ -48,6 +48,19 @@ test('文件工具：内部链接指向外部时读、写、列目录均拒绝',
   assert.equal(readFileSync(join(outside, 'secret.txt'), 'utf8'), 'secret')
 })
 
+test('文件工具：Windows 目录接合点单独验证越界', async (t) => {
+  const { root, outside } = testDirs(t)
+  try {
+    symlinkSync(outside, join(root, 'linked-dir'), 'junction')
+  } catch (error) {
+    if (error.code === 'EPERM' || error.code === 'EACCES') return t.skip('当前 Windows 权限不能创建目录接合点')
+    throw error
+  }
+  const files = createFileTools({ fileRoot: root })
+  await assert.rejects(files.write({ path: 'linked-dir/new.txt', content: 'changed' }), /越界/)
+  await assert.rejects(files.list({ path: 'linked-dir' }), /越界/)
+})
+
 test('IPC：只接受注册窗口的顶层应用页，拒绝 iframe 与导航后的页面', () => {
   const entry = pathToFileURL(resolve('out/renderer/index.html')).toString()
   const source = { url: entry + '?mode=pet' }

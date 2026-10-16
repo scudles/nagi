@@ -6,6 +6,8 @@
 一段话说明它是什么：一个透明置顶、停在屏幕角落的 Live2D 少女；点开工作台可以和她文字对话，
 她能调用浏览器 / 文件 / 程序等工具真正干活，也能控制 Home Assistant 智能家居。
 
+> 2026-10-16 演进说明：设置页现可查看、纠正、忘记和导出有来源的经历，并把真实互动收入可编辑的双人年鉴。日历、音乐和 Home Assistant 信号分别授权。阶段 0–10 的实际验收、未完成的真人/设备复核及风险见 [`docs/演进验收记录.md`](docs/演进验收记录.md)。本地模型仍为用户可选；固定测试发现事实编造，尚未改为默认。原有语音引擎与音色配置保持不变。
+
 ---
 
 ## 快速开始
@@ -28,12 +30,15 @@ npm run dev        # 开发模式启动
 | `npm start` | 预览构建产物 |
 | `npm run pack` | 只打包到目录 `dist/win-unpacked`（快速验证，不出安装包） |
 | `npm run dist` | 构建 + 打包出安装包与免安装版到 `dist/` |
-| `npm test` | 跑 `src/core` 纯逻辑单测（node --test） |
+| `npm test` | 跑核心、主进程边界与数据迁移测试（node --test） |
 | `npm run verify:frame` | 取景/对齐实机矩阵：多窗口尺寸 + 面板宽度 + 真实像素不越界 |
 | `npm run verify:s4` | 无头验证关系层（情绪跨重启延续 / 离线衰减 / 时间线落盘 / 保留策略） |
 | `npm run verify:m4` | 无头验证日程提醒（到点→主动开口→日记落盘 / 重复推进 / 错过作废） |
 | `npm run verify:pose` | 实机验证立绘行为（黑脸移除 / 鼠标不跟随 / 对话状态驱动姿态） |
 | `npm run verify:local-llm` | 隔离数据下验收本机 Ollama 对话、工具、记忆及提供商切换；需先启动 Ollama 并安装 qwen2.5 |
+| `node scripts/verify-stage8-voice.mjs` | 真实 Electron 与 SAPI 的流式语音、模拟麦克风录制、识别和打断验收 |
+| `node scripts/verify-signals.mjs` | 真实 Electron + 模拟 Home Assistant 的独立授权与撤销验收 |
+| `node scripts/verify-stage10-lifecycle.mjs` | 隔离数据下的迁移、离线、跨重启、撤销及年鉴导出可重读验收 |
 
 打包产物（Windows x64）：
 - `dist/Nagi-Setup-<版本>.exe` —— NSIS 安装包（可选安装目录、建桌面/开始菜单快捷方式），

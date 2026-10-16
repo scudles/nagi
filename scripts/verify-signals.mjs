@@ -8,7 +8,9 @@ import { chromium } from 'playwright'
 import { WebSocketServer } from 'ws'
 
 const root = resolve(import.meta.dirname, '..')
-const electron = join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+const packagedExecutable = process.env.NAGI_VERIFY_EXECUTABLE
+const electron = packagedExecutable ? resolve(packagedExecutable)
+  : join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
 const profile = mkdtempSync(join(tmpdir(), 'nagi-signals-'))
 const cdpPort = 9348
 const checks = []
@@ -61,8 +63,8 @@ try {
   }))
   const env = { ...process.env, NAGI_MODE: 'workbench' }
   delete env.ELECTRON_RUN_AS_NODE
-  child = spawn(electron, ['.', '--user-data-dir=' + profile, '--remote-debugging-port=' + cdpPort], {
-    cwd: root, env, stdio: ['ignore', 'pipe', 'pipe']
+  child = spawn(electron, [...(packagedExecutable ? [] : ['.']), '--user-data-dir=' + profile, '--remote-debugging-port=' + cdpPort], {
+    cwd: packagedExecutable ? resolve(electron, '..') : root, env, stdio: ['ignore', 'pipe', 'pipe']
   })
   child.stdout.on('data', (d) => { logs += String(d) })
   child.stderr.on('data', (d) => { logs += String(d) })
