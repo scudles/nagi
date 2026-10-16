@@ -21,6 +21,8 @@ const mode = params.get('mode') === MODE.WORKBENCH ? MODE.WORKBENCH : params.get
 document.body.dataset.mode = mode
 
 let settings = null
+let llmDraftProfiles = {}
+let llmDraftProvider = null
 let l2dReady = false
 let currentMood = null // 主进程情绪状态机的最新快照
 let chatEmotion = null // 本轮对话流式情绪（只记录，回复返回后才翻脸）
@@ -607,6 +609,23 @@ function closeSettings() {
   document.getElementById('settings-overlay')?.classList.add('hidden')
 }
 
+function readLlmForm() {
+  const rawTemperature = document.getElementById('set-temp').value.trim()
+  const parsedTemperature = Number(rawTemperature)
+  return {
+    baseURL: document.getElementById('set-baseurl').value.trim(),
+    model: document.getElementById('set-model').value.trim(),
+    temperature: rawTemperature && Number.isFinite(parsedTemperature) ? parsedTemperature : 0.7
+  }
+}
+
+function showLlmProfile(provider) {
+  const profile = llmDraftProfiles[provider] || PROVIDER_PRESETS[provider] || {}
+  document.getElementById('set-baseurl').value = profile.baseURL || ''
+  document.getElementById('set-model').value = profile.model || ''
+  document.getElementById('set-temp').value = profile.temperature ?? 0.7
+}
+
 function fillSettingsForm() {
   // provider 下拉
   const sel = document.getElementById('set-provider')
@@ -618,19 +637,22 @@ function fillSettingsForm() {
       sel.appendChild(o)
     }
     sel.addEventListener('change', () => {
-      const p = PROVIDER_PRESETS[sel.value]
-      if (p && sel.value !== 'custom') {
-        document.getElementById('set-baseurl').value = p.baseURL
-        document.getElementById('set-model').value = p.model
-      }
+      if (llmDraftProvider) llmDraftProfiles[llmDraftProvider] = readLlmForm()
+      llmDraftProvider = sel.value
+      showLlmProfile(sel.value)
       updateLocalLlmUi()
     })
   }
   const llm = settings?.llm || {}
-  if (sel) sel.value = llm.provider || 'openai'
-  document.getElementById('set-baseurl').value = llm.baseURL || ''
-  document.getElementById('set-model').value = llm.model || ''
-  document.getElementById('set-temp').value = llm.temperature ?? 0.7
+  llmDraftProvider = PROVIDER_PRESETS[llm.provider] ? llm.provider : 'openai'
+  llmDraftProfiles = { ...(settings?.llmProfiles || {}) }
+  llmDraftProfiles[llmDraftProvider] = {
+    baseURL: llm.baseURL || '',
+    model: llm.model || '',
+    temperature: llm.temperature ?? 0.7
+  }
+  if (sel) sel.value = llmDraftProvider
+  showLlmProfile(llmDraftProvider)
   updateLocalLlmUi()
 
   const ha = settings?.homeassistant || {}
@@ -1321,7 +1343,8 @@ function wireSettingsPage() {
 
   on('btn-save-llm', async () => {
     const provider = document.getElementById('set-provider').value
-    const baseURL = document.getElementById('set-baseurl').value.trim()
+    const profile = readLlmForm()
+    const baseURL = profile.baseURL
     if (provider === 'ollama' && !ollamaTagsUrl(baseURL)) {
       document.getElementById('set-local-llm-status').textContent = 'Ollama 地址必须是本机 http://localhost:端口/v1'
       return
@@ -1329,11 +1352,10 @@ function wireSettingsPage() {
     await window.nagi.settings.set({
       llm: {
         provider,
-        baseURL,
-        model: document.getElementById('set-model').value.trim(),
-        temperature: Number(document.getElementById('set-temp').value) || 0.7
+        ...profile
       }
     })
+    llmDraftProfiles[provider] = profile
     settings = await window.nagi.settings.get()
     ui.setBrain(brainLabel())
     ui.addToolLog('大脑设置已保存')

@@ -4,7 +4,7 @@
 import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { DEFAULT_SETTINGS } from '../shared/protocol.js'
+import { DEFAULT_SETTINGS, PROVIDER_PRESETS } from '../shared/protocol.js'
 
 let cache = null
 
@@ -22,6 +22,20 @@ function deepMerge(base, patch) {
   return out
 }
 
+function rememberActiveLlm(settings) {
+  const llm = settings.llm || {}
+  if (!Object.hasOwn(PROVIDER_PRESETS, llm.provider)) return settings
+  settings.llmProfiles = {
+    ...(settings.llmProfiles || {}),
+    [llm.provider]: {
+      baseURL: llm.baseURL,
+      model: llm.model,
+      temperature: llm.temperature
+    }
+  }
+  return settings
+}
+
 export function loadSettings() {
   if (cache) return cache
   let raw = {}
@@ -30,7 +44,8 @@ export function loadSettings() {
   } catch {
     raw = {}
   }
-  cache = deepMerge(structuredClone(DEFAULT_SETTINGS), raw)
+  // 旧版只有 llm 当前配置：装载时补进对应提供商档案，下一次保存一并落盘。
+  cache = rememberActiveLlm(deepMerge(structuredClone(DEFAULT_SETTINGS), raw))
   return cache
 }
 
@@ -39,7 +54,7 @@ export function getSettings() {
 }
 
 export function saveSettings(patch) {
-  const next = deepMerge(loadSettings(), patch || {})
+  const next = rememberActiveLlm(deepMerge(loadSettings(), patch || {}))
   cache = next
   try {
     mkdirSync(dirname(file()), { recursive: true })

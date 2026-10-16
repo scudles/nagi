@@ -121,6 +121,7 @@ export const DEFAULT_SETTINGS = {
     model: PROVIDER_PRESETS.workbuddy.model,
     temperature: 0.7
   },
+  llmProfiles: {}, // 每个提供商最后保存的地址、模型与温度；密钥仍在 keystore
   live2d: {
     modelPath: 'Lisette/Lisette.model3.json',
     scale: 1,

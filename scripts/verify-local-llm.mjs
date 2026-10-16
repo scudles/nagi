@@ -113,14 +113,18 @@ try {
     keyVisible: !document.getElementById('set-cloud-key-wrap')?.classList.contains('hidden')
   }))
   check('切换到云端提供商后表单随之切换', cloudUi.localHidden && cloudUi.keyVisible)
-  await page.evaluate(({ baseURL, model }) => {
+  await page.evaluate(() => {
     const provider = document.getElementById('set-provider')
     provider.value = 'ollama'
     provider.dispatchEvent(new Event('change', { bubbles: true }))
-    document.getElementById('set-baseurl').value = baseURL
-    document.getElementById('set-model').value = model
-    document.getElementById('btn-close-settings')?.click()
-  }, { baseURL, model })
+  })
+  const localDraft = await page.evaluate(() => ({
+    baseURL: document.getElementById('set-baseurl').value,
+    model: document.getElementById('set-model').value,
+    temperature: Number(document.getElementById('set-temp').value)
+  }))
+  check('表单往返切换保留本地模型草稿', localDraft.baseURL === baseURL && localDraft.model === model && localDraft.temperature === 0.2)
+  await page.evaluate(() => document.getElementById('btn-close-settings')?.click())
 
   await page.evaluate(() => {
     window.__m6Events = []
@@ -234,15 +238,24 @@ try {
       return body.messages?.some((message) => message.role === 'user' && message.content?.includes('请用一句简短中文介绍你自己'))
     } catch { return false }
   }))
+  const persistedProfiles = JSON.parse(readFileSync(join(profile, 'settings.json'), 'utf8')).llmProfiles || {}
+  check('旧配置与新提供商配置分别落盘',
+    persistedProfiles.ollama?.model === model && persistedProfiles.ollama?.baseURL === baseURL &&
+    persistedProfiles.custom?.model === 'fixture-model' && persistedProfiles.custom?.baseURL === fixtureURL)
 
-  await page.evaluate(({ baseURL, model }) => {
+  await page.evaluate(() => {
     const provider = document.getElementById('set-provider')
     provider.value = 'ollama'
     provider.dispatchEvent(new Event('change', { bubbles: true }))
-    document.getElementById('set-baseurl').value = baseURL
-    document.getElementById('set-model').value = model
-    document.getElementById('btn-save-llm')?.click()
-  }, { baseURL, model })
+  })
+  const restoredLocal = await page.evaluate(() => ({
+    baseURL: document.getElementById('set-baseurl').value,
+    model: document.getElementById('set-model').value,
+    temperature: Number(document.getElementById('set-temp').value)
+  }))
+  check('保存兼容提供商后切回本地自动恢复原配置',
+    restoredLocal.baseURL === baseURL && restoredLocal.model === model && restoredLocal.temperature === 0.2)
+  await page.evaluate(() => document.getElementById('btn-save-llm')?.click())
   await page.waitForFunction(({ baseURL, model }) => window.nagi.settings.get().then((value) =>
     value.llm?.provider === 'ollama' && value.llm?.baseURL === baseURL && value.llm?.model === model), { baseURL, model })
   await page.evaluate(() => { window.__m6Events = [] })
@@ -254,6 +267,16 @@ try {
   const saved = await page.evaluate(() => window.nagi.settings.get())
   check('往返切换后本地配置仍持久化', saved.llm?.provider === 'ollama' &&
     saved.llm?.baseURL === baseURL && saved.llm?.model === model)
+  await page.evaluate(() => {
+    const provider = document.getElementById('set-provider')
+    provider.value = 'custom'
+    provider.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  const restoredCustom = await page.evaluate(() => ({
+    baseURL: document.getElementById('set-baseurl').value,
+    model: document.getElementById('set-model').value
+  }))
+  check('再次打开兼容提供商保留自定义端点', restoredCustom.baseURL === fixtureURL && restoredCustom.model === 'fixture-model')
   // connectOverCDP 下不调用 browser.close()，否则会关掉目标 Electron。
 } catch (error) {
   console.error('✘ 验收中断：', error.message)
