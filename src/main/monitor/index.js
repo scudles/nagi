@@ -34,7 +34,7 @@ function createFakeSampler() {
  * 启动监测（幂等）。
  * @param {{onProactive:(payload:object)=>void, log?:Function}} deps
  */
-export function startMonitor({ onProactive, log = console.log } = {}) {
+export function startMonitor({ onProactive, onPresenceSample, log = console.log } = {}) {
   if (timer) return
   const selftest = process.env.NAGI_SELFTEST_MONITOR === '1'
   const cfg = getSettings().privacy || {}
@@ -84,6 +84,7 @@ export function startMonitor({ onProactive, log = console.log } = {}) {
     getPrivacy: () => getSettings().privacy || {},
     pickText: (pool, vars) => NagiPersona.pickProactive(pool, vars),
     onProactive,
+    onPresenceSample,
     log
   })
 

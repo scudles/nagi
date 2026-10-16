@@ -77,12 +77,15 @@ export function buildContextBlock({
   memories = [],
   recalled = [],
   recentReplies = [],
+  rhythm = null,
+  activities = [],
   extra = []
 } = {}) {
   const lines = []
 
   const slot = timeSlot(new Date(now))
   lines.push(`- 现在：${formatClock(now)}（${slot}）`)
+  lines.push(...presenceContextLines({rhythm,activities}))
 
   if (Number.isFinite(lastInteractionAt)) {
     const ago = formatAgo(now - lastInteractionAt)
@@ -124,6 +127,21 @@ export function buildContextBlock({
     return ['【此刻】', ...lines].join('\n')
   }
   return ['【此刻】', ...lines].join('\n')
+}
+
+/** 权威机器状态与模拟来源边界；不是台词/人格 brief。 */
+export function presenceContextLines({rhythm,activities=[]}={}) {
+  const lines=[]
+  if(rhythm?.enabled) {
+    lines.push('- 数字存在仍清醒；人类节律为主动模拟，没有生理困倦。')
+    lines.push('- 节律状态：'+JSON.stringify({period:rhythm.period,dayType:rhythm.dayType,behavior:rhythm.behavior}))
+  }
+  const records=activities.filter(a=>a?.provenance==='simulation'&&a.canReference&&!a.deletedAt).slice(-3)
+  if(records.length) {
+    lines.push('- 以下仅为运行期间的内部模拟状态，不是外界感知或真实读书/工作，不得升级为共同经历；未观察时段未知。')
+    lines.push('- 模拟活动来源：'+JSON.stringify(records.map(({id,type,startedAt,endedAt})=>({id,type,startedAt,endedAt}))))
+  }
+  return lines
 }
 
 /**

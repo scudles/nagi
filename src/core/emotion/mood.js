@@ -51,6 +51,7 @@ export function createMood({ now = () => Date.now() } = {}) {
   };
 
   let listener = null;
+  let rhythm = null, lastRhythmKey = '';
 
   function clamp01(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 
@@ -77,10 +78,10 @@ export function createMood({ now = () => Date.now() } = {}) {
   }
 
   // 交互提议一个情绪；weight 0~1 表示信号强度
-  function propose(mood, weight, how) {
+  function propose(mood, weight, how, { interaction = true } = {}) {
     if (!LABELS[mood]) return;
     var w = clamp01(weight);
-    state.lastInteraction = now();
+    if (interaction) state.lastInteraction = now();
 
     if (mood === state.mood) {
       // 同情绪：叠加强度
@@ -128,11 +129,19 @@ export function createMood({ now = () => Date.now() } = {}) {
 
     // 深夜 → 担心（每晚只推一次，早 7 点后重置）
     var h = new Date(t).getHours();
-    if ((h >= 23 || h < 7) && !state.nightWorried) {
+    if (!rhythm?.enabled && (h >= 23 || h < 7) && !state.nightWorried) {
       state.nightWorried = true;
       propose('worry', 0.45, 'night');
     }
     if (h >= 7 && h < 23) state.nightWorried = false;
+
+    const key = rhythm?.enabled ? `${rhythm.dayKey}/${rhythm.period}` : '';
+    if (key && key !== lastRhythmKey) {
+      lastRhythmKey = key;
+      const push = rhythm.moodPush;
+      if (push && state.intensity < 0.35) propose(push.mood, Math.min(0.45, push.weight), 'rhythm', { interaction: false });
+    }
+    if (!key) lastRhythmKey = '';
 
     notify();
   }
@@ -211,6 +220,7 @@ export function createMood({ now = () => Date.now() } = {}) {
   }
 
   return {
+    applyRhythm: (value) => { rhythm = value; },
     propose: propose,
     restingExpr: restingExpr,
     label: label,

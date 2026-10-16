@@ -14,7 +14,7 @@
 // 这个文件不碰 IO、不碰 Electron，方便单测。
 
 import { NagiPersona } from './persona.js'
-import { formatClock, timeSlot } from './context.js'
+import { formatClock, timeSlot, presenceContextLines } from './context.js'
 import { MOOD_LABELS } from './emotion/mood.js'
 import { eventLine } from './journal.js'
 
@@ -90,9 +90,11 @@ export function buildDiaryMessages({
   memories = [],
   relation = null,
   recentDiaries = [],
-  cacheAllowed = false
+  cacheAllowed = false,
+  rhythm = null
 } = {}) {
   const lines = ['【此刻】', `- 现在：${formatClock(now)}（${timeSlot(new Date(now))}）`]
+  lines.push(...presenceContextLines({rhythm}))
 
   if (mood && mood.label) {
     const i = Number.isFinite(mood.intensity) ? `（强度 ${mood.intensity.toFixed(2)}）` : ''

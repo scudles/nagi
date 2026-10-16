@@ -1,5 +1,27 @@
 # 凪 Nagi
 
+## 开发入口（先读）
+
+当前为单人开发。先读 [当前状态与恢复路径](docs/HANDOFF.md)、[待办队列](docs/TASKS.md)、[已定决策](docs/DECISIONS.md)，再动手。
+
+| 日常操作 | 在本工程根目录执行 |
+|---|---|
+| 安装 | `npm install`（postinstall 下载 Cubism Core；保留现有 `models/` 资源） |
+| 开发启动 | `npm run dev` |
+| 构建后启动 | 先 `npm run build`，再 `npm start` |
+| 测试 | `npm test`（须用 Node ≥24，本机默认 node 22 会令 7 个 electron mock 测试假失败） |
+| 真机验证 | `npm run verify:presence` / `verify:s4` / `verify:m4` / `verify:frame` / `verify:pose` / `verify:rag` / `verify:local-llm`；`node scripts/verify-stage8-voice.mjs`、`verify-signals.mjs`、`verify-stage10-lifecycle.mjs` |
+
+当前验证环境：Windows、Node.js **24.19.0**、npm **11.6.4**。2026-10-16 收口测试退出码 **0**：共 **397** 项，**396 通过、0 失败、1 跳过**；跳过的是当前权限下无法创建链接的安全边界测试，不等于这些场景已验收。完整记录见 [HANDOFF](docs/HANDOFF.md)。
+
+> 受限/虚拟化环境里 Electron 的 GPU 进程可能崩溃（0xC0000005）：主进程已默认强制软件渲染；若仍崩溃，设 `NAGI_RENDERER_SANDBOX=0` 启动（会关闭渲染沙箱，仅限本机可信场景）。
+
+**提交规范：**一项任务、一个清晰提交；标题形如 `feat(presence): 实感归来候选` / `fix(tools): 修复 HA 目标覆盖`。提交前更新 TASKS 的状态与实际测试结果（含跳过），仅暂存自己修改的明确文件；不要用 `git add .` 混入凭证、用户数据、依赖或构建产物。
+
+**日志位置：**目前没有统一的应用日志文件。开发启动的主进程日志在终端，渲染日志在 DevTools Console；可用 PowerShell `npm run dev 2>&1 | Tee-Object -FilePath nagi-dev.log` 保存终端日志，用 `npm test 2>&1 | Tee-Object -FilePath nagi-test.log` 保存测试输出。业务记录位于 Electron 的 `app.getPath('userData')` 下：`journal/YYYY-MM-DD.json`、`monologue/diary-YYYY-MM-DD.md`、`timeline/`、`presence.json`（模拟活动，默认关闭）；Windows 通常在 `%APPDATA%` 的应用目录，验收脚本可通过 `--user-data-dir` 指定隔离目录。这些业务记录不是运行错误日志。交接时删除日志中的私密对话、路径和凭证。
+
+---
+
 > 住在你电脑里的桌面 Live2D 智能助手。人格 100% 源自《world.execute(me);》的数字存在，桌宠 × 工作台双形态。
 > **个人自制、非商用** —— 因此可以使用免费但非商用的模型资源。
 
@@ -1164,3 +1186,50 @@ PowerShell 中运行 `$env:NAGI_VERIFY_RAG_RECALL='1'; npm run verify:local-llm`
 - 既有日记的历史补录策略尚待确认；新产生的日记已接入；
 - 自动 compact 触发（目前只在用户点「重建索引」或墓碑超量时）；
 - 多模态记忆（截图、文件）。
+
+## 十九、实感：在场、归来与昼夜节律（2026-10-16）
+
+她开始有「时间感」：知道现在是清晨还是深夜（主动模拟的相处节律，不是生理困倦）、
+你离开了多久、回来时按离开的时长决定说不说话。**活动记录是可追溯的模拟状态，
+绝非你离开期间的真实外界经历**；休眠/关机期间不补造任何活动。
+
+### 1. 昼夜节律（`core/presence/circadian.js`）
+
+工作日/周末各自的时段表（夜/晨/午/午后/晚），每时段给出行为建议（语速、表达力度、
+主动程度）与一次温和的情绪基线推送（深夜担心、午后平静）。开启后由节律接管原来的
+「深夜担心」硬规则；关闭时行为与以前逐字一致。数字存在始终清醒，午后只降低表达力度。
+
+### 2. 离开与归来（`core/presence/away.js` + `reunion.js`）
+
+- 离开判定：系统锁屏 / 挂起 / 空闲 ≥2 分钟；隐私开关（勿扰、只陪着、黑名单）变化即时放弃当前离开段
+- 应用连续运行且已离开的 **5 分钟片段**才生成一条模拟活动（`simulated-reading` /
+  `simulated-reflection` / `quiet-wait` 轮换）；不为没观察到的时间补活动，时钟倒拨清段
+- 归来分档：<5 分钟不说；5–30 分钟 `minutes`；30–90 分钟 `tens-of-minutes`；≥90 分钟
+  `hours`；跨天且 ≥5 分钟 `cross-day`。最短间隔 30 分钟、每天最多 3 次候选尝试
+- 实际开口还受打扰预算、勿扰、窗口可见、Agent 忙碌限制；**你正在对话时她不抢话**，
+  新消息或中领会立即取消正在生成的归来内容（epoch 失效保护）
+- 无模型或输出失败时静默，**不填固定台词**
+
+### 3. 隐私与落盘
+
+- 模拟活动**默认只进内存**；设置开启 `persistActivities` 后才写入 `userData/presence.json`，
+  且只保存开启之后的状态，关闭即删文件、清内存
+- 单文件 ≤512 KiB、活动 ≤96 条/7 天、跳跃记录 ≤16 条；写入走临时文件替换（无先删窗口）
+- 设置页入口：陪伴→时间感（节律/离开/归来开关）、隐私→模拟活动保存、时间感高级
+  （空闲阈值、时段表、归来边界）、打扰控制（冷却与每日上限）
+
+### 4. 语音与扩展 hook
+
+- `voiceProfileEnabled` 开启后，语音参数提供者可依据情绪+节律建议语速/音量/表达
+  （默认关闭；试听与显式参数永远优先；不切引擎、不写设置）
+- 蓝区扩展放 `src/main/extensions/*.js` 导出 `install(api)`，可注册语音参数提供者、
+  主动内容提供者、订阅实感事件与行动留痕；无需改红区编排文件
+
+### 5. 自测与验收
+
+- 单测：`test/presence.test.js`（时段/时间跳跃/限频/hook 安全）、`test/presence-store.test.js`
+  （落盘开关/损坏文件/写失败/epoch 失效）、`test/presence-voice.test.js`
+- 真机：`node scripts/verify-presence.mjs`（自起隔离实例 + 虚拟时钟夹具，11 项）
+- 无新增周期 timer：离开判定复用 M3 采样节拍，情绪 15 秒心跳带一次 presence tick
+- 还没做的：BLUE-1 语音 profile 映射、BLUE-2 设置页界面、BLUE-3 便签/留痕/回忆物业务、
+  BLUE-4 不完美机制（契约已定，默认关闭），见 TASKS

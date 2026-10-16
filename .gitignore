@@ -20,3 +20,6 @@ models/*
 # 下载产物
 src/renderer/public/vendor/live2dcubismcore.min.js
 src/renderer/public/vendor/*.download
+
+# 测试运行残留的临时 userData 目录
+.nagi-*

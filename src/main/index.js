@@ -1,10 +1,10 @@
 // src/main/index.js
 // 主进程入口：初始化、建窗口、注册协议与 IPC。
 
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, powerMonitor } from 'electron'
 import { registerScheme, registerHandler } from './local-protocol.js'
 import { modelsDir } from './paths.js'
-import { createPetWindow, createWorkbenchWindow, switchMode, getMode, getPetWindow, openDiaryWindow, rendererSandbox } from './windows.js'
+import { createPetWindow, createWorkbenchWindow, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow, rendererSandbox } from './windows.js'
 import { createTray } from './tray.js'
 import { registerSettingsIpc } from './ipc/settings.js'
 import { registerChatIpc } from './ipc/chat.js'
@@ -27,11 +27,16 @@ import { loadSettings, saveSettings } from './settings-store.js'
 import { disposeAgent, startMoodEngine, startActivityMonitor, startReminders, restoreState } from './agent.js'
 import { prewarmVoice, disposeVoice } from './voice/index.js'
 import { MODE } from '../shared/protocol.js'
+import { registerPresenceIpc } from './ipc/presence.js'
+import { presenceInput } from './presence.js'
+import { installPresenceExtensions } from './presence-extensions.js'
+import { runPresenceSelftest } from './presence-selftest.js'
 
 // ---- 运行环境开关 ----
 // 某些受限/虚拟化环境里 GPU 进程会崩溃（0xC0000005）。默认强制软件渲染（SwiftShader）保证可跑；
 // 需要真硬件加速时设 NAGI_SOFTWARE_GL=0 启动。
 const softwareGl = process.env.NAGI_SOFTWARE_GL !== '0'
+let stopPresenceBindings = () => {}
 if (softwareGl) {
   app.disableHardwareAcceleration()
   app.commandLine.appendSwitch('use-gl', 'swiftshader')
@@ -69,6 +74,7 @@ if (!gotLock) {
     registerCompanionIpc()
     registerCalendarIpc()
     registerMusicIpc()
+    registerPresenceIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
@@ -88,6 +94,19 @@ if (!gotLock) {
 
     // 恢复上次的情绪（按离线时长自然衰减）与关系统计，并清理过期时间线
     restoreState()
+    const stopExtensions = installPresenceExtensions()
+    const powerEvents = [['lock-screen','lock'],['unlock-screen','unlock'],['suspend','suspend'],['resume','resume']]
+      .map(([name,kind])=>[name,()=>presenceInput({kind})])
+    for (const [name,fn] of powerEvents) powerMonitor.on(name,fn)
+    const focused = (_event,win) => {
+      if (win===getPetWindow() || win===getWorkbenchWindow()) presenceInput({kind:'focus'})
+    }
+    app.on('browser-window-focus',focused)
+    stopPresenceBindings = () => {
+      stopExtensions()
+      for (const [name,fn] of powerEvents) powerMonitor.removeListener(name,fn)
+      app.removeListener('browser-window-focus',focused)
+    }
 
     // 长期记忆档案（RAG）：载库 + 8 秒后后台预热嵌入模型、补齐待嵌队列。
     // 模型没装时这里只是静默不就绪，对话行为一帧不变。
@@ -113,6 +132,16 @@ if (!gotLock) {
     // 托盘
     createTray()
 
+    if (process.env.NAGI_SELFTEST === '1' && process.env.NAGI_SELFTEST_PRESENCE === '1') {
+      setTimeout(async () => {
+        try {
+          const result = await runPresenceSelftest(app.getPath('userData'))
+          console.log('[presence:selftest] '+JSON.stringify(result))
+          app.exit(result.ok ? 0 : 1)
+        } catch (err) {console.error('[presence:selftest] '+JSON.stringify({ok:false,error:err.message}));app.exit(1)}
+      },3000)
+    }
+
     // 无头自测：额外拉起日记查看器，验证日记读取链路
     if (process.env.NAGI_SELFTEST && process.env.NAGI_SELFTEST_DIARY === '1') {
       setTimeout(() => openDiaryWindow(), 1200)
@@ -137,6 +166,7 @@ if (!gotLock) {
 
   // 退出前清理（浏览器连接 / HA 事件订阅）
   app.on('will-quit', (e) => {
+    stopPresenceBindings()
     stopMusicMonitor()
     if (!disposeAgent.__done) {
       disposeAgent.__done = true

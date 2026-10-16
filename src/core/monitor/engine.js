@@ -28,6 +28,7 @@ export function createMonitorEngine({
   sampler,
   getPrivacy = () => ({}),
   onProactive = () => {},
+  onPresenceSample = () => {},
   pickText = () => '',
   now = () => Date.now(),
   tracker,
@@ -49,6 +50,7 @@ export function createMonitorEngine({
     // 采集前先过隐私闸：关闭监测 / 勿扰时不采样。
     // 若先采样后过闸，窗口标题仍会被读到（只是结果被丢弃），那不算「停采」。
     if (!collectionAllowed(privacy)) {
+      onPresenceSample(null)
       return { skipped: privacy.monitorEnabled === false ? 'disabled'
         : privacy.doNotDisturb === true ? 'dnd' : 'only-presence' }
     }
@@ -63,7 +65,9 @@ export function createMonitorEngine({
     if (!raw) return { skipped: 'no-sample' }
 
     const gate = gateSample(raw, privacy)
-    if (gate.skip) return { skipped: gate.reason }
+    if (gate.skip) {onPresenceSample(null);return { skipped: gate.reason }}
+    // 只输出通过隐私闸的闲置秒数，不给时间状态机窗口标题/应用信息。
+    try {onPresenceSample({ts:raw.ts,idleSec:raw.idleSec})} catch { /* 时间感故障不影响 M3 */ }
 
     trk.record(raw)
     const stats = trk.stats()

@@ -11,8 +11,8 @@
 //    注意：真实密钥不要提交进 git。
 
 export const publicConfig = {
-  endpoint: 'https://<your-app>.app.workbuddy.host',
-  publishableKey: 'wbpk_REPLACE_WITH_YOUR_OWN_KEY'
+  endpoint: 'https://nagi-desktop-pet.app.workbuddy.host',
+  publishableKey: 'wbpk_Nqto8rzQAZikxS6S5YAYJK_0tVrAfhaAbtHjpeYWnnhNum9ES7A6G4I'
 };
 
 export const BRAIN = {

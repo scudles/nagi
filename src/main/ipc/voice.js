@@ -60,7 +60,7 @@ export function registerVoiceIpc() {
     const owner = getVoiceOwner()
     const caller = findWindowByWebContents(e.sender)
     if (owner && caller !== owner) return { ok: false, reason: 'not-owner' }
-    const r = startSpeech(payload.text, { mood: payload.mood, engine: payload.engine })
+    const r = startSpeech(payload.text, { mood: payload.mood, engine: payload.engine, intensity:payload.intensity, toneTag:payload.toneTag })
     return r
   })
 

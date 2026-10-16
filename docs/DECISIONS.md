@@ -28,6 +28,16 @@
 
 ## 后续怎么记
 
+### 2026-10-16：实感 RED123 收口（全权接手后）
+
+- 用户宣布 ChatGPT 侧额度耗尽，由 WorkBuddy 全权接手后续开发；双工具红蓝边界与本文件顶部边界规则同时废止，后续按单一负责制执行，契约与安全约束仍有效。
+- RED-1/2/3 半成品（契约 + circadian/away/reunion/engine/hooks + main 接线）经验证通过后收口：全量测试 **397 项 396 过 0 败 1 跳**、构建退出 0、`verify-presence` 真机 **11/11**、`verify:s4` 9/9、`verify:m4` 19/19 无回归。最后一笔 epoch 失效补丁（隐私暂停/再离开/配置撤销使归来候选失效）补验通过，消费者在 `agent.js handleReunion`。
+- 抢救提交 `f56b595` 中误入的 74 个测试残留文件已移除，`.gitignore` 补 `.nagi-*`；README「双工具协作入口」改写为「开发入口」并补第十九节实感说明。
+- cloud-config.js 的真实 endpoint/publishableKey 经审查为**公开配置**（文件设计即进 git，非密钥），保留提交；`src/core/agent/emotion-map.js` 删除为已确认死代码，保留。
+- 环境事实：本机受限环境下 Electron GPU 进程在沙箱内 0xC0000005 崩溃，`NAGI_RENDERER_SANDBOX=0` 下稳定；跑测试/真机验证须用 Node 24 前置 PATH；`ELECTRON_RUN_AS_NODE=1` 会令手动启动的 electron 退化为 node。
+- 实感 BLUE-1~4 与 RED-4 复核、B06 HA extra 覆盖漏洞、R01 外部路径竞态、R03 Playwright 生命周期纳入 TASKS 队列，按序推进。
+- 活动记录边界不变：默认仅内存，显式开启后才保存之后的新活动；模拟活动不是用户离开期间的真实外界经历；归来开口受打扰预算与窗口可见限制，用户对话优先。
+
 ### 2026-10-16：R01 本次收口（ChatGPT）
 
 - 用户明确选择：先完成 Agent 取消、确认失效和授权撤销；外部进程替换路径竞态保留为未完成红线项。本次不引入原生文件访问方案，也不宣称 R01 整包完成。

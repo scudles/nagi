@@ -9,6 +9,12 @@ import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/proto
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createPersonaGuard } from '../core/agent/persona-guard.js'
 import { createConfirmationGate } from '../core/safety/confirmation.js'
+import { createPresenceService, setPresenceService } from './presence.js'
+import { createPresenceStore } from './presence-store.js'
+import { presenceHooks } from './presence-hooks.js'
+import { PRESENCE_EVENT } from '../shared/presence-protocol.js'
+import { presenceConfig } from '../core/presence/circadian.js'
+import { extractEmotionTag } from '../core/llm/stream-normalize.js'
 import { createClient, chatStream } from '../core/llm/openai-compatible.js'
 import { apiKeyForLlm, isLocalLlm, resolveLlm, supportsNativeTools } from '../core/llm/providers.js'
 import { checkOllama } from '../core/llm/ollama.js'
@@ -113,6 +119,14 @@ function ensureHistory() {
 
 /* ---------------- 情绪状态机（主进程单例：双窗同步 + LLM 直读） ---------------- */
 const mood = createMood()
+const presence = createPresenceService({
+  getSettings, getMood:()=>mood.current(), createStore:()=>createPresenceStore(app.getPath('userData')),
+  onRhythm:value=>mood.applyRhythm(value),
+  onEvent:event=>presenceHooks.emitPresence(event), onReunion:handleReunion,
+  onChange:snapshot=>broadcast(PRESENCE_EVENT,snapshot)
+})
+setPresenceService(presence)
+let reunionController = null
 
 function broadcastMood() {
   broadcast(EVT.MOOD, mood.current())
@@ -188,6 +202,8 @@ export function restoreState() {
   } catch {
     /* 同上 */
   }
+  // 先恢复已有情绪，再注入环境基线，避免启动时覆盖尚未读取的情绪存档。
+  presence.start()
 }
 
 // Agent 事件出口：EMOTION 只记最后一帧（DONE 时才提议情绪，流式中途不翻脸），其余直广播
@@ -223,6 +239,7 @@ let diaryBusy = false
 export function startMoodEngine() {
   if (moodTickTimer) return
   moodTickTimer = setInterval(() => {
+    presence.tick()
     mood.tick()
     broadcastMood()
   }, 15000)
@@ -321,7 +338,8 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
         memories: memoryLines(),
         relation: relationSummary(),
         recentDiaries: recent,
-        cacheAllowed: useCache
+        cacheAllowed: useCache,
+        rhythm: presence.snapshot().rhythm
       })
       try {
         if (fakeDiary) {
@@ -384,7 +402,7 @@ function maybeWriteDiary(trigger = 'ambient') {
  * force=true 用于日程提醒这类「不能错过」的事——正在对话时也要开口；
  * 活动监测的主动搭话不带 force，正在对话时不抢话，只安静记一笔。
  */
-function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monitor', force = false } = {}) {
+function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monitor', force = false, record = true, sourceRef = null } = {}) {
   if (!text) return false
   const privacy = getSettings().privacy || {}
   if (privacy.doNotDisturb || privacy.onlyPresence) return false
@@ -405,14 +423,51 @@ function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monit
   }
   const snap = mood.current()
   broadcast(EVT.PET, { kind, text, expr: snap.expr })
+  if (source === 'reunion') presenceHooks.emitPresence({kind:'proactive-delivered',source,sourceRef,at:Date.now()})
   // 记进「今天发生的事」：她开过口、提醒过什么，都是她这一天的一部分
-  try {
-    noteEvent({ kind: kind === 'reminder' ? 'reminder' : 'proactive', text })
-  } catch {
-    /* 记流水失败不影响开口 */
+  if (record) {
+    try {
+      noteEvent({ kind: kind === 'reminder' ? 'reminder' : 'proactive', text })
+    } catch {
+      /* 记流水失败不影响开口 */
+    }
+    appendDiary(snap, text)
   }
-  appendDiary(snap, text)
   return true
+}
+
+/** 归来是可选主动表达，不能抢用户对话/绕过预算；无模型时不填固定台词。 */
+async function handleReunion(event) {
+  const eligible = () => presence.allowed() && presenceConfig(getSettings().presence).reunionEnabled && !busy &&
+    [getPetWindow(),getWorkbenchWindow()].some(w=>w&&!w.isDestroyed()&&w.isVisible())
+  if (!eligible() || reunionController || !companionStatus().allowed) return false
+  const controller = new AbortController()
+  reunionController = controller
+  const timeout = setTimeout(()=>controller.abort(),15000)
+  const snapshot = presence.snapshot(), epoch = snapshot.epoch
+  const context = buildContextBlock({mood:mood.current(),relation:relationSummary(),rhythm:snapshot.rhythm,
+    activities:snapshot.activities.filter(a=>event.activityIds.includes(a.id)),recentReplies:recentAssistantReplies(history,4)})
+  try {
+    let candidate = await presenceHooks.provideProactiveContent({event,context,signal:controller.signal})
+    if (!candidate && !controller.signal.aborted) {
+      const llm=resolveLlm(getSettings().llm||{}), local=isLocalLlm(llm), useCloud=llm.provider==='workbuddy'
+      const hasKey=hasSecret(SECRET_KEYS.LLM_API_KEY)
+      if (process.env.NAGI_FAKE_LLM==='1' || (!useCloud&&!local&&!hasKey) || (useCloud&&!cloudBrainStatus().ok)) return false
+      const client=useCloud?null:createClient({apiKey:apiKeyForLlm(llm,hasKey&&!local?getSecret(SECRET_KEYS.LLM_API_KEY):null),baseURL:llm.baseURL})
+      const text=await callModelOnce({client,llm,useCloud,signal:controller.signal,messages:[
+        {role:'system',content:buildSystemPrompt({nativeTools:true,context})+'\n【事件输出契约】仅回应归来事件；没有工具执行，模拟活动不是实际读书/外界经历；未知时间不补造，不索取解释、回来或安慰。'},
+        {role:'user',content:JSON.stringify({request:'reunion-response',event})}
+      ]})
+      const parsed=extractEmotionTag(text)
+      candidate={text:parsed.text,mood:parsed.emotion}
+    }
+    if (!candidate?.text || controller.signal.aborted || !eligible() || epoch!==presence.snapshot().epoch) return false
+    if (recentAssistantReplies(history,8).some(line=>isTooSimilar(candidate.text,line))) return false
+    return saySomething({...candidate,source:'reunion',sourceRef:event.id,force:false,record:presence.snapshot().persistent})
+  } catch (err) {
+    if (!controller.signal.aborted) console.warn('[presence] 归来生成失败，保持安静',err?.message)
+    return false
+  } finally {clearTimeout(timeout);if(reunionController===controller)reunionController=null}
 }
 
 /** 活动监测触发：她看你在做什么，忍不住开口（正在对话时不抢话） */
@@ -425,7 +480,8 @@ function handleProactive({ mood: hitMood, text, ruleId }) {
 
 /** 启动活动监测（app ready 后调用；幂等）。总开关在 settings.privacy.monitorEnabled */
 export function startActivityMonitor() {
-  startMonitor({ onProactive: handleProactive })
+  startMonitor({ onProactive: handleProactive,
+    onPresenceSample:sample=>presence.observe(sample?{kind:'idle',idleSec:sample.idleSec}:{kind:'pause'}) })
 }
 
 export function stopActivityMonitor() {
@@ -540,6 +596,8 @@ async function buildMessages(userText, supportsNative) {
     now: Date.now(),
     lastInteractionAt: lastInteractionAt(),
     mood: snap,
+    rhythm: presence.snapshot().rhythm,
+    activities: presence.snapshot().activities,
     relation: relationSummary(),
     memories: memoryLines(),
     recalled: await recalledPieces(userText),
@@ -558,11 +616,11 @@ async function buildMessages(userText, supportsNative) {
  * 单轮非流式取一次模型输出（长期记忆抽取用）。
  * 与主对话共用同一通道，不影响主流程；失败由调用方吞掉。
  */
-async function callModelOnce({ client, llm, useCloud, messages, temperature = 0.2 }) {
+async function callModelOnce({ client, llm, useCloud, messages, temperature = 0.2, signal }) {
   let out = ''
   const stream = useCloud
-    ? await cloudChatStream({ messages })
-    : await chatStream(client, { model: llm.model, messages, temperature })
+    ? await cloudChatStream({ messages, signal })
+    : await chatStream(client, { model: llm.model, messages, temperature, signal })
   for await (const evt of stream) {
     if (evt.type === 'delta') out += evt.text || ''
     else if (evt.type === 'done') break
@@ -683,6 +741,16 @@ export async function runTurn(userText, emit, turnRef = null) {
     native: nativeTools,
     reminders: reminderTools()
   })
+  const tracedExecuteTool = async (name,args,opts) => {
+    let result
+    try {result=await rawExecuteTool(name,args,opts);return result}
+    finally {
+      presenceHooks.emitAction({kind:'action-trace',version:1,id:randomUUID(),at:Date.now(),turnRef,
+        toolCallId:opts?.id||null,tool:name,ok:!!result&&result.ok!==false,
+        status:result&&result.ok!==false?'returned':'failed',completionVerified:false,
+        result:{summary:result&&result.ok!==false?'工具已返回，外部效果未核实':'工具返回失败'}})
+    }
+  }
   const executeTool = (name, args, opts) => {
     signal.throwIfAborted()
     // 确认绑定本轮授权根；设置变化后不能继续使用创建工具时的旧授权快照。
@@ -690,7 +758,7 @@ export async function runTurn(userText, emit, turnRef = null) {
         fileRoot !== (getSettings().tools?.fileRoot || '')) {
       return { ok: false, summary: '文件目录授权已变更，未执行操作；请重新发起请求' }
     }
-    return runRecordedTool(rawExecuteTool, name, args, opts)
+    return runRecordedTool(tracedExecuteTool, name, args, opts)
   }
 
   const messages = await buildMessages(userText, supportsNative)
@@ -739,6 +807,7 @@ export async function handleChatSend(text) {
   const t = String(text || '').trim()
   if (!t) return { ok: false, error: '空消息' }
   if (busy) return { ok: false, error: '正在处理上一条消息' }
+  reunionController?.abort()
   busy = true
   try { companionInteracted() } catch { /* 预算文件故障不影响主动发起的对话 */ }
   mood.noteInteraction() // 连聊 burst 统计 + 刷新互动时间
@@ -807,6 +876,7 @@ export function resolveConfirm(id, approved) {
 
 /** 中止当前回合 */
 export function abortChat() {
+  reunionController?.abort()
   if (currentAbort) currentAbort.abort()
   return { ok: true }
 }
@@ -814,6 +884,7 @@ export function abortChat() {
 /** 退出前清理 */
 export async function disposeAgent() {
   abortChat()
+  presence.flush()
   stopMoodEngine()
   stopActivityMonitor()
   stopReminderEngine()

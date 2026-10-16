@@ -7,8 +7,10 @@ import { IPC, EVT } from '../shared/protocol.js'
 import { VOICE_IPC, VOICE_EVT } from '../shared/voice-protocol.js'
 import { RAG_IPC, RAG_EVT } from '../shared/rag-protocol.js'
 import { LLM_IPC } from '../shared/llm-protocol.js'
+import { PRESENCE_IPC, PRESENCE_EVENT } from '../shared/presence-protocol.js'
 
 const ALLOWED_EVENTS = new Set([
+  PRESENCE_EVENT,
   EVT.AGENT,
   EVT.SETTINGS_CHANGED,
   EVT.HA_EVENT,
@@ -21,6 +23,10 @@ const ALLOWED_EVENTS = new Set([
 ])
 
 const api = {
+  presence: {
+    status: () => ipcRenderer.invoke(PRESENCE_IPC.STATUS),
+    clear: () => ipcRenderer.invoke(PRESENCE_IPC.CLEAR)
+  },
   llm: {
     localStatus: (payload) => ipcRenderer.invoke(LLM_IPC.LOCAL_STATUS, payload || {})
   },

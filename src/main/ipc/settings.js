@@ -17,6 +17,7 @@ import { forgetExperience } from '../ledger-actions.js'
 import { modelsDir, projectRoot } from '../paths.js'
 import { refreshMonitorPrivacy } from '../monitor/index.js'
 import { refreshHaSignals } from '../signals/ha.js'
+import { refreshPresence } from '../presence.js'
 
 const ALL_SECRET_KEYS = Object.values(SECRET_KEYS)
 
@@ -60,6 +61,7 @@ export function registerSettingsIpc() {
       throw new Error('文件授权目录只能通过系统选择窗口修改')
     }
     const next = saveSettings(patch || {})
+    if (patch?.presence || patch?.privacy) refreshPresence()
     if (patch?.privacy) refreshMonitorPrivacy()
     if (patch?.privacy || patch?.homeassistant) refreshHaSignals()
     broadcast(EVT.SETTINGS_CHANGED, next)

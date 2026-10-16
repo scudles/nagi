@@ -3,6 +3,7 @@
 // 只放"纯数据"，不放任何 Electron / Node 依赖，方便被 core 单测引用。
 
 import { DEFAULT_BLACKLIST } from '../core/monitor/privacy.js'
+import { PRESENCE_DEFAULTS } from './presence-protocol.js'
 
 /** IPC 通道名（invoke / send） */
 export const IPC = {
@@ -140,6 +141,7 @@ export const PROVIDER_PRESETS = {
 
 /** 默认设置（不含密钥） */
 export const DEFAULT_SETTINGS = {
+  presence: PRESENCE_DEFAULTS,
   mode: MODE.PET,
   llm: {
     provider: 'workbuddy',

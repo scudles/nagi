@@ -12,6 +12,9 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { getSettings } from '../settings-store.js'
+import { presenceHooks } from '../presence-hooks.js'
+import { getPresenceSnapshot } from '../presence.js'
+export { registerVoiceParamsProvider } from '../presence-hooks.js'
 import { toSpeechText, splitSentences, TTS_ENGINES, ASR_ENGINES, NAGI_VOICE, mergeVoiceParams, pickEngine } from '../../core/voice/index.js'
 import { edgeSpeakOnce, EDGE_DEFAULT_VOICE } from './edge.js'
 import { sapiSpeak, sapiRecognize, listSapiVoices, listRecognizers, sapiAsrAvailable } from './sapi.js'
@@ -126,6 +129,7 @@ export function startSpeech(text, opts = {}) {
     cache: new Map(),
     engine,
     mood: opts.mood || 'calm',
+    intensity: opts.intensity, toneTag: opts.toneTag,
     cfg,
     createdAt: Date.now(),
     usedAt: Date.now()
@@ -152,8 +156,18 @@ async function synthesizeSentence(sentence, session) {
     if (engine === 'sapi' && !IS_WINDOWS) continue
     if (engine !== 'edge' && engine !== 'sapi') continue
 
-    const params = paramsFor(engine, session.mood, cfg)
-    const voice = voiceFor(engine, cfg)
+    let params = paramsFor(engine, session.mood, cfg)
+    let voice = voiceFor(engine, cfg)
+    if (!session.explicitParams && getSettings().presence?.voiceProfileEnabled === true) {
+      const snapshot = getPresenceSnapshot()
+      const supplied = presenceHooks.resolveVoiceParams({emotion:session.mood,
+        intensity:Number.isFinite(session.intensity)?session.intensity:(snapshot?.mood?.intensity||0),
+        rhythm:snapshot?.rhythm||null,toneTag:session.toneTag||null,engine})
+      if (supplied) {
+        voice = supplied.voice || voice
+        params = {rate:engine==='sapi'?Math.round(supplied.rate/10):supplied.rate,pitch:supplied.pitch,volume:supplied.volume}
+      }
+    }
 
     let r
     if (engine === 'edge') {
@@ -254,7 +268,8 @@ export async function synthesizeOnce(text, opts = {}) {
     volume: Number.isFinite(opts.volume) ? opts.volume : base.volume,
     voiceByEngine: opts.voice ? { ...base.voiceByEngine, [engine]: opts.voice } : base.voiceByEngine
   }
-  return synthesizeSentence(clean, { engine, mood: opts.mood || 'calm', cfg })
+  return synthesizeSentence(clean, { engine, mood: opts.mood || 'calm', cfg, intensity:opts.intensity,toneTag:opts.toneTag,
+    explicitParams:['voice','rate','volume'].some(key=>opts[key]!==undefined) })
 }
 
 /* ---------------- ASR ---------------- */
