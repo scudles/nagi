@@ -25,6 +25,8 @@
       <button id="bubble-ignore" class="hidden" title="这次先不聊，凪之后会少打扰">稍后</button>
     </div>
     <div id="pet-status" class="pet-status hidden"></div>
+    <!-- 归来便签入口（BLUE-2）：她回来过、留下东西时的提示；数据走 BLUE-3 -->
+    <button id="notes-entry" class="notes-entry hidden" title="点开看看她独自待着时留下的东西">📝 她留了张便签</button>
     <!-- 语音提示：录音计时 / 没听清 等 -->
     <div class="voice-hint hidden"></div>
     <div class="pet-toolbar">
@@ -62,6 +64,7 @@
           <button id="btn-open-reminder">她的日程</button>
           <button id="btn-open-relation">看看我们的关系</button>
           <button id="btn-open-diary">看看她的日记</button>
+          <button id="btn-open-notes">她留的便签</button>
         </div>
         <div class="side-foot">
           <button id="btn-open-settings">设置</button>
@@ -379,12 +382,59 @@
         <div class="sp-row"><button id="btn-pick-fileroot">选择目录并授权</button><button id="btn-revoke-fileroot">撤销目录授权</button></div>
         <label>Chrome 调试端口（CDP） <input id="set-cdp" type="number" /></label>
         <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          她独处时的模拟活动默认只留在内存里，不落盘。开启保存后，只保存<strong>开启之后</strong>新产生的活动，
+          随时可以在这里关掉（关掉即删除已保存的文件并清空内存）。
+        </p>
+        <label class="check"><input id="set-presence-persist" type="checkbox" /> 保存她独处时的模拟活动</label>
+        <label>活动保留天数（1–7） <input id="set-presence-retain" type="number" min="1" max="7" step="1" /></label>
+        <label>活动条数上限（1–96） <input id="set-presence-maxacts" type="number" min="1" max="96" step="1" /></label>
+        <div class="sp-row">
+          <button id="btn-save-presence-privacy">保存隐私设置</button>
+        </div>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
           写入、外部控制与敏感读取逐次确认。仅受控只读命令可直接执行：
           dir / ipconfig / tasklist / systeminfo / where / ver / node -v / npm -v / git status。
         </p>
         <div class="sp-row">
           <button id="btn-save-tools">保存工具设置</button>
         </div>
+
+        <h3>陪伴 · 时间感</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          她会感受时间的流逝：跟着昼夜调整状态、你离开时安静地做自己的事、回来时根据离开了多久说一句话。
+          全部默认开启，可以逐项关掉。关掉总开关就回到「没有昼夜、没有离开归来」的旧行为。
+        </p>
+        <label class="check"><input id="set-presence-enabled" type="checkbox" /> 时间感总开关</label>
+        <label class="check"><input id="set-presence-rhythm" type="checkbox" /> 昼夜节律（深夜安静、午后慵懒；语音的语速/音量也随时段微调，见「她的声音」里的情绪映射开关）</label>
+        <label class="check"><input id="set-presence-away" type="checkbox" /> 离开时的独处（你长时间没互动，她安静地做自己的事）</label>
+        <label class="check"><input id="set-presence-reunion" type="checkbox" /> 归来汇报（你回来时，根据离开了多久说一句话）</label>
+        <div class="sp-row">
+          <button id="btn-save-presence">保存时间感设置</button>
+        </div>
+        <div id="presence-status" class="dim" aria-live="polite"></div>
+
+        <h3>时间感 · 高级</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          一般不用动。改了不合适也没关系——超出范围的值会被自动退回默认。
+        </p>
+        <label>多久没互动算离开（分钟，2–60） <input id="set-presence-idle" type="number" min="2" max="60" step="1" /></label>
+        <label>独处活动的时间片（分钟，5–60） <input id="set-presence-slice" type="number" min="5" max="60" step="1" /></label>
+        <label>离开多久算一次「归来」（分钟，5–30；比这更短的不汇报） <input id="set-presence-reunion-min" type="number" min="5" max="30" step="1" /></label>
+        <label>离开多久算「一会儿」（分钟，30–90） <input id="set-presence-reunion-long" type="number" min="30" max="90" step="5" /></label>
+        <label>离开多久算「很久」（分钟，90–1440） <input id="set-presence-reunion-hours" type="number" min="90" max="1440" step="30" /></label>
+        <div class="dim" style="margin:8px 0 4px;line-height:1.7">
+          工作日时段表（只填每段结束时间；依次为 夜 → 早 → 午 → 午后 → 晚，末段自动回到夜）：
+        </div>
+        <div id="presence-sched-weekday" class="sched-editor"></div>
+        <div class="dim" style="margin:8px 0 4px;line-height:1.7">
+          周末时段表（默认把早晨起点延后一小时——「周末晚点起」）：
+        </div>
+        <div id="presence-sched-weekend" class="sched-editor"></div>
+        <div id="presence-sched-status" class="dim" aria-live="polite"></div>
+
+        <h3>打扰控制</h3>
+        <label>两次归来汇报至少间隔（分钟，30–1440） <input id="set-presence-cooldown" type="number" min="30" max="1440" step="10" /></label>
+        <label>每天最多归来汇报几次（0–3） <input id="set-presence-daily" type="number" min="0" max="3" step="1" /></label>
 
         <h3>主动陪伴</h3>
         <label class="check"><input id="set-only-presence" type="checkbox" /> 只陪着（不监测活动、不主动开口；手动聊天仍可用）</label>
@@ -416,13 +466,22 @@
         <div id="calendar-events" class="dim" style="max-height:180px;overflow:auto;white-space:pre-wrap"></div>
 
         <h3>音乐信号（只读）</h3>
-        <p class="dim">单独授权后，凪可读取 Windows 当前媒体会话的曲名、歌手和播放状态。不控制播放器，不把曲目自动写进共同记忆。勿扰和“只陪着”期间暂停读取。</p>
+        <p class="dim">单独授权后，凪可读取 Windows 当前媒体会话的曲名、歌手和播放状态。对网易云音乐等不向系统报告会话的播放器，会兜底读取其窗口标题（仅限已知播放器进程，状态未知时如实说明）。不控制播放器，不把曲目自动写进共同记忆。勿扰和“只陪着”期间暂停读取。</p>
         <div class="sp-row">
           <button id="btn-music-enable">授权读取</button>
           <button id="btn-music-refresh">查看当前媒体</button>
           <button id="btn-music-revoke" class="danger">撤销音乐授权</button>
         </div>
         <div id="music-status" class="dim" aria-live="polite"></div>
+
+        <h3>位置信号（只读）</h3>
+        <p class="dim">单独授权后，凪可获取你的大致位置（城市与坐标）。优先用 Windows 系统定位，失败时回退 IP 定位（更粗）。30 分钟内只读一次，不追踪移动轨迹，不把位置写进共同记忆。勿扰和“只陪着”期间暂停读取。</p>
+        <div class="sp-row">
+          <button id="btn-geo-enable">授权读取</button>
+          <button id="btn-geo-refresh">查看当前位置</button>
+          <button id="btn-geo-revoke" class="danger">撤销位置授权</button>
+        </div>
+        <div id="geo-status" class="dim" aria-live="polite"></div>
 
         <h3>智能家居（Home Assistant）</h3>
         <p class="dim">先单独授权只读设备状态，再按需授权控制。每次控制仍需确认具体设备与动作；服务请求成功只说明已尝试，不证明设备已达到目标状态。撤销信号会断开订阅并删除 Token。</p>

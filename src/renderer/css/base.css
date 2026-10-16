@@ -117,6 +117,58 @@ body[data-mode="workbench"] {
 }
 .pet-status.hidden { display: none; }
 
+/* 归来便签入口（BLUE-2）：桌宠左下角的小提示，不挡画面、10 分钟自动淡出 */
+.notes-entry {
+  position: absolute;
+  left: 8px;
+  bottom: 26px;
+  max-width: calc(100% - 90px);
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  color: var(--accent);
+  background: rgba(28, 31, 41, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.notes-entry:hover { border-color: var(--accent); }
+.notes-entry.hidden { display: none; }
+
+/* 便签面板（空态；BLUE-3 落地内容后复用此容器） */
+.notes-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  width: min(320px, 86vw);
+  padding: 14px;
+  background: rgba(28, 31, 41, 0.97);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+.notes-panel .np-title { font-size: 14px; margin-bottom: 8px; }
+.notes-panel .np-body { font-size: 12.5px; line-height: 1.7; margin-bottom: 10px; }
+.notes-panel button { font-size: 12px; }
+
+/* 时段表编辑器（时间感高级）：一行一个「段结束时间」 */
+.sched-editor { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 6px; }
+.sched-editor label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--dim, #9aa3b2); }
+.sched-editor input {
+  width: 64px;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
 .pet-toolbar {
   position: absolute;
   right: 8px;

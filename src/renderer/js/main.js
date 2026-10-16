@@ -10,11 +10,13 @@ import { RAG_EVT, mergeRagSettings } from '../../shared/rag-protocol.js'
 import { ollamaTagsUrl } from '../../core/llm/ollama.js'
 import { EDGE_VOICES, TTS_ENGINES, ASR_ENGINES } from '../../core/voice/index.js'
 import { toSegments } from '../../core/relation/timeline.js'
+import { presenceConfig } from '../../core/presence/circadian.js'
 import * as ui from './ui.js'
 import { initChat, sendText } from './chat.js'
 import * as l2d from './live2d.js'
 import { initDiary } from './diary.js'
 import { initVoice } from './voice.js'
+import * as presence from './presence.js'
 
 const params = new URLSearchParams(location.search)
 const mode = params.get('mode') === MODE.WORKBENCH ? MODE.WORKBENCH : params.get('mode') === 'diary' ? 'diary' : MODE.PET
@@ -52,10 +54,11 @@ function startIdleWatch() {
     if (!idleBoosted && idle > IDLE_AFTER_MS) {
       idleBoosted = true
       l2d.setScale((settings?.live2d?.scale || 1) * IDLE_BOOST)
-      l2d.playMotion('Idle') // 换个待机姿势，提醒她还在
+      // 深夜安静（night 的 motion 建议 'quiet'）：只放大提醒还在，不播动作
+      if (!presence.randomMotionSuppressed()) l2d.playMotion('Idle')
     } else if (idleBoosted) {
-      // 待机中偶尔再动一下，别像块背景板
-      if (Math.random() < 0.35) l2d.playMotion('Idle')
+      // 待机中偶尔再动一下，别像块背景板（深夜抑制随机动作）
+      if (!presence.randomMotionSuppressed() && Math.random() < 0.35) l2d.playMotion('Idle')
     }
   }, 20000)
 }
@@ -75,6 +78,58 @@ function applyMood(snap) {
   const changed = key !== lastMoodKey
   lastMoodKey = key
   l2d.setEmotion(snap.expr, { motion: changed })
+}
+
+/* ---------------- 归来便签入口（BLUE-2；便签数据走 BLUE-3） ----------------
+ * 归来（离开够久）时在桌宠/工作台显示一个小入口。本期只有入口与空态面板——
+ * 不伪造便签内容；BLUE-3 落地候选与配额后往里填。
+ */
+let notesEntryTimer = null
+
+function showNotesEntry(durationMs) {
+  const btn = document.getElementById('notes-entry')
+  if (!btn) return
+  const mins = Math.max(1, Math.round((Number(durationMs) || 0) / 60000))
+  btn.textContent = `📝 她留了张便签（你离开了约 ${mins} 分钟）`
+  btn.title = '点开看看她独自待着时留下的东西'
+  btn.classList.remove('hidden')
+  clearTimeout(notesEntryTimer)
+  // 10 分钟后淡出：不长期挡画面；下次归来会重新出现
+  notesEntryTimer = setTimeout(() => btn.classList.add('hidden'), 10 * 60 * 1000)
+}
+
+function toggleNotesPanel() {
+  const old = document.getElementById('notes-panel')
+  if (old) {
+    old.remove()
+    return
+  }
+  const card = document.createElement('div')
+  card.id = 'notes-panel'
+  card.className = 'notes-panel'
+  const title = document.createElement('div')
+  title.className = 'np-title'
+  title.textContent = '她留的便签'
+  const body = document.createElement('div')
+  body.className = 'np-body dim'
+  body.textContent = '还没有内容。她独自待着时的点滴，以后会安静地出现在这里——现在先只有这个入口。'
+  const close = document.createElement('button')
+  close.id = 'notes-panel-close'
+  close.textContent = '关上'
+  close.addEventListener('click', () => card.remove())
+  card.append(title, body, close)
+  document.body.appendChild(card)
+  // 点外面也关上（一次性监听；入口按钮本身不触发关闭）
+  setTimeout(() => {
+    document.addEventListener('pointerdown', (e) => {
+      if (!card.contains(e.target) && e.target.id !== 'notes-entry') card.remove()
+    }, { once: true })
+  }, 0)
+}
+
+function wireNotesEntry() {
+  document.getElementById('notes-entry')?.addEventListener('click', toggleNotesPanel)
+  document.getElementById('btn-open-notes')?.addEventListener('click', toggleNotesPanel)
 }
 
 async function boot() {
@@ -107,6 +162,14 @@ async function boot() {
   } catch {
     /* 旧版本主进程没有该通道时忽略 */
   }
+
+  // 实感快照（BLUE-2）：时段表现落到 Live2D；归来时弹「她留了张便签」入口
+  // （快照由主进程向两窗广播同一份，各自渲染各自的表现，天然同步）
+  wireNotesEntry()
+  presence.initPresence({
+    getConfig: () => settings?.presence,
+    onReunion: ({ durationMs }) => showNotesEntry(durationMs)
+  })
 
   // 事件：桌宠交互（戳一戳台词气泡 / 活动监测的主动搭话 / 日程提醒）
   window.nagi.on(EVT.PET, (p) => {
@@ -544,6 +607,8 @@ async function tryLoadLive2D(canvas, placeholder) {
     placeholder?.classList.add('hidden')
     // 模型就位后立刻同步当前情绪（初始拉取发生在模型加载前）
     if (currentMood) l2d.setEmotion(currentMood.expr, { motion: false })
+    // 时段表现：模型就绪前收到的 rhythm 快照在这里补上（深夜安静/午后慵懒）
+    presence.applyCurrentRhythm()
     console.log(
       '[live2d] 已加载模型：',
       rel,
@@ -610,6 +675,7 @@ function openSettings() {
   fillSettingsForm()
   refreshCalendarStatus()
   refreshMusicStatus()
+  refreshGeoStatus()
   refreshHaStatus()
 }
 function closeSettings() {
@@ -650,10 +716,30 @@ async function refreshMusicStatus() {
     else if (!state.observation?.available) label.textContent = '已授权；Windows 当前没有可用的媒体会话'
     else {
       const obs = state.observation
-      label.textContent = `已授权 · ${obs.playbackStatus === 'playing' ? '正在播放' : obs.playbackStatus === 'paused' ? '已暂停' : '状态未知'}：${obs.title || '无曲名'}` +
-        (obs.artist ? ` / ${obs.artist}` : '') + ` · 来源 ${obs.app || '未知播放器'}`
+      const stateWord = obs.playbackStatus === 'playing' ? '正在播放' : obs.playbackStatus === 'paused' ? '已暂停' : obs.playbackStatus === 'stopped' ? '已停止' : '状态未知'
+      label.textContent = `已授权 · ${stateWord}：${obs.title || '无曲名'}` +
+        (obs.artist ? ` / ${obs.artist}` : '') + ` · 来源 ${obs.app || '未知播放器'}` +
+        (obs.source && obs.source !== 'smtc' ? '（窗口标题兜底，非系统会话）' : '')
     }
   } catch (err) { label.textContent = `音乐信号读取失败：${err.message}` }
+}
+
+async function refreshGeoStatus() {
+  const label = document.getElementById('geo-status')
+  if (!label || !window.nagi.geo) return
+  label.textContent = '读取中…'
+  try {
+    const state = await window.nagi.geo.status()
+    if (!state.authorized) label.textContent = '尚未授权位置信号'
+    else if (state.paused) label.textContent = '已授权；勿扰或只陪着期间暂停读取'
+    else if (state.error) label.textContent = `已授权；读取失败：${state.error}`
+    else if (!state.observation?.available) label.textContent = '已授权；定位暂不可用（系统定位未开且 IP 定位失败）'
+    else {
+      const obs = state.observation
+      const where = [obs.city, obs.country].filter(Boolean).join('，') || '未知地名'
+      label.textContent = `已授权 · ${obs.source === 'windows-api' ? '系统定位' : 'IP 粗定位'}：${where}（${obs.lat.toFixed(4)}, ${obs.lon.toFixed(4)}）`
+    }
+  } catch (err) { label.textContent = `位置信号读取失败：${err.message}` }
 }
 
 async function refreshHaStatus() {
@@ -754,6 +840,7 @@ function fillSettingsForm() {
   refreshCompanionStatus()
   refreshVoice()
   refreshRag()
+  refreshPresenceSection()
 }
 
 function updateLocalLlmUi() {
@@ -1388,6 +1475,206 @@ function wireVoiceSettings(on) {
   })
 }
 
+/* ---------------- 实感 · 时间感设置（BLUE-2） ---------------- */
+
+// 时段表编辑器：周期序列固定 夜→早→午→午后→晚→夜，6 段连续覆盖只需 5 个边界，
+// 天然无缺口；core presenceConfig 对非法表整体回退默认，UI 先拦一道。
+const SCHED_LABELS = ['夜结束于', '早结束于', '午结束于', '午后结束于', '晚结束于']
+const SCHED_ORDER = ['night', 'morning', 'noon', 'afternoon', 'evening', 'night']
+
+/** 分钟 → "HH:MM"（time 输入框用） */
+function fmtMin(min) {
+  const m = ((Math.floor(Number(min)) % 1440) + 1440) % 1440
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
+
+/** "HH:MM" → 分钟；非法返回 NaN */
+function parseHm(text) {
+  const m = /^([0-9]{1,2}):([0-9]{2})$/.exec(String(text ?? '').trim())
+  if (!m) return NaN
+  const h = Number(m[1])
+  const mm = Number(m[2])
+  if (h > 23 || mm > 59) return NaN
+  return h * 60 + mm
+}
+
+/** 当前表能否被 5 边界编辑器忠实表示（标准六段表且顺序符合周期序列） */
+function schedEditable(schedule) {
+  return Array.isArray(schedule) && schedule.length === 6 &&
+    schedule.every((row, i) => Array.isArray(row) && row[2] === SCHED_ORDER[i])
+}
+
+function renderSchedEditor(id, schedule) {
+  const box = document.getElementById(id)
+  if (!box) return
+  box.textContent = ''
+  if (!schedEditable(schedule)) {
+    const note = document.createElement('p')
+    note.className = 'dim'
+    note.style.margin = '0'
+    note.textContent = Array.isArray(schedule)
+      ? `当前是自定义多段时段表（${schedule.length} 段）。本编辑器只支持标准六段表，保存时将保留这张原值不动。`
+      : '时段表不可读，保存时将保留原值不动。'
+    box.appendChild(note)
+    return
+  }
+  for (let i = 0; i < 5; i++) {
+    const label = document.createElement('label')
+    label.textContent = `${SCHED_LABELS[i]} `
+    const input = document.createElement('input')
+    input.type = 'time'
+    input.step = '60'
+    input.value = fmtMin(schedule[i][1])
+    label.appendChild(input)
+    box.appendChild(label)
+  }
+}
+
+/** 读编辑器 → 标准六段表；不可编辑（自定义表）或边界非法返回 null */
+function readSchedEditor(id) {
+  const box = document.getElementById(id)
+  if (!box) return null
+  const inputs = [...box.querySelectorAll('input[type="time"]')]
+  if (inputs.length !== 5) return null // 自定义多段表：保留原值
+  const bounds = inputs.map((el) => parseHm(el.value))
+  if (bounds.some((b) => !Number.isFinite(b))) return null
+  // 边界必须严格递增且都落在 (0,1440)：首段「夜」从 00:00 起，末段「晚」回到 24:00
+  if (bounds.some((b, i) => b <= 0 || b >= 1440 || (i > 0 && b <= bounds[i - 1]))) return null
+  return [
+    [0, bounds[0], 'night'], [bounds[0], bounds[1], 'morning'], [bounds[1], bounds[2], 'noon'],
+    [bounds[2], bounds[3], 'afternoon'], [bounds[3], bounds[4], 'evening'], [bounds[4], 1440, 'night']
+  ]
+}
+
+/** 把当前生效设置回显到「陪伴 · 时间感」区块（同步函数，fillSettingsForm 调用） */
+function refreshPresenceSection() {
+  const cfg = presenceConfig(settings?.presence)
+  const set = (id, v) => {
+    const el = document.getElementById(id)
+    if (el) el.checked = v
+  }
+  set('set-presence-enabled', cfg.enabled)
+  set('set-presence-rhythm', cfg.rhythmEnabled)
+  set('set-presence-away', cfg.awayEnabled)
+  set('set-presence-reunion', cfg.reunionEnabled)
+  set('set-presence-persist', cfg.persistActivities)
+
+  const num = (id, minutes) => {
+    const el = document.getElementById(id)
+    if (el) el.value = String(Math.round(minutes))
+  }
+  num('set-presence-idle', cfg.idleAfterMs / 60000)
+  num('set-presence-slice', cfg.activitySliceMs / 60000)
+  num('set-presence-reunion-min', cfg.reunionMinMs / 60000)
+  num('set-presence-reunion-long', cfg.reunionLongMs / 60000)
+  num('set-presence-reunion-hours', cfg.reunionHoursMs / 60000)
+  num('set-presence-cooldown', cfg.reunionCooldownMs / 60000)
+  num('set-presence-daily', cfg.dailyReunionLimit)
+  num('set-presence-retain', cfg.retainDays)
+  num('set-presence-maxacts', cfg.maxActivities)
+
+  renderSchedEditor('presence-sched-weekday', cfg.weekdaySchedule)
+  renderSchedEditor('presence-sched-weekend', cfg.weekendSchedule)
+  const st = document.getElementById('presence-sched-status')
+  if (st) {
+    const bounds = (rows) => rows.slice(0, 5).map((r) => fmtMin(r[1])).join(' / ')
+    st.textContent = `当前生效（各段结束时间）：工作日 ${bounds(cfg.weekdaySchedule)} · 周末 ${bounds(cfg.weekendSchedule)}`
+  }
+}
+
+function wirePresenceSettings(on) {
+  // 读数值输入：夹在 [min,max]；空/非法 → 用当前生效值（等于「没改」）
+  const numField = (id, min, max, current) => {
+    const v = Number(document.getElementById(id)?.value)
+    if (!Number.isFinite(v)) return current
+    return Math.max(min, Math.min(max, Math.floor(v)))
+  }
+
+  on('btn-save-presence', async () => {
+    const status = document.getElementById('presence-status')
+    const cfg = presenceConfig(settings?.presence)
+    const minMs = numField('set-presence-reunion-min', 5, 30, cfg.reunionMinMs / 60000) * 60000
+    const longMs = numField('set-presence-reunion-long', 30, 90, cfg.reunionLongMs / 60000) * 60000
+    const hoursMs = numField('set-presence-reunion-hours', 90, 1440, cfg.reunionHoursMs / 60000) * 60000
+    if (!(minMs < longMs && longMs < hoursMs)) {
+      if (status) status.textContent = '离开阈值必须从小到大（「一会儿」小于「很久」），已中止保存'
+      return
+    }
+
+    // 时段表：渲染了编辑器却读不出合法表 = 用户填的边界非法 → 拦下并说明；
+    // 没渲染（自定义多段表）才走「不写这个键，deepMerge 保留原值」。
+    const schedStatus = document.getElementById('presence-sched-status')
+    const readSched = (id) => {
+      const rendered = !!document.getElementById(id)?.querySelector('input[type="time"]')
+      const table = readSchedEditor(id)
+      return { invalid: !table && rendered, table }
+    }
+    const wd = readSched('presence-sched-weekday')
+    const we = readSched('presence-sched-weekend')
+    if (wd.invalid || we.invalid) {
+      if (schedStatus) schedStatus.textContent = '时段表边界不合法（各段结束时间需依次递增，且在 00:01–23:59 之间），已中止保存'
+      return
+    }
+    if (wd.table && we.table) {
+      const merged = presenceConfig({ weekdaySchedule: wd.table, weekendSchedule: we.table })
+      if (JSON.stringify(merged.weekdaySchedule) !== JSON.stringify(wd.table) ||
+          JSON.stringify(merged.weekendSchedule) !== JSON.stringify(we.table)) {
+        if (schedStatus) schedStatus.textContent = '时段表没有通过校验，已中止保存（边界需递增且在 00:01–23:59 之间）'
+        return
+      }
+    }
+    const weekday = wd.table
+    const weekend = we.table
+
+    const patch = {
+      enabled: document.getElementById('set-presence-enabled').checked,
+      rhythmEnabled: document.getElementById('set-presence-rhythm').checked,
+      awayEnabled: document.getElementById('set-presence-away').checked,
+      reunionEnabled: document.getElementById('set-presence-reunion').checked,
+      idleAfterMs: numField('set-presence-idle', 2, 60, cfg.idleAfterMs / 60000) * 60000,
+      activitySliceMs: numField('set-presence-slice', 5, 60, cfg.activitySliceMs / 60000) * 60000,
+      reunionMinMs: minMs,
+      reunionLongMs: longMs,
+      reunionHoursMs: hoursMs,
+      reunionCooldownMs: numField('set-presence-cooldown', 30, 1440, cfg.reunionCooldownMs / 60000) * 60000,
+      dailyReunionLimit: numField('set-presence-daily', 0, 3, cfg.dailyReunionLimit)
+    }
+    if (weekday) patch.weekdaySchedule = weekday
+    if (weekend) patch.weekendSchedule = weekend
+    try {
+      await window.nagi.settings.set({ presence: patch })
+      settings = await window.nagi.settings.get()
+    } catch (err) {
+      if (status) status.textContent = '保存失败：' + err.message
+      return
+    }
+    refreshPresenceSection()
+    if (status) status.textContent = '已保存，即时生效'
+    ui.addToolLog('时间感设置已保存')
+  })
+
+  on('btn-save-presence-privacy', async () => {
+    const status = document.getElementById('presence-status')
+    const cfg = presenceConfig(settings?.presence)
+    try {
+      await window.nagi.settings.set({
+        presence: {
+          persistActivities: document.getElementById('set-presence-persist').checked,
+          retainDays: numField('set-presence-retain', 1, 7, cfg.retainDays),
+          maxActivities: numField('set-presence-maxacts', 1, 96, cfg.maxActivities)
+        }
+      })
+      settings = await window.nagi.settings.get()
+    } catch (err) {
+      if (status) status.textContent = '保存失败：' + err.message
+      return
+    }
+    refreshPresenceSection()
+    if (status) status.textContent = '隐私设置已保存，即时生效'
+    ui.addToolLog('时间感隐私设置已保存')
+  })
+}
+
 /* ---------------- 记忆档案设置（设置页 · 记忆档案区块） ---------------- */
 
 /** 最近一次档案状态快照 */
@@ -1615,6 +1902,16 @@ function wireSettingsPage() {
     await window.nagi.music.revoke()
     await refreshMusicStatus()
   })
+  on('btn-geo-enable', async () => {
+    const state = await window.nagi.geo.enable()
+    if (state.error) document.getElementById('geo-status').textContent = `已授权；读取失败：${state.error}`
+    else await refreshGeoStatus()
+  })
+  on('btn-geo-refresh', refreshGeoStatus)
+  on('btn-geo-revoke', async () => {
+    await window.nagi.geo.revoke()
+    await refreshGeoStatus()
+  })
   on('btn-ha-read-enable', async () => {
     await window.nagi.ha.enableRead()
     await refreshHaStatus()
@@ -1817,6 +2114,8 @@ function wireSettingsPage() {
   wireVoiceSettings(on)
   // 记忆档案（长期记忆检索）：开关 / 引擎 / 门限 / 重建 / 召回自测
   wireRagSettings(on)
+  // 实感 · 时间感（BLUE-2）：开关 / 高级阈值 / 时段表 / 隐私
+  wirePresenceSettings(on)
 }
 
 /* ---------------- 关系页（S4：熟悉度 + 情绪时间线） ---------------- */
@@ -2127,6 +2426,13 @@ window.__nagiArtBox = () => l2d.measureArtBox()
 // 调试：对话状态驱动的姿态（'thinking' 思考 / null 收回中立）
 window.__nagiSetPose = (n) => l2d.setPose(n)
 window.__nagiGetPose = () => l2d.getPose()
+// 调试：昼夜时段表现（BLUE-2）：'neutral' | 'night' | 'afternoon' | '…→neutral'（收回中）
+window.__nagiApplyRhythmPose = (r) => l2d.applyRhythmPose(r)
+window.__nagiGetRhythmPose = () => l2d.getRhythmPose()
+// 调试：主进程广播来的 rhythm 快照（验证「广播 → presence.js → 模型」整条链路）
+window.__nagiRhythm = () => presence.getRhythm()
+// 调试：模型实际参数清单（时段表现过滤用）
+window.__nagiParamIds = () => l2d.listParamIds()
 // 调试：在姿态生效的瞬间采样姿态参数（帧外读不到，Cubism 每帧末尾会还原快照）
 window.__nagiPoseParams = (ids) => l2d.probePoseOnce(ids)
 // 调试：焦点控制器内部状态（验证"目光不跟随鼠标"：它应该一直是 0）

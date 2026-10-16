@@ -23,6 +23,7 @@
     "viewer": "node tools/live2d-viewer/server.mjs",
     "postinstall": "node scripts/setup-core.mjs",
     "verify:pose": "node scripts/verify-pose.mjs",
+    "verify:rhythm": "node scripts/verify-rhythm.mjs",
     "verify:rag": "node scripts/verify-rag.mjs",
     "verify:local-llm": "node scripts/verify-local-llm.mjs"
   },

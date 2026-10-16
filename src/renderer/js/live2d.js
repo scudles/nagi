@@ -15,6 +15,7 @@
 import { pickRedParams, shouldRemoveRedGlow } from '../../core/redform.js'
 import { DEFAULT_FRAME, fitBand, frameBand, framePreset } from '../../core/frame.js'
 import { POSE_EASE_RATE, easePose, poseSettled, poseTargets } from '../../core/pose.js'
+import { rhythmPoseTargets, RHYTHM_POSE_EASE_RATE } from '../../core/presence/rhythm-pose.js'
 
 let app = null
 let model = null
@@ -638,6 +639,97 @@ export function getPose() {
   return poseState.releasing ? `${poseState.name}→neutral` : poseState.name
 }
 
+/* ---------------- 昼夜时段表现（BLUE-2） ----------------
+ *
+ * 与「思考姿态」同源做法：挂 beforeModelUpdate——这一帧所有参数刚写完，
+ * 我们的偏移在最后一刻加进去，不会被动作/表情覆盖；用 add（不是 set），
+ * 模型的呼吸、待机动作仍然在该参数上生效，时段表现是"叠加在上面的轻微倾向"。
+ * 与 poseHook（思考）/ redGuard（红色裁剪）三个 hook 互不干扰地叠加。
+ *
+ * 进入/退出都是渐变的（指数平滑），切换时段不硬切；面容归情绪状态机
+ * （mood.applyRhythm 每时段推温和基线），这里只做参数层，不夺脸。
+ */
+let rhythmHook = null
+let rhythmState = null // { name, target:{id:值}, cur:{id:当前值}, releasing:bool }
+let rhythmLastAt = 0
+
+/**
+ * 应用 / 收回时段表现。
+ * @param {object|null} rhythm presence 快照里的 rhythm；null / 关闭 / 无预设 → 平滑收回
+ * @returns {boolean} 模型就绪且已受理
+ */
+export function applyRhythmPose(rhythm) {
+  if (!model?.internalModel) return false
+  const t = rhythmPoseTargets(rhythm, listParamIds())
+  if (!t) {
+    // 无表现可施加：已在运行就平滑收回，没在运行就无事发生
+    if (rhythmHook && !rhythmState.releasing) {
+      rhythmState.target = {}
+      rhythmState.releasing = true
+    }
+    return false
+  }
+  if (rhythmHook) {
+    // 新时段直接改目标（不收回重来，切换是渐变的）；若正处释放途中则取消释放
+    rhythmState.target = t.params
+    rhythmState.releasing = false
+    rhythmState.name = t.name
+    return true
+  }
+  const cur = {}
+  for (const id of Object.keys(t.params)) cur[id] = 0
+  rhythmState = { name: t.name, target: t.params, cur, releasing: false }
+  rhythmLastAt = performance.now()
+  rhythmHook = () => {
+    const core = model?.internalModel?.coreModel
+    if (!core) return
+    const now = performance.now()
+    const dt = Math.min(0.1, Math.max(0, (now - rhythmLastAt) / 1000))
+    rhythmLastAt = now
+    // 遍历"目标 ∪ 当前值"：收回时 target 是空表，但 cur 里还有没收完的值
+    const ids = new Set([...Object.keys(rhythmState.target), ...Object.keys(rhythmState.cur)])
+    let settled = true
+    for (const id of ids) {
+      const target = rhythmState.target[id] ?? 0
+      const c = easePose(rhythmState.cur[id] ?? 0, target, dt, RHYTHM_POSE_EASE_RATE)
+      rhythmState.cur[id] = c
+      if (!poseSettled(c, target)) settled = false
+      if (Math.abs(c) > 5e-4) {
+        try {
+          core.addParameterValueById(id, c)
+        } catch {
+          /* 模型没这个参数就跳过 */
+        }
+      }
+    }
+    if (rhythmState.releasing && settled) {
+      try {
+        model.internalModel.off('beforeModelUpdate', rhythmHook)
+      } catch {
+        /* ignore */
+      }
+      rhythmHook = null
+      rhythmState = null
+    }
+  }
+  model.internalModel.on('beforeModelUpdate', rhythmHook)
+  return true
+}
+
+/** 当前时段表现（调试/验证用）：'neutral' | 'night' | 'afternoon' | 'night→neutral'（收回中） */
+export function getRhythmPose() {
+  if (!rhythmState) return 'neutral'
+  return rhythmState.releasing ? `${rhythmState.name}→neutral` : rhythmState.name
+}
+
+/** 模型实际拥有的参数 ID 清单（时段表现过滤用：禁止映射不存在的参数） */
+export function listParamIds() {
+  const core = model?.internalModel?.coreModel
+  if (!core) return []
+  const src = core._parameterIds || core.parameterIds
+  return src ? Array.from(src) : []
+}
+
 /**
  * 焦点控制器内部状态（调试/验证"目光不再跟随鼠标"用）。
  * 取消跟随时只做了两件事：撤监听 + 加载时归中；这个钩子让人能直接读到
@@ -901,6 +993,15 @@ export function destroy() {
   }
   poseHook = null
   poseState = null
+  if (rhythmHook) {
+    try {
+      model?.internalModel?.off?.('beforeModelUpdate', rhythmHook)
+    } catch {
+      /* ignore */
+    }
+  }
+  rhythmHook = null
+  rhythmState = null
   try {
     resizer?.disconnect?.()
   } catch {
