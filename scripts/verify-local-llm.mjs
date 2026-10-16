@@ -87,6 +87,10 @@ try {
   check('无云端 API Key 仍能进入本地通道', !keyState.llmApiKey)
   const invalid = await page.evaluate((args) => window.nagi.llm.localStatus(args), { baseURL: 'https://example.com/v1', model })
   check('本地通道拒绝远端地址', invalid.reason === 'invalid-url')
+  const missing = await page.evaluate((args) => window.nagi.llm.localStatus(args), { baseURL, model: 'nagi-missing-model:never' })
+  check('本机缺少所选模型时给出明确状态', missing.reason === 'model-missing' && missing.models.length > 0)
+  const offline = await page.evaluate((args) => window.nagi.llm.localStatus(args), { baseURL: 'http://127.0.0.1:1/v1', model })
+  check('本机服务不可达时给出明确状态', offline.reason === 'offline')
 
   await page.evaluate(() => document.getElementById('btn-pet-settings')?.click())
   await page.waitForFunction(() => document.getElementById('set-local-llm-status')?.textContent?.includes('已就绪'), null, { timeout: 10000 })
