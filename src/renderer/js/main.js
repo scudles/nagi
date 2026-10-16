@@ -685,6 +685,7 @@ function fillSettingsForm() {
   refreshSecretStatus()
   refreshModels()
   refreshMemory()
+  refreshLedger()
   refreshVoice()
   refreshRag()
 }
@@ -751,19 +752,97 @@ async function refreshMemory() {
       row.className = 'mem-item'
       const t = document.createElement('div')
       t.className = 't'
-      t.textContent = m.text
+      t.textContent = `${m.provenance === 'user-stated' ? '用户记下' : '未经核实'}：${m.text}`
       const del = document.createElement('button')
       del.textContent = '✕'
       del.title = '让她忘掉这条'
       del.addEventListener('click', async () => {
-        await window.nagi.memory.remove({ id: m.id })
-        refreshMemory()
+        try {
+          await window.nagi.memory.remove({ id: m.id })
+          await refreshMemory()
+          await refreshLedger()
+        } catch (err) {
+          document.getElementById('ledger-status').textContent = err.message
+        }
       })
       row.append(t, del)
       box.appendChild(row)
     }
   } catch (err) {
     console.warn('[memory] 列表读取失败', err.message)
+  }
+}
+
+let ledgerOffset = 0
+const LEDGER_PAGE = 50
+const tierNames = { recorded: '有来源的记录', unverified: '未经核实', subjective: '主观记录' }
+const sourceNames = {
+  'journal-live': '真实互动流水', journal: '旧版互动流水',
+  'diary-live': '新日记', diary: '旧日记',
+  'memory-manual': '用户手动记忆', 'memory-model': '模型整理', memory: '旧版记忆',
+  history: '旧对话历史', rag: '旧检索档案', 'rag-summary': '模型摘要',
+  relation: '旧关系统计', 'relation-live': '关系统计',
+  timeline: '旧情绪时间线', 'timeline-live': '情绪时间线', correction: '用户更正'
+}
+
+async function refreshLedger(reset = true) {
+  const box = document.getElementById('ledger-list')
+  if (!box || !window.nagi.ledger) return
+  const status = document.getElementById('ledger-status')
+  if (reset) { ledgerOffset = 0; box.replaceChildren() }
+  try {
+    const result = await window.nagi.ledger.list({ offset: ledgerOffset, limit: LEDGER_PAGE })
+    for (const entry of result.entries) {
+      const row = document.createElement('div')
+      row.className = 'ledger-item'
+      const label = document.createElement('div')
+      label.className = 'ledger-meta'
+      label.textContent = `${tierNames[entry.tier] || entry.tier} · ${sourceNames[entry.source.type] || entry.source.type} · ${entry.occurredAt ? new Date(entry.occurredAt).toLocaleString() : '发生时间未记录'}`
+      const body = document.createElement('div')
+      body.className = 'ledger-text'
+      body.textContent = entry.text
+      const details = document.createElement('details')
+      const summary = document.createElement('summary')
+      summary.textContent = '查看来源'
+      const source = document.createElement('div')
+      source.textContent = `来源：${entry.source.type} / ${entry.source.ref}\n记录于：${new Date(entry.recordedAt).toLocaleString()}\n判断：${entry.certainty}`
+      source.style.whiteSpace = 'pre-wrap'
+      details.append(summary, source)
+      const actions = document.createElement('div')
+      actions.className = 'ledger-actions'
+      const correct = document.createElement('button')
+      correct.textContent = '纠正'
+      correct.addEventListener('click', () => {
+        if (row.querySelector('textarea')) return
+        const editor = document.createElement('textarea')
+        editor.value = entry.text
+        editor.setAttribute('aria-label', '更正后的内容')
+        const submit = document.createElement('button')
+        submit.textContent = '提交更正'
+        submit.addEventListener('click', async () => {
+          const result = await window.nagi.ledger.correct(entry.id, editor.value)
+          if (result.ok) { status.textContent = '更正已保存，旧内容已清理'; await refreshLedger() }
+          else if (!result.cancelled) status.textContent = result.error || '更正失败'
+        })
+        row.append(editor, submit)
+      })
+      const forget = document.createElement('button')
+      forget.textContent = '忘记'
+      forget.className = 'danger'
+      forget.addEventListener('click', async () => {
+        const result = await window.nagi.ledger.forget(entry.id)
+        if (result.ok) { status.textContent = '已忘记这条记录'; await refreshLedger() }
+        else if (!result.cancelled) status.textContent = result.error || '忘记失败'
+      })
+      actions.append(correct, forget)
+      row.append(label, body, details, actions)
+      box.appendChild(row)
+    }
+    ledgerOffset += result.entries.length
+    document.getElementById('btn-ledger-more')?.classList.toggle('hidden', ledgerOffset >= result.total)
+    if (!result.total) status.textContent = '还没有可查看的共同经历。'
+  } catch (err) {
+    status.textContent = '账本读取失败：' + err.message
   }
 }
 
@@ -1418,6 +1497,14 @@ function wireSettingsPage() {
     await window.nagi.memory.add(v)
     if (input) input.value = ''
     await refreshMemory()
+    await refreshLedger()
+  })
+  on('btn-ledger-more', () => refreshLedger(false))
+  on('btn-ledger-export', async () => {
+    const result = await window.nagi.ledger.export()
+    const status = document.getElementById('ledger-status')
+    if (result.ok) status.textContent = `已导出 ${result.count} 条到 ${result.path}`
+    else if (!result.cancelled) status.textContent = result.error || '导出失败'
   })
   on('btn-history-clear', async () => {
     await window.nagi.memory.clearHistory()

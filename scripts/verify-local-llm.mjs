@@ -173,6 +173,15 @@ try {
     entry.occurredAt && entry.text.includes('请用一句简短中文介绍你自己')))
   check('新日记以主观记录入账且关联 RAG 来源', ledger.some((entry) => entry.source?.type === 'diary-live' &&
     entry.category === 'subjective' && entry.ragIds.includes(diaryChunk?.id)))
+  const ledgerApi = await page.evaluate(() => window.nagi.ledger.list({ limit: 100 }))
+  check('来源与三层可信分类经受信 IPC 可查看', ledgerApi.ok &&
+    ledgerApi.entries.some((entry) => entry.tier === 'recorded' && entry.source.type === 'journal-live') &&
+    ledgerApi.entries.some((entry) => entry.tier === 'subjective' && entry.source.type === 'diary-live'))
+  await page.evaluate(() => document.getElementById('btn-pet-settings')?.click())
+  await page.waitForFunction(() => document.querySelectorAll('#ledger-list .ledger-item').length > 0, null, { timeout: 10000 })
+  check('设置页展示经历来源与纠错入口', await page.evaluate(() =>
+    !!document.querySelector('#ledger-list details') && !!document.querySelector('#ledger-list .ledger-actions button')))
+  await page.evaluate(() => document.getElementById('btn-close-settings')?.click())
   if (process.env.NAGI_VERIFY_RAG_RECALL === '1' && diaryChunk) {
     const downloaded = await page.evaluate(() => window.nagi.rag.downloadModel())
     check('本机嵌入模型下载完成', downloaded?.ok === true, downloaded?.error || '')

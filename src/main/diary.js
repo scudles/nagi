@@ -9,10 +9,10 @@
 
 import { app } from 'electron'
 import { join } from 'node:path'
-import { mkdirSync, appendFileSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, appendFileSync, readdirSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs'
 import { getRag } from './rag/index.js'
 import { randomUUID } from 'node:crypto'
-import { recordLedger } from './ledger.js'
+import { getLedger, recordLedger } from './ledger.js'
 
 function diaryDir() {
   return join(app.getPath('userData'), 'monologue')
@@ -44,6 +44,9 @@ export function appendDiary(snapshot, text, { kind } = {}) {
     const mark = kind === 'inner' ? '（心里）' : ''
     const line = `- ${timeStr(at)} ［${snapshot.label}·${Math.round(snapshot.intensity * 100)}%］ ${mark}${text}\n`
     appendFileSync(join(dir, `diary-${dateStr(at)}.md`), line, 'utf8')
+    const dayStart = new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime()
+    const dependsOn = getLedger().list().filter((entry) => entry.source.type === 'journal-live' &&
+      entry.occurredAt >= dayStart && entry.occurredAt <= now).map((entry) => entry.id)
     // RAG 的任何失败都不能让独白变成「没写」。文本先落日记文件，再尝试入档。
     let ragId = null
     try {
@@ -55,7 +58,7 @@ export function appendDiary(snapshot, text, { kind } = {}) {
     recordLedger({ category: 'subjective', text: `${mark}${text}`,
       source: { type: 'diary-live', ref: randomUUID() }, occurredAt: now,
       certainty: 'subjective', ragIds: ragId ? [ragId] : [],
-      meta: { file: `diary-${dateStr(at)}.md`, kind: kind === 'inner' ? 'inner' : 'spoken', mood: snapshot.label } })
+      meta: { file: `diary-${dateStr(at)}.md`, kind: kind === 'inner' ? 'inner' : 'spoken', mood: snapshot.label, dependsOn } })
     return true
   } catch (err) {
     console.error('[diary] 写入失败：', err && err.message)
@@ -85,6 +88,18 @@ export function readDiary(file) {
   } catch {
     return null
   }
+}
+
+export function removeDiaryEntry(entry) {
+  if (!['diary', 'diary-live'].includes(entry?.source?.type)) return false
+  const name = entry.meta?.file || String(entry.source.ref).split('#')[0]
+  if (!/^diary-\d{4}-\d{2}-\d{2}\.md$/.test(name)) return false
+  const file = join(diaryDir(), name)
+  if (!existsSync(file)) return true
+  const lines = readFileSync(file, 'utf8').split('\n')
+  const kept = lines.filter((line) => !line.trim().endsWith(entry.text))
+  if (kept.length !== lines.length) writeFileSync(file, kept.join('\n'), 'utf8')
+  return true
 }
 
 const LINE_RE = /^- \d{2}:\d{2} ［[^］]*］\s*(.*)$/

@@ -79,6 +79,13 @@ const api = {
     remove: (payload) => ipcRenderer.invoke(IPC.MEMORY_DELETE, payload),
     clearHistory: () => ipcRenderer.invoke(IPC.HISTORY_CLEAR)
   },
+  ledger: {
+    list: (opts) => ipcRenderer.invoke(IPC.LEDGER_LIST, opts || {}),
+    get: (id) => ipcRenderer.invoke(IPC.LEDGER_GET, { id }),
+    correct: (id, text) => ipcRenderer.invoke(IPC.LEDGER_CORRECT, { id, text }),
+    forget: (id) => ipcRenderer.invoke(IPC.LEDGER_FORGET, { id }),
+    export: () => ipcRenderer.invoke(IPC.LEDGER_EXPORT)
+  },
   /** 关系层（S4）：熟悉度 + 情绪时间线 */
   relation: {
     get: () => ipcRenderer.invoke(IPC.RELATION_GET),

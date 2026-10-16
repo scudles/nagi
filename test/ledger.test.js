@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ExperienceLedger } from '../src/core/ledger/store.js'
+import { ExperienceLedger, trustTier } from '../src/core/ledger/store.js'
 
 function fixture() {
   const dir = mkdtempSync(join(process.cwd(), '.nagi-ledger-test-'))
@@ -71,5 +71,25 @@ test('旧文件损坏时不标记迁移完成；修复后可重试', () => {
     assert.equal(existsSync(join(dir, 'ledger', 'migration.json')), false)
     write('memory.json', { entries: [{ id: 'm2', text: '修复后可迁移' }] })
     assert.deepEqual(ledger.migrateLegacy(), { migrated: true, count: 1 })
+  } finally { cleanup() }
+})
+
+test('三层可信分类与纠错导出：旧正文物理移除，保留审计关联', () => {
+  const { dir, cleanup } = fixture()
+  try {
+    const ledger = new ExperienceLedger(dir)
+    const old = ledger.record({ category: 'claim', text: '旧错误事实',
+      source: { type: 'memory-model', ref: 'm3' }, certainty: 'unverified' })
+    assert.equal(trustTier(old), 'unverified')
+    const changed = ledger.correct(old.id, '用户更正后的内容', 5000)
+    assert.equal(changed.tier, 'recorded')
+    assert.equal(changed.meta.corrects, old.id)
+    assert.equal(ledger.get(old.id).text, '')
+    assert.equal(ledger.get(old.id).deletedAt, 5000)
+    assert.equal(ledger.list().length, 1)
+    const bundle = ledger.exportBundle()
+    assert.equal(bundle.entries.length, 2)
+    assert.equal(bundle.entries.find((entry) => entry.id === old.id).meta.correctedBy, changed.id)
+    assert.equal(readFileSync(join(dir, 'ledger', 'entries.jsonl'), 'utf8').includes('旧错误事实'), false)
   } finally { cleanup() }
 })

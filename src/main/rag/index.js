@@ -8,6 +8,7 @@
 //   · 入库只写 pending.jsonl（纯文本追加），嵌入是后台的事，失败下轮再来。
 
 import { app } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient, chatStream } from '../../core/llm/openai-compatible.js'
 import { apiKeyForLlm, isLocalLlm, resolveLlm } from '../../core/llm/providers.js'
@@ -110,6 +111,7 @@ export class RagService {
     this.turnsSinceSummary = 0
     this.summarizing = false
     this._covered = null
+    this.revoked = new Set()
   }
 
   get cfg() {
@@ -125,7 +127,13 @@ export class RagService {
       this.store = store
       this.dimMismatch = dimMismatch
       this.ready = true
-      this.pendingCount = this.io.readPending().length
+      this.revoked = this.io.readRevoked()
+      const pending = this.io.readPending()
+      const livePending = pending.filter((item) => !this.revoked.has(item.id))
+      if (livePending.length !== pending.length) this.io.rewritePending(livePending)
+      this.pendingCount = livePending.length
+      for (const chunk of this.store.liveChunks()) if (this.revoked.has(chunk.id)) this.store.remove(chunk.id)
+      if (this.store.dead.size) this.io.compact(this.store)
       if (repaired.droppedVectorRows || repaired.droppedChunkLines || repaired.badLines) {
         this.log(
           `[rag] 检测到半截写入，已对齐修复（丢向量行 ${repaired.droppedVectorRows} / 丢 chunk 行 ${repaired.droppedChunkLines} / 坏行 ${repaired.badLines}）`
@@ -183,9 +191,9 @@ export class RagService {
   }
 
   /** 一条精选事实进档案（与 memory.json 同步；向量层做语义去重） */
-  ingestFact({ text, at = Date.now() }) {
+  ingestFact({ text, at = Date.now(), source = 'memory' }) {
     if (!this.ready || !this.cfg.enabled) return { ok: false, reason: 'off' }
-    const chunk = makeFactChunk({ text, at })
+    const chunk = makeFactChunk({ text, at, source })
     if (!chunk) return { ok: false, reason: 'empty' }
     return this._ingestChunk(chunk)
   }
@@ -199,6 +207,7 @@ export class RagService {
   }
 
   _ingestChunk(chunk) {
+    if (this.revoked.has(chunk.id)) chunk.id += '_' + randomUUID().slice(0, 8)
     if (this.store.hasHash(chunk.hash)) return { ok: true, dup: true }
     if (this.pendingCount >= PENDING_SOFT_CAP) {
       this.lastError = `待嵌队列已满（${PENDING_SOFT_CAP}），暂停入库；装好模型后会一起补上`
@@ -218,16 +227,35 @@ export class RagService {
     return { ok: true, id: chunk.id }
   }
 
-  /** 忘掉一条（按 id）。墓碑落盘，compact 时才真正消失 */
+  /** 忘掉一条（按 id）：先持久化撤销，再同时清待嵌与已嵌入索引。 */
   forget(id) {
     if (!this.ready) return { ok: false, error: '未就绪' }
-    const chunk = this.store.chunkById(id)
-    if (!chunk || chunk.tombstone) return { ok: false, error: '没有这条' }
-    this.store.remove(id)
+    const key = String(id || '')
+    const pending = this.io.readPending()
+    const chunk = this.store.chunkById(key)
+    const present = pending.some((item) => item.id === key) || (chunk && !chunk.tombstone)
+    if (!present && !this.revoked.has(key)) return { ok: false, error: '没有这条' }
+    const summaries = [...pending, ...this.store.liveChunks()]
+      .filter((item) => item.kind === 'summary' && item.meta?.covers?.includes(key))
+      .map((item) => item.id)
     try {
-      this.io.appendTombstone(chunk, this.store.rowBytes)
+      const nextRevoked = new Set(this.revoked).add(key)
+      this.io.writeRevoked(nextRevoked)
+      this.revoked = nextRevoked
+      this.io.rewritePending(pending.filter((item) => item.id !== key))
+      this.pendingCount = this.io.readPending().length
+      if (chunk && !chunk.tombstone) {
+        this.store.remove(key)
+        this.io.appendTombstone(chunk, this.store.rowBytes)
+        this.io.compact(this.store)
+      }
       this._covered = null
-      return { ok: true }
+      for (const summaryId of summaries) {
+        if (summaryId === key) continue
+        const removed = this.forget(summaryId)
+        if (!removed.ok) throw new Error(`关联摘要未删除：${removed.error}`)
+      }
+      return { ok: true, id: key, cascaded: summaries }
     } catch (err) {
       return { ok: false, error: err && err.message ? err.message : String(err) }
     }
@@ -241,12 +269,28 @@ export class RagService {
     const t = String(text == null ? '' : text)
     if (!t.trim()) return { ok: false, error: '空文本' }
     for (const cand of new Set([t, clipText(t, 300), clipText(t, MAX_CHUNK_CHARS)])) {
+      const pending = this.io.readPending().find((item) => item.hash === contentHash(cand))
+      if (pending) return this.forget(pending.id)
       const row = this.store.rowOfHash(contentHash(cand))
       if (row !== undefined && !this.store.isDead(row)) {
         return this.forget(this.store.chunks[row].id)
       }
     }
     return { ok: false, error: '没有这条' }
+  }
+
+  forgetMatching(text, at = null, windowMs = 86400000) {
+    const needle = String(text || '').trim()
+    if (needle.length < 3) return { ok: false, error: '片段太短' }
+    const candidates = [...this.io.readPending(), ...this.store.liveChunks()]
+      .filter((item) => item.text.includes(needle) &&
+        (!Number.isFinite(at) || Math.abs(item.at - at) < windowMs))
+    const ids = [...new Set(candidates.map((item) => item.id))]
+    for (const id of ids) {
+      const result = this.forget(id)
+      if (!result.ok) return { ok: false, error: result.error, ids }
+    }
+    return { ok: true, ids }
   }
 
   /* ---------------- 召回 ---------------- */
@@ -282,7 +326,7 @@ export class RagService {
         budgetChars: cfg.budgetChars,
         now: opts.now || Date.now(),
         covered: this._coveredSet()
-      })
+      }).filter((item) => !this.revoked.has(item.id))
       return { enabled: true, ready: true, results, text: formatRecall(results) }
     } catch (err) {
       this.lastError = err && err.message ? err.message : String(err)
@@ -335,7 +379,9 @@ export class RagService {
       let embedded = 0
       for (const item of toEmbed) {
         try {
+          if (this.revoked.has(item.id)) { done.add(item.id); continue }
           const [v] = await emb.embed([item.text])
+          if (this.revoked.has(item.id)) { done.add(item.id); continue }
           const r = this.store.append(item, v)
           if (r.ok) {
             this.io.appendEmbedded(item, this.store.rowVector(r.row))
@@ -349,7 +395,7 @@ export class RagService {
           break
         }
       }
-      const remain = queue.filter((x) => !done.has(x.id))
+      const remain = queue.filter((x) => !done.has(x.id) && !this.revoked.has(x.id))
       this.io.rewritePending(remain)
       this.pendingCount = remain.length
       this._covered = null
@@ -396,6 +442,7 @@ export class RagService {
         0.4
       )
       if (!text) return { ok: false, reason: 'llm-empty' }
+      if (turns.some((turn) => this.revoked.has(turn.id))) return { ok: false, reason: 'source-revoked' }
       const chunk = makeSummaryChunk({ text, covers: turns.map((c) => c.id), at: Date.now() })
       const r = this._ingestChunk(chunk)
       if (r.ok && r.id) recordLedger({ category: 'subjective', text,
@@ -429,7 +476,7 @@ export class RagService {
     if (!this.ready) return { ok: false, error: '未就绪' }
     const emb = this._pickEmbedder()
     if (!emb) return { ok: false, error: '当前嵌入引擎不可用（先下载模型或配置 Key）' }
-    const chunks = this.store.liveChunks()
+    const chunks = this.store.liveChunks().filter((item) => !this.revoked.has(item.id))
     this.store = new VectorStore({ dim: emb.dim })
     this.dimMismatch = false
     this._covered = null
@@ -454,6 +501,7 @@ export class RagService {
       this.turnsSinceSummary = 0
       this._covered = null
       this.dimMismatch = false
+      this.revoked = new Set()
       resetLocalEmbedder()
       return { ok: true }
     } catch (err) {

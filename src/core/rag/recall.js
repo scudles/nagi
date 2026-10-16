@@ -121,7 +121,8 @@ export function recall(store, queryVec, opts = {}) {
     if (body.length > 200) body = body.slice(0, 200) + '…'
     const source = c.kind === 'diary'
       ? c.meta?.kind === 'spoken' ? '当时说过：' : '心里记下、未对用户说出：'
-      : ''
+      : c.kind === 'fact' ? c.meta?.source === 'user-correction' ? '用户更正：' : '未经核实的记忆摘录：'
+        : c.kind === 'summary' ? '模型整理的摘要：' : ''
     const piece = `「${label}：${source}${body}」`
     if (out.length && used + piece.length > o.budgetChars) break
     out.push({ ...c, label, piece })

@@ -103,6 +103,7 @@ export function buildContextBlock({
   }
 
   if (memories.length) {
+    lines.push('- 记忆使用边界：标为“未经核实”的摘录只能当线索，不能说成已证实的共同经历。')
     lines.push('- 你记得的关于他的事：' + memories.join('；'))
   }
 

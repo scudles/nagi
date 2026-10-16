@@ -4,6 +4,7 @@
 
 import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/protocol.js'
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createPersonaGuard } from '../core/agent/persona-guard.js'
@@ -52,6 +53,7 @@ import { appendDiary, recentDiaryLines, cacheLeakCount, noteCacheLeak } from './
 import { noteEvent, todayEvents, pruneJournals, flushJournal } from './journal.js'
 import { startMonitor, stopMonitor } from './monitor/index.js'
 import { getRag } from './rag/index.js'
+import { getLedger } from './ledger.js'
 import {
   startReminderEngine,
   stopReminderEngine,
@@ -315,6 +317,8 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
     const local = isLocalLlm(llm)
     const useCloud = llm.provider === 'workbuddy' && process.env.NAGI_FAKE_LLM !== '1' && !fakeDiary
     const canGenerate = fakeDiary || hasKey || useCloud || local
+    const sourceIds = getLedger().list().filter((entry) => entry.source.type === 'journal-live' &&
+      dateKey(entry.occurredAt) === dateKey(now)).map((entry) => entry.id)
 
     let text = ''
     if (canGenerate) {
@@ -356,6 +360,9 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
       if (text && recent.some((r) => isTooSimilar(text, r))) text = '' // 兜底也全撞车：这一条宁可不写
     }
     if (!text) return false
+
+    // 模型生成期间用户可能纠正/忘记了素材；旧上下文产物此时必须丢弃。
+    if (sourceIds.some((id) => getLedger().get(id)?.deletedAt)) return false
 
     if (!appendDiary(snap, text, { kind: 'inner' })) return false
     // 泄露计数：只在"真的由模型写出来、且当时给了缓存许可"时记一笔（护栏：极低频）
@@ -401,13 +408,13 @@ function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monit
   }
   const snap = mood.current()
   if (force || !busy) broadcast(EVT.PET, { kind, text, expr: snap.expr })
-  appendDiary(snap, text)
   // 记进「今天发生的事」：她开过口、提醒过什么，都是她这一天的一部分
   try {
     noteEvent({ kind: kind === 'reminder' ? 'reminder' : 'proactive', text })
   } catch {
     /* 记流水失败不影响开口 */
   }
+  appendDiary(snap, text)
   return true
 }
 
@@ -569,7 +576,7 @@ async function callModelOnce({ client, llm, useCloud, messages, temperature = 0.
  * 输出增删指令合并进 memory.json。异步且不阻塞回复；任何失败都静默（不能因为她记笔记失败
  * 而影响对话）。太短的寒暄直接跳过，省一次调用。
  */
-function extractMemoriesAsync({ client, llm, useCloud, userText, assistantText }) {
+function extractMemoriesAsync({ client, llm, useCloud, userText, assistantText, turnRef }) {
   const u = String(userText || '').trim()
   const a = String(assistantText || '').trim()
   if (u.length < 6 || a.length < 6) return
@@ -585,6 +592,7 @@ function extractMemoriesAsync({ client, llm, useCloud, userText, assistantText }
   ]
   callModelOnce({ client, llm, useCloud, messages })
     .then((raw) => {
+      if (turnRef && getLedger().bySource('journal-live', turnRef)?.deletedAt) return
       const ops = parseMemoryOps(raw)
       if (!ops.add.length && !ops.remove.length) return
       const r = mergeMemoryOps(ops, Date.now(), { userText: u })
@@ -621,7 +629,7 @@ function trimHistory(messages) {
 }
 
 /** 组装依赖并执行一轮 */
-export async function runTurn(userText, emit) {
+export async function runTurn(userText, emit, turnRef = null) {
   ensureHistory()
   const settings = getSettings()
   const llm = resolveLlm(settings.llm || {})
@@ -717,7 +725,7 @@ export async function runTurn(userText, emit) {
     console.warn('[memory] 历史落盘失败：', err.message)
   }
   // 长期记忆抽取：异步、不阻塞、失败静默（她记笔记不该拖慢说话）
-  extractMemoriesAsync({ client, llm, useCloud, userText, assistantText: r.text })
+  extractMemoriesAsync({ client, llm, useCloud, userText, assistantText: r.text, turnRef })
   return r.text
 }
 
@@ -730,9 +738,10 @@ export async function handleChatSend(text) {
   mood.noteInteraction() // 连聊 burst 统计 + 刷新互动时间
   noteRelationInteraction() // 关系层记账：认识多久、聊过多少次、活跃几天
   const emit = (e) => emitAgentEvent(e)
+  const turnRef = randomUUID()
   let reply = ''
   try {
-    reply = await runTurn(t, emit)
+    reply = await runTurn(t, emit, turnRef)
     return { ok: true }
   } catch (err) {
     emit({ type: AGENT_EVENT.ERROR, message: err && err.message ? err.message : String(err) })
@@ -751,7 +760,7 @@ export async function handleChatSend(text) {
       /* 进档案失败不影响对话 */
     }
     try {
-      noteEvent({ kind: 'chat', user: t, reply: String(reply || '') }, Date.now(), ragId ? [ragId] : [])
+      noteEvent({ kind: 'chat', user: t, reply: String(reply || '') }, Date.now(), ragId ? [ragId] : [], turnRef)
     } catch {
       /* 记流水失败不影响对话 */
     }

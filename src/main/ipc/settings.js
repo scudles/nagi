@@ -11,7 +11,9 @@ import { checkOllama } from '../../core/llm/ollama.js'
 import { getSettings, saveSettings, settingsPath } from '../settings-store.js'
 import { setSecret, hasSecret, deleteSecret } from '../keystore.js'
 import { broadcast, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow, resizePetWindow, movePetWindow } from '../windows.js'
-import { memoryList, memoryAdd, memoryRemove, historyClear } from '../agent.js'
+import { memoryList, memoryAdd, historyClear } from '../agent.js'
+import { getLedger } from '../ledger.js'
+import { forgetExperience } from '../ledger-actions.js'
 import { modelsDir, projectRoot } from '../paths.js'
 
 const ALL_SECRET_KEYS = Object.values(SECRET_KEYS)
@@ -100,7 +102,23 @@ export function registerSettingsIpc() {
   // 长期记忆 / 对话历史
   trustedHandle(IPC.MEMORY_LIST, () => memoryList())
   trustedHandle(IPC.MEMORY_ADD, (_e, text) => memoryAdd(text))
-  trustedHandle(IPC.MEMORY_DELETE, (_e, payload) => memoryRemove(payload || {}))
+  trustedHandle(IPC.MEMORY_DELETE, async (event, payload = {}) => {
+    const item = memoryList().find((memory) => payload.id ? memory.id === payload.id : memory.text === payload.text)
+    if (!item) return memoryList()
+    const entry = getLedger().list().find((row) =>
+      ['memory', 'memory-manual', 'memory-model', 'correction'].includes(row.source.type) &&
+      (row.source.ref === item.id || row.text === item.text))
+    if (!entry) throw new Error('这条记忆缺少来源，不能确认已从检索中清除')
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options = { type: 'warning', title: '忘记这条记忆',
+      message: '让凪忘记这条记忆？', detail: '会同时清除提示词、待嵌队列和已嵌入检索内容。',
+      buttons: ['取消', '忘记'], defaultId: 0, cancelId: 0, noLink: true }
+    const answer = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+    if (answer.response !== 1) return memoryList()
+    const result = forgetExperience(entry.id)
+    if (!result.ok) throw new Error(result.error)
+    return memoryList()
+  })
   trustedHandle(IPC.HISTORY_CLEAR, () => historyClear())
 
   trustedHandle(IPC.WINDOW_SET_MODE, (_e, mode) => switchMode(mode))

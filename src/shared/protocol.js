@@ -38,6 +38,11 @@ export const IPC = {
   MEMORY_ADD: 'memory:add',
   MEMORY_DELETE: 'memory:delete',
   HISTORY_CLEAR: 'history:clear',
+  LEDGER_LIST: 'ledger:list',
+  LEDGER_GET: 'ledger:get',
+  LEDGER_CORRECT: 'ledger:correct',
+  LEDGER_FORGET: 'ledger:forget',
+  LEDGER_EXPORT: 'ledger:export',
   // 关系层（S4）：熟悉度 + 情绪时间线
   RELATION_GET: 'relation:get',
   RELATION_TIMELINE: 'relation:timeline',

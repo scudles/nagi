@@ -63,7 +63,7 @@ export function flushJournal() {
  * 记一条今天发生的事。失败不影响主流程。
  * @param {{kind:'chat'|'proactive'|'reminder'|'poke'|string, text?:string, user?:string, reply?:string}} evt
  */
-export function noteEvent(evt, now = Date.now(), ragIds = []) {
+export function noteEvent(evt, now = Date.now(), ragIds = [], sourceRef = randomUUID()) {
   try {
     ensureDay(now)
     const next = appendEntry(cache.entries, { ...evt, t: now })
@@ -75,7 +75,7 @@ export function noteEvent(evt, now = Date.now(), ragIds = []) {
         ? [evt.user && `他：${evt.user}`, evt.reply && `我：${evt.reply}`].filter(Boolean).join('\n')
         : evt.kind === 'poke' ? '用户戳了凪' : String(evt.text || '')
       if (body) return recordLedger({ category: 'experience', text: body,
-        source: { type: 'journal-live', ref: randomUUID() }, occurredAt: now,
+        source: { type: 'journal-live', ref: sourceRef }, occurredAt: now,
         certainty: 'observed', ragIds, meta: { eventKind: evt.kind } })
     }
   } catch (err) {
@@ -87,6 +87,24 @@ export function noteEvent(evt, now = Date.now(), ragIds = []) {
 export function todayEvents(now = Date.now()) {
   ensureDay(now)
   return cache.entries.slice()
+}
+
+/** 从七天素材中撤回指定来源；缓存和文件同时更新，防止下一次防抖写回旧句。 */
+export function removeJournalEntry(entry) {
+  if (!entry?.source?.type?.startsWith('journal')) return false
+  const date = entry.source.type === 'journal'
+    ? entry.source.ref.slice(0, 10) : dateKey(entry.occurredAt)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false
+  if (!flushJournal()) throw new Error('日记素材尚未写入，不能安全删除')
+  if (!existsSync(fileOf(date))) return true
+  const entries = readDay(date)
+  const index = entries.findIndex((event) => event.t === entry.occurredAt &&
+    (entry.meta?.eventKind ? event.kind === entry.meta.eventKind : true))
+  if (index < 0) return true
+  entries.splice(index, 1)
+  writeFileSync(fileOf(date), JSON.stringify({ version: 1, date, entries }), 'utf8')
+  if (cache.date === date) cache = { date, entries, dirty: false }
+  return true
 }
 
 /** 清掉保留期之外的流水文件（启动跑一次；单批限量，避开"单回合批量删除"类保护） */

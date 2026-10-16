@@ -7,6 +7,12 @@ import { join } from 'node:path'
 const CATEGORIES = new Set(['experience', 'claim', 'subjective', 'aggregate'])
 const MIGRATION_VERSION = 1
 
+export function trustTier(entry) {
+  if (entry?.category === 'subjective') return 'subjective'
+  if (entry?.category === 'claim' && !['user-stated', 'user-corrected'].includes(entry.certainty)) return 'unverified'
+  return 'recorded'
+}
+
 function sourceId(type, ref) {
   return 'e_' + createHash('sha256').update(`${type}:${ref}`).digest('hex').slice(0, 20)
 }
@@ -66,13 +72,17 @@ export class ExperienceLedger {
     return [...this.entries.values()]
       .filter((entry) => includeDeleted || !entry.deletedAt)
       .sort((a, b) => (b.occurredAt || b.recordedAt) - (a.occurredAt || a.recordedAt))
-      .map((entry) => structuredClone(entry))
+      .map((entry) => ({ ...structuredClone(entry), tier: trustTier(entry) }))
   }
 
   get(id) {
     this.load()
     const entry = this.entries.get(String(id || ''))
-    return entry ? structuredClone(entry) : null
+    return entry ? { ...structuredClone(entry), tier: trustTier(entry) } : null
+  }
+
+  bySource(type, ref) {
+    return this.get(sourceId(String(type), String(ref)))
   }
 
   deleteBySource(type, ref, at = Date.now()) {
@@ -85,6 +95,42 @@ export class ExperienceLedger {
     atomicWrite(this.entriesFile, rows)
     this.entries.set(id, updated)
     return true
+  }
+
+  forget(id, at = Date.now()) {
+    this.load()
+    const entry = this.entries.get(String(id || ''))
+    return entry ? this.deleteBySource(entry.source.type, entry.source.ref, at) : false
+  }
+
+  correct(id, text, at = Date.now(), ragIds = []) {
+    this.load()
+    const original = this.entries.get(String(id || ''))
+    const body = String(text || '').trim()
+    if (!original || original.deletedAt || !body) return null
+    const source = { type: 'correction', ref: randomUUID() }
+    const corrected = {
+      id: sourceId(source.type, source.ref), category: original.category, text: body,
+      source, occurredAt: null, recordedAt: at, certainty: 'user-corrected',
+      ragIds: [...new Set(ragIds.filter(Boolean))], meta: { corrects: original.id, actor: 'user' },
+      revision: 1, correctedAt: at, deletedAt: null
+    }
+    const old = { ...original, text: '', meta: { correctedBy: corrected.id },
+      revision: original.revision + 1, correctedAt: at, deletedAt: at }
+    const rows = [...this.entries.values()].map((row) => row.id === original.id ? old : row)
+    rows.push(corrected)
+    atomicWrite(this.entriesFile, rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
+    this.entries.set(original.id, old)
+    this.entries.set(corrected.id, corrected)
+    return this.get(corrected.id)
+  }
+
+  exportBundle() {
+    return {
+      schemaVersion: 1, exportedAt: Date.now(),
+      trustTiers: { recorded: '有来源的实际记录或用户确认', unverified: '未经用户核实的模型整理', subjective: '凪的日记、情绪或创作' },
+      entries: this.list({ includeDeleted: true })
+    }
   }
 
   record({ category, text, source, occurredAt = null, recordedAt = Date.now(), certainty = 'observed', ragIds = [], meta = {} }) {

@@ -109,6 +109,7 @@ export function buildDiaryMessages({
   const mem = Array.isArray(memories) ? memories.filter((m) => typeof m === 'string' && m.trim()) : []
   if (mem.length) {
     lines.push('', '【你记得的关于他的事】')
+    lines.push('其中“未经核实”的摘录只是线索，不可写成真实经历。')
     for (const m of mem.slice(0, 12)) lines.push('- ' + m.trim())
   }
 

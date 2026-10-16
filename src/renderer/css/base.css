@@ -549,6 +549,15 @@ body[data-mode="workbench"] {
   line-height: 1;
 }
 .mem-item button:hover { color: var(--danger); }
+
+.ledger-list { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.ledger-item { padding: 9px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.ledger-item:last-child { border-bottom: 0; }
+.ledger-item .ledger-text { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; margin: 5px 0; }
+.ledger-item .ledger-meta { color: var(--text-dim); font-size: 11px; }
+.ledger-item .ledger-actions { display: flex; gap: 6px; margin-top: 6px; }
+.ledger-item details { margin-top: 4px; color: var(--text-dim); overflow-wrap: anywhere; }
+.ledger-item textarea { box-sizing: border-box; width: 100%; min-height: 58px; margin-top: 6px; resize: vertical; }
 .dim { color: var(--text-dim); font-size: 12px; }
 
 /* ============ 日记查看器 ============ */

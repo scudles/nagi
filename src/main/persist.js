@@ -10,7 +10,7 @@
 import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { formatMemories, mergeMemoryEntries } from '../core/memory.js'
+import { mergeMemoryEntries } from '../core/memory.js'
 import { recordLedger, deleteLedgerSource } from './ledger.js'
 
 const usersFile = (name) => join(app.getPath('userData'), name)
@@ -89,7 +89,8 @@ function persistMemories() {
 
 /** 给提示词用的短句数组 */
 export function memoryLines() {
-  return formatMemories(loadMemories())
+  return loadMemories().map((entry) =>
+    `${entry.provenance === 'user-stated' ? '用户明确记下' : '未经核实的模型摘录'}：${entry.text}`)
 }
 
 /** 完整条目（设置页展示用） */
@@ -98,13 +99,14 @@ export function listMemories() {
 }
 
 /** 手动新增一条 */
-export function addMemory(text) {
+export function addMemory(text, { recordLedgerEntry = true } = {}) {
   loadMemories()
   const t = String(text || '').trim()
   if (!t) return listMemories()
   const result = mergeMemoryEntries(memories, { add: [t] }, Date.now())
-  memories = result.entries
-  for (const entry of memories.filter((item) => result.added.includes(item.text))) {
+  memories = result.entries.map((entry) => result.added.includes(entry.text)
+    ? { ...entry, provenance: 'user-stated' } : entry)
+  for (const entry of memories.filter((item) => result.added.includes(item.text) && recordLedgerEntry)) {
     recordLedger({ category: 'claim', text: entry.text,
       source: { type: 'memory-manual', ref: entry.id }, occurredAt: entry.at,
       certainty: 'user-stated', meta: { memoryId: entry.id } })
@@ -114,12 +116,12 @@ export function addMemory(text) {
 }
 
 /** 删除一条（按 id 或原文） */
-export function removeMemory({ id, text } = {}) {
+export function removeMemory({ id, text } = {}, { updateLedger = true } = {}) {
   loadMemories()
   const before = memories.filter((entry) => id ? entry.id === id : text && entry.text === text)
   if (id) memories = memories.filter((e) => e.id !== id)
   else if (text) memories = mergeMemoryEntries(memories, { remove: [text] }, Date.now()).entries
-  for (const entry of before) {
+  if (updateLedger) for (const entry of before) {
     for (const type of ['memory-manual', 'memory-model', 'memory']) deleteLedgerSource(type, entry.id)
   }
   persistMemories()
@@ -135,7 +137,8 @@ export function mergeMemoryOps(ops, now = Date.now(), provenance = {}) {
   loadMemories()
   const before = memories
   const r = mergeMemoryEntries(before, ops || {}, now)
-  memories = r.entries
+  memories = r.entries.map((entry) => r.added.includes(entry.text)
+    ? { ...entry, provenance: 'model-extracted' } : entry)
 
   for (const entry of before.filter((item) => r.removed.includes(item.text))) {
     for (const type of ['memory-manual', 'memory-model', 'memory']) deleteLedgerSource(type, entry.id)
@@ -236,4 +239,15 @@ export function clearHistory() {
   history = []
   lastAt = null
   writeJsonSoon(usersFile('history.json'), { version: 1, messages: [], lastAt: null })
+}
+
+export function purgeHistoryFragments(fragments) {
+  loadHistory()
+  const needles = fragments.map((text) => String(text || '').trim()).filter(Boolean)
+  if (!needles.length) return 0
+  const before = history.length
+  history = history.filter((message) => !needles.some((needle) =>
+    message.content.trim() === needle || (needle.length >= 3 && message.content.includes(needle))))
+  if (history.length !== before) writeJsonSoon(usersFile('history.json'), { version: 1, messages: history, lastAt })
+  return before - history.length
 }

@@ -65,6 +65,20 @@ export class RagStoreIo {
   get metaFile() {
     return join(this.dir, 'meta.json')
   }
+  get revokedFile() {
+    return join(this.dir, 'revoked.json')
+  }
+
+  readRevoked() {
+    if (!existsSync(this.revokedFile)) return new Set()
+    const ids = JSON.parse(readFileSync(this.revokedFile, 'utf8'))
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new Error('撤销清单损坏，记忆检索已暂停')
+    return new Set(ids)
+  }
+
+  writeRevoked(ids) {
+    atomicWrite(this.revokedFile, JSON.stringify([...ids]))
+  }
 
   /** 读 meta（损坏/缺失都当默认值，绝不抛） */
   loadMeta() {
@@ -202,7 +216,7 @@ export class RagStoreIo {
   /** 磁盘占用（字节） */
   diskUsage() {
     let bytes = 0
-    for (const f of [this.vectorsFile, this.chunksFile, this.pendingFile, this.metaFile]) {
+    for (const f of [this.vectorsFile, this.chunksFile, this.pendingFile, this.metaFile, this.revokedFile]) {
       try {
         if (existsSync(f)) bytes += statSync(f).size
       } catch {
@@ -214,7 +228,7 @@ export class RagStoreIo {
 
   /** 清空档案（设置页二次确认后才调） */
   clear() {
-    for (const f of [this.vectorsFile, this.chunksFile, this.pendingFile, this.metaFile]) {
+    for (const f of [this.vectorsFile, this.chunksFile, this.pendingFile, this.metaFile, this.revokedFile]) {
       try {
         if (existsSync(f)) unlinkSync(f)
       } catch {
