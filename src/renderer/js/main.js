@@ -127,11 +127,10 @@ async function boot() {
     // TapBody 动作在 pokeHer() 里已经播了，这里只管说
   })
 
-  // 事件：家里设备状态变化（桌宠气泡提醒；工作台进工具日志）
+  // 设备状态只进工作台日志；被动信号不绕过主动陪伴的打扰预算弹气泡。
   window.nagi.on(EVT.HA_EVENT, (payload) => {
     if (!payload || !payload.summary) return
-    if (mode === MODE.PET) ui.showBubble(`（家里：${payload.summary}）`)
-    else ui.addToolLog(`（家里：${payload.summary}）`)
+    if (mode === MODE.WORKBENCH) ui.addToolLog(`（家里：${payload.summary}）`)
   })
 
   wireWindowButtons()
@@ -609,9 +608,62 @@ function openSettings() {
   if (!overlay) return
   overlay.classList.remove('hidden')
   fillSettingsForm()
+  refreshCalendarStatus()
+  refreshMusicStatus()
+  refreshHaStatus()
 }
 function closeSettings() {
   document.getElementById('settings-overlay')?.classList.add('hidden')
+}
+
+async function refreshCalendarStatus() {
+  const label = document.getElementById('calendar-status')
+  const list = document.getElementById('calendar-events')
+  if (!label || !list || !window.nagi.calendar) return
+  try {
+    const state = await window.nagi.calendar.status()
+    if (!state.authorized) {
+      label.textContent = '尚未授权日历文件'
+      list.textContent = ''
+      return
+    }
+    label.textContent = `已授权快照：${state.sourceName} · 导入于 ${new Date(state.importedAt).toLocaleString()} · 共 ${state.total} 项` +
+      (state.unsupported ? ` · ${state.unsupported} 项重复或无法可靠解析的日程已跳过` : '')
+    list.textContent = state.events.length
+      ? state.events.map((event) => `${new Date(event.startsAt).toLocaleString()} ${event.title}`).join('\n')
+      : '快照里没有可显示的未来日程'
+  } catch (err) {
+    label.textContent = `日历快照不可读：${err.message}`
+    list.textContent = ''
+  }
+}
+
+async function refreshMusicStatus() {
+  const label = document.getElementById('music-status')
+  if (!label || !window.nagi.music) return
+  label.textContent = '读取中…'
+  try {
+    const state = await window.nagi.music.status()
+    if (!state.authorized) label.textContent = '尚未授权音乐信号'
+    else if (state.paused) label.textContent = '已授权；勿扰或只陪着期间暂停读取'
+    else if (state.error) label.textContent = `已授权；读取失败：${state.error}`
+    else if (!state.observation?.available) label.textContent = '已授权；Windows 当前没有可用的媒体会话'
+    else {
+      const obs = state.observation
+      label.textContent = `已授权 · ${obs.playbackStatus === 'playing' ? '正在播放' : obs.playbackStatus === 'paused' ? '已暂停' : '状态未知'}：${obs.title || '无曲名'}` +
+        (obs.artist ? ` / ${obs.artist}` : '') + ` · 来源 ${obs.app || '未知播放器'}`
+    }
+  } catch (err) { label.textContent = `音乐信号读取失败：${err.message}` }
+}
+
+async function refreshHaStatus() {
+  const label = document.getElementById('ha-signal-status')
+  if (!label || !window.nagi.ha) return
+  try {
+    const state = await window.nagi.ha.signalStatus()
+    label.textContent = `设备状态读取：${state.readAuthorized ? '已授权' : '未授权'} · 设备控制：${state.controlAuthorized ? '已授权，仍需逐次确认' : '未授权'}` +
+      (state.paused ? ' · 勿扰/只陪着期间暂停信号' : '')
+  } catch (err) { label.textContent = `HA 授权状态读取失败：${err.message}` }
 }
 
 function readLlmForm() {
@@ -1444,6 +1496,45 @@ function wireRagSettings(on) {
 
 function wireSettingsPage() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn)
+
+  on('btn-calendar-import', async () => {
+    const result = await window.nagi.calendar.import()
+    if (!result.ok && !result.canceled) document.getElementById('calendar-status').textContent = `导入失败：${result.error}`
+    else await refreshCalendarStatus()
+  })
+  on('btn-calendar-revoke', async () => {
+    await window.nagi.calendar.revoke()
+    await refreshCalendarStatus()
+  })
+  on('btn-music-enable', async () => {
+    const state = await window.nagi.music.enable()
+    if (state.error) document.getElementById('music-status').textContent = `已授权；读取失败：${state.error}`
+    else await refreshMusicStatus()
+  })
+  on('btn-music-refresh', refreshMusicStatus)
+  on('btn-music-revoke', async () => {
+    await window.nagi.music.revoke()
+    await refreshMusicStatus()
+  })
+  on('btn-ha-read-enable', async () => {
+    await window.nagi.ha.enableRead()
+    await refreshHaStatus()
+  })
+  on('btn-ha-control-enable', async () => {
+    const result = await window.nagi.ha.enableControl()
+    if (!result.ok && !result.canceled) document.getElementById('ha-result').textContent = result.error || '授权失败'
+    await refreshHaStatus()
+  })
+  on('btn-ha-control-revoke', async () => {
+    await window.nagi.ha.revokeControl()
+    await refreshHaStatus()
+  })
+  on('btn-ha-signal-revoke', async () => {
+    await window.nagi.ha.revokeSignal()
+    await refreshHaStatus()
+    await refreshSecretStatus()
+    document.getElementById('ha-list').textContent = ''
+  })
 
   on('btn-save-llm', async () => {
     const provider = document.getElementById('set-provider').value

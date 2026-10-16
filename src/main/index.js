@@ -16,6 +16,10 @@ import { registerVoiceIpc } from './ipc/voice.js'
 import { registerRagIpc } from './ipc/rag.js'
 import { registerLedgerIpc } from './ipc/ledger.js'
 import { registerCompanionIpc } from './ipc/companion.js'
+import { registerCalendarIpc } from './ipc/calendar.js'
+import { registerMusicIpc } from './ipc/music.js'
+import { startMusicMonitor, stopMusicMonitor } from './signals/music.js'
+import { refreshHaSignals } from './signals/ha.js'
 import { initRag } from './rag/index.js'
 import { migrateLegacyLedger } from './ledger.js'
 import { loadSettings, saveSettings } from './settings-store.js'
@@ -61,6 +65,8 @@ if (!gotLock) {
     registerRagIpc()
     registerLedgerIpc()
     registerCompanionIpc()
+    registerCalendarIpc()
+    registerMusicIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
@@ -90,6 +96,8 @@ if (!gotLock) {
 
     // 活动监测：看你在用什么程序，适时主动开口（M3，受 settings.privacy 控制）
     startActivityMonitor()
+    startMusicMonitor()
+    refreshHaSignals()
 
     // 日程提醒：她替你记着的事，到点主动开口（M4）
     startReminders()
@@ -127,6 +135,7 @@ if (!gotLock) {
 
   // 退出前清理（浏览器连接 / HA 事件订阅）
   app.on('will-quit', (e) => {
+    stopMusicMonitor()
     if (!disposeAgent.__done) {
       disposeAgent.__done = true
       e.preventDefault()

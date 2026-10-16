@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
 import { chromium } from 'playwright'
+import { CalendarSnapshot } from '../src/core/signals/calendar-store.js'
 
 process.env.NO_PROXY = '127.0.0.1,localhost'
 process.env.no_proxy = '127.0.0.1,localhost'
@@ -19,6 +20,12 @@ const port = Number(process.env.CDP_PORT || 9340)
 const model = process.env.OLLAMA_TEST_MODEL || 'qwen2.5'
 const baseURL = process.env.OLLAMA_TEST_BASE_URL || 'http://127.0.0.1:11434/v1'
 const profile = mkdtempSync(join(tmpdir(), 'nagi-local-llm-'))
+const calendarStart = new Date(Date.now() + 2 * 3600000).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+new CalendarSnapshot(profile).importText(
+  ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:simulated-calendar-event',
+    'DTSTART:' + calendarStart, 'SUMMARY:阶段7模拟日程', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n'),
+  '模拟日程.ics'
+)
 const fileRoot = join(profile, 'files')
 mkdirSync(fileRoot)
 writeFileSync(join(fileRoot, 'm6-proof.txt'), 'local tool proof\n')
@@ -85,6 +92,9 @@ try {
   if (!page) throw new Error('找不到桌宠页面：' + logs.slice(-1500))
 
   const status = await page.evaluate((args) => window.nagi.llm.localStatus(args), { baseURL, model })
+  const calendarBefore = await page.evaluate(() => window.nagi.calendar.status())
+  check('模拟日历事件经可信 IPC 只读可见', calendarBefore.authorized &&
+    calendarBefore.events.some((e) => e.title === '阶段7模拟日程'))
   check('主进程探测本机已安装模型', status.ok && status.models.some((name) => name.startsWith(model)), JSON.stringify(status))
   const keyState = await page.evaluate(() => window.nagi.secrets.status())
   check('无云端 API Key 仍能进入本地通道', !keyState.llmApiKey)
@@ -96,6 +106,9 @@ try {
   check('本机服务不可达时给出明确状态', offline.reason === 'offline')
 
   await page.evaluate(() => document.getElementById('btn-pet-settings')?.click())
+  await page.waitForFunction(() => document.getElementById('calendar-status')?.textContent?.includes('模拟日程.ics'))
+  check('设置页标明日历快照来源', await page.evaluate(() =>
+    document.getElementById('calendar-events')?.textContent?.includes('阶段7模拟日程')))
   await page.waitForFunction(() => document.getElementById('set-local-llm-status')?.textContent?.includes('已就绪'), null, { timeout: 10000 })
   const localUi = await page.evaluate(() => ({
     localVisible: !document.getElementById('set-local-llm')?.classList.contains('hidden'),
@@ -403,6 +416,24 @@ try {
     return result.ok && current.tools?.fileRoot === ''
   })
   check('用户可撤销文件目录授权', revoked)
+  const calendarRevoked = await page.evaluate(async () => {
+    await window.nagi.calendar.revoke()
+    return window.nagi.calendar.status()
+  })
+  check('日历授权可独立撤销并删除本机快照', !calendarRevoked.authorized &&
+    !existsSync(join(profile, 'signals', 'calendar.ics')))
+  const musicConsent = await page.evaluate(async () => {
+    const before = await window.nagi.music.status()
+    const enabled = await window.nagi.music.enable()
+    const after = await window.nagi.music.status()
+    const revoked = await window.nagi.music.revoke()
+    const final = await window.nagi.music.status()
+    return { before, enabled, after, revoked, final }
+  })
+  check('音乐信号单独授权，勿扰时不读取，撤销后失效',
+    !musicConsent.before.authorized && musicConsent.enabled.authorized &&
+    musicConsent.after.paused === 'do-not-disturb' &&
+    !musicConsent.revoked.authorized && !musicConsent.final.authorized)
   // connectOverCDP 下不调用 browser.close()，否则会关掉目标 Electron。
 } catch (error) {
   console.error('✘ 验收中断：', error.message)

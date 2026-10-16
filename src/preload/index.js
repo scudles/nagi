@@ -54,7 +54,12 @@ const api = {
   },
   ha: {
     test: () => ipcRenderer.invoke(IPC.HA_TEST),
-    list: () => ipcRenderer.invoke(IPC.HA_LIST)
+    list: () => ipcRenderer.invoke(IPC.HA_LIST),
+    signalStatus: () => ipcRenderer.invoke(IPC.HA_SIGNAL_STATUS),
+    enableRead: () => ipcRenderer.invoke(IPC.HA_READ_ENABLE),
+    enableControl: () => ipcRenderer.invoke(IPC.HA_CONTROL_ENABLE),
+    revokeControl: () => ipcRenderer.invoke(IPC.HA_CONTROL_REVOKE),
+    revokeSignal: () => ipcRenderer.invoke(IPC.HA_SIGNAL_REVOKE)
   },
   pet: {
     poke: () => ipcRenderer.invoke(IPC.PET_POKE)
@@ -104,6 +109,16 @@ const api = {
   },
   promises: {
     list: () => ipcRenderer.invoke(IPC.PROMISE_LIST)
+  },
+  calendar: {
+    status: () => ipcRenderer.invoke(IPC.CALENDAR_STATUS),
+    import: () => ipcRenderer.invoke(IPC.CALENDAR_IMPORT),
+    revoke: () => ipcRenderer.invoke(IPC.CALENDAR_REVOKE)
+  },
+  music: {
+    status: () => ipcRenderer.invoke(IPC.MUSIC_STATUS),
+    enable: () => ipcRenderer.invoke(IPC.MUSIC_ENABLE),
+    revoke: () => ipcRenderer.invoke(IPC.MUSIC_REVOKE)
   },
   /** 语音链路（M5）：她既能开口，也能听见 */
   voice: {

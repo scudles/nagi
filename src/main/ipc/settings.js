@@ -16,6 +16,7 @@ import { getLedger } from '../ledger.js'
 import { forgetExperience } from '../ledger-actions.js'
 import { modelsDir, projectRoot } from '../paths.js'
 import { refreshMonitorPrivacy } from '../monitor/index.js'
+import { refreshHaSignals } from '../signals/ha.js'
 
 const ALL_SECRET_KEYS = Object.values(SECRET_KEYS)
 
@@ -60,6 +61,7 @@ export function registerSettingsIpc() {
     }
     const next = saveSettings(patch || {})
     if (patch?.privacy) refreshMonitorPrivacy()
+    if (patch?.privacy || patch?.homeassistant) refreshHaSignals()
     broadcast(EVT.SETTINGS_CHANGED, next)
     if (patch && (patch.mode === MODE.PET || patch.mode === MODE.WORKBENCH)) {
       switchMode(patch.mode)
@@ -69,7 +71,9 @@ export function registerSettingsIpc() {
 
   trustedHandle(IPC.SECRET_SET, (_e, { key, value }) => {
     if (!ALL_SECRET_KEYS.includes(key)) return { ok: false, error: 'unknown key' }
-    return setSecret(key, value)
+    const result = setSecret(key, value)
+    if (key === SECRET_KEYS.HA_TOKEN) refreshHaSignals()
+    return result
   })
 
   trustedHandle(IPC.SECRET_STATUS, () => {
@@ -80,7 +84,9 @@ export function registerSettingsIpc() {
 
   trustedHandle(IPC.SECRET_DELETE, (_e, { key }) => {
     if (!ALL_SECRET_KEYS.includes(key)) return { ok: false, error: 'unknown key' }
-    return deleteSecret(key)
+    const result = deleteSecret(key)
+    if (key === SECRET_KEYS.HA_TOKEN) refreshHaSignals()
+    return result
   })
 
   trustedHandle(IPC.APP_GET_INFO, () => ({

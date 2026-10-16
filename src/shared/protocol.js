@@ -54,9 +54,20 @@ export const IPC = {
   REMINDER_REMOVE: 'reminder:remove',
   REMINDER_DONE: 'reminder:done',
   PROMISE_LIST: 'promise:list',
+  CALENDAR_STATUS: 'calendar:status',
+  CALENDAR_IMPORT: 'calendar:import',
+  CALENDAR_REVOKE: 'calendar:revoke',
+  MUSIC_STATUS: 'music:status',
+  MUSIC_ENABLE: 'music:enable',
+  MUSIC_REVOKE: 'music:revoke',
   // 智能家居
   HA_TEST: 'ha:test',
   HA_LIST: 'ha:list',
+  HA_SIGNAL_STATUS: 'ha:signal-status',
+  HA_READ_ENABLE: 'ha:read-enable',
+  HA_CONTROL_ENABLE: 'ha:control-enable',
+  HA_CONTROL_REVOKE: 'ha:control-revoke',
+  HA_SIGNAL_REVOKE: 'ha:signal-revoke',
   // 应用信息
   APP_GET_INFO: 'app:get-info',
   MODELS_LIST: 'models:list'

@@ -143,7 +143,7 @@ export function planHomeService(args) {
 
 /**
  * 组装统一执行入口。
- * @param {object} deps { files, system, browser, ha, native, reminders }
+ * @param {object} deps { files, system, browser, ha, native, reminders, haReadAuthorized, haControlAuthorized }
  *   files:    createFileTools 的返回
  *   system:   createSystemTools 的返回
  *   browser:  createBrowserTools 的返回
@@ -189,24 +189,30 @@ export function createToolRunner(deps) {
         return deps.native.notify(args)
 
       case 'home_list': {
+        if (!deps.haReadAuthorized?.()) return { ok: false, summary: 'HA 读取未授权或已暂停' }
         if (!deps.ha?.configured) return { ok: false, summary: 'Home Assistant 未配置' }
         const list = await deps.ha.listEntities(args)
+        if (!deps.haReadAuthorized?.()) return { ok: false, summary: 'HA 读取授权已撤销' }
         const lines = list.slice(0, 60).map((e) => `${e.entity_id}  ${e.name} = ${e.state}${e.unit}`)
         return { ok: true, summary: `共 ${list.length} 个实体（显示前 ${lines.length}）：\n` + lines.join('\n'), data: { count: list.length } }
       }
       case 'home_get': {
+        if (!deps.haReadAuthorized?.()) return { ok: false, summary: 'HA 读取未授权或已暂停' }
         if (!deps.ha?.configured) return { ok: false, summary: 'Home Assistant 未配置' }
         const s = await deps.ha.getState(args.entity_id)
+        if (!deps.haReadAuthorized?.()) return { ok: false, summary: 'HA 读取授权已撤销' }
         if (!s) return { ok: false, summary: `找不到实体 ${args.entity_id}` }
         return { ok: true, summary: `${s.name}（${s.entity_id}）= ${s.state}` }
       }
       case 'home_set': {
+        if (!deps.haControlAuthorized?.()) return { ok: false, summary: 'HA 设备控制未单独授权或已暂停' }
         if (!deps.ha?.configured) return { ok: false, summary: 'Home Assistant 未配置' }
         const plan = planHomeService(args)
         await deps.ha.callService(plan.domain, plan.service, plan.data)
         return { ok: true, summary: `已调用 ${plan.domain}.${plan.service}（${args.entity_id}）` }
       }
       case 'home_scene': {
+        if (!deps.haControlAuthorized?.()) return { ok: false, summary: 'HA 设备控制未单独授权或已暂停' }
         if (!deps.ha?.configured) return { ok: false, summary: 'Home Assistant 未配置' }
         await deps.ha.trigger(args.entity_id)
         return { ok: true, summary: `已触发 ${args.entity_id}` }

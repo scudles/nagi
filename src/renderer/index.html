@@ -398,7 +398,26 @@
           <button id="btn-save-monitor">保存陪伴与监测设置</button>
         </div>
 
+        <h3>日历信号（只读）</h3>
+        <p class="dim">选择一份 .ics 日历文件后，凪只保存本机快照，并在聊天时参考未来 48 小时的计划。计划不等于已经发生的经历。撤销会删除快照；更新日历需重新选择文件。</p>
+        <div class="sp-row">
+          <button id="btn-calendar-import">选择 .ics 文件</button>
+          <button id="btn-calendar-revoke" class="danger">撤销并删除快照</button>
+        </div>
+        <div id="calendar-status" class="dim" aria-live="polite"></div>
+        <div id="calendar-events" class="dim" style="max-height:180px;overflow:auto;white-space:pre-wrap"></div>
+
+        <h3>音乐信号（只读）</h3>
+        <p class="dim">单独授权后，凪可读取 Windows 当前媒体会话的曲名、歌手和播放状态。不控制播放器，不把曲目自动写进共同记忆。勿扰和“只陪着”期间暂停读取。</p>
+        <div class="sp-row">
+          <button id="btn-music-enable">授权读取</button>
+          <button id="btn-music-refresh">查看当前媒体</button>
+          <button id="btn-music-revoke" class="danger">撤销音乐授权</button>
+        </div>
+        <div id="music-status" class="dim" aria-live="polite"></div>
+
         <h3>智能家居（Home Assistant）</h3>
+        <p class="dim">先单独授权只读设备状态，再按需授权控制。每次控制仍需确认具体设备与动作；服务请求成功只说明已尝试，不证明设备已达到目标状态。撤销信号会断开订阅并删除 Token。</p>
         <label>地址 <input id="set-ha-url" type="text" /></label>
         <label>Token <span id="set-ha-status" class="dim">未配置</span>
           <input id="set-ha-token" type="password" placeholder="Long-Lived Access Token" />
@@ -408,6 +427,15 @@
           <button id="btn-test-ha">测试连接</button>
         </div>
         <div id="ha-result" class="dim"></div>
+        <div class="sp-row">
+          <button id="btn-ha-read-enable">授权只读设备状态</button>
+          <button id="btn-ha-control-enable">授权逐次确认的控制</button>
+        </div>
+        <div class="sp-row">
+          <button id="btn-ha-control-revoke" class="danger">撤销控制</button>
+          <button id="btn-ha-signal-revoke" class="danger">撤销 HA 并删除 Token</button>
+        </div>
+        <div id="ha-signal-status" class="dim" aria-live="polite"></div>
         <div class="sp-row">
           <button id="btn-ha-list">列设备（前100）</button>
         </div>

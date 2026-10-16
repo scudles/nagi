@@ -44,7 +44,7 @@ import { TOOL_SCHEMAS, createToolRunner } from '../core/tools/registry.js'
 import { createFileTools } from '../core/tools/files.js'
 import { createSystemTools } from '../core/tools/system.js'
 import { createBrowserTools } from '../core/tools/browser.js'
-import { HAClient, summarizeHaEvent } from '../core/homeassistant/ha.js'
+import { getHa, stopHaSignals, canControlHa, haReadAllowed, haContext } from './signals/ha.js'
 import { createNativeTools } from './native-tools.js'
 import { getSettings } from './settings-store.js'
 import { getSecret, hasSecret } from './keystore.js'
@@ -56,6 +56,8 @@ import { startMonitor, stopMonitor } from './monitor/index.js'
 import { getRag } from './rag/index.js'
 import { getLedger } from './ledger.js'
 import { runRecordedTool } from './promises.js'
+import { upcomingCalendarContext } from './signals/calendar.js'
+import { currentMusicContext } from './signals/music.js'
 import {
   startReminderEngine,
   stopReminderEngine,
@@ -85,27 +87,6 @@ const browserTools = createBrowserTools({
   },
   userDataDir: join(app.getPath('userData'), 'playwright-profile')
 })
-
-let haClient = null
-function getHa() {
-  const cfg = getSettings().homeassistant || {}
-  if (!cfg.enabled) return null
-  const token = getSecret(SECRET_KEYS.HA_TOKEN)
-  if (!cfg.baseURL || !token) return null
-  if (!haClient || haClient.baseURL !== cfg.baseURL || haClient.token !== token) {
-    if (haClient) haClient.stopEvents()
-    haClient = new HAClient({
-      baseURL: cfg.baseURL,
-      token,
-      onEvent: (evt) => {
-        const summary = summarizeHaEvent(evt)
-        if (summary) broadcast(EVT.HA_EVENT, { summary, entity_id: evt.data?.entity_id })
-      }
-    })
-    haClient.startEvents()
-  }
-  return haClient
-}
 
 /* ---------------- 会话状态 ---------------- */
 const MAX_HISTORY = 40
@@ -563,7 +544,7 @@ async function buildMessages(userText, supportsNative) {
     recalled: await recalledPieces(userText),
     recentReplies: recentAssistantReplies(history, 4),
     // 她替你记着的提醒：让她知道「有这几件事等着」，别把答应过的事忘了
-    extra: upcomingReminderLines()
+    extra: [...upcomingReminderLines(), ...upcomingCalendarContext(), ...currentMusicContext(), ...haContext()]
   })
   return [
     { role: 'system', content: buildSystemPrompt({ nativeTools: supportsNative, context }) },
@@ -691,6 +672,8 @@ export async function runTurn(userText, emit, turnRef = null) {
     system,
     browser: browserTools,
     ha,
+    haReadAuthorized: haReadAllowed,
+    haControlAuthorized: canControlHa,
     native: nativeTools,
     reminders: reminderTools()
   })
@@ -840,7 +823,7 @@ export async function disposeAgent() {
   } catch {
     /* ignore */
   }
-  if (haClient) haClient.stopEvents()
+  stopHaSignals()
   try {
     flushPersist() // 把防抖中的记忆/历史立刻刷盘
   } catch {
@@ -898,32 +881,4 @@ export function reminderRemove(payload) {
 export function reminderDone(id) {
   const r = completeReminder(id)
   return r.ok ? { ok: true, items: listReminders() } : { ok: false, error: r.error }
-}
-
-/* ---------------- HA 专用 IPC（设置页的"测试连接 / 列设备"） ---------------- */
-export async function haTest() {
-  const cfg = getSettings().homeassistant || {}
-  if (!cfg.baseURL) return { ok: false, error: '尚未配置 Home Assistant 地址' }
-  if (!hasSecret(SECRET_KEYS.HA_TOKEN)) return { ok: false, error: '尚未配置 Home Assistant Token' }
-  try {
-    const client = new HAClient({ baseURL: cfg.baseURL, token: getSecret(SECRET_KEYS.HA_TOKEN) })
-    const r = await client.test()
-    return { ok: r.ok, error: r.ok ? null : `HA 响应异常：${r.message}` }
-  } catch (err) {
-    return { ok: false, error: err.message }
-  }
-}
-
-export async function haList(domain) {
-  const cfg = getSettings().homeassistant || {}
-  if (!cfg.baseURL || !hasSecret(SECRET_KEYS.HA_TOKEN)) {
-    return { ok: false, error: '尚未配置 Home Assistant（地址 + Token）' }
-  }
-  try {
-    const client = new HAClient({ baseURL: cfg.baseURL, token: getSecret(SECRET_KEYS.HA_TOKEN) })
-    const list = await client.listEntities({ domain })
-    return { ok: true, count: list.length, entities: list.slice(0, 100) }
-  } catch (err) {
-    return { ok: false, error: err.message }
-  }
 }

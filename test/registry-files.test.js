@@ -32,6 +32,34 @@ test('home_set：场景与兜底 toggle', () => {
   assert.equal(planHomeService({ entity_id: 'fan.x' }).service, 'toggle')
 })
 
+test('HA 工具执行时逐次检查只读与控制授权，撤销中的读取不回传结果', async () => {
+  let read = true
+  let control = false
+  let calls = 0
+  let finishList
+  const run = createToolRunner({
+    haReadAuthorized: () => read,
+    haControlAuthorized: () => control,
+    ha: {
+      configured: true,
+      listEntities: () => new Promise((resolve) => { finishList = resolve }),
+      callService: async () => { calls++ }
+    }
+  })
+  const denied = await run('home_set', { entity_id: 'light.fixture', state: 'on' })
+  assert.equal(denied.ok, false)
+  assert.equal(calls, 0)
+  control = true
+  assert.equal((await run('home_set', { entity_id: 'light.fixture', state: 'on' })).ok, true)
+  assert.equal(calls, 1)
+  const pending = run('home_list', {})
+  read = false
+  finishList([{ entity_id: 'light.secret', name: '秘密设备', state: 'on' }])
+  const revoked = await pending
+  assert.equal(revoked.ok, false)
+  assert.doesNotMatch(revoked.summary, /秘密设备/)
+})
+
 /* ---------------- 文件路径边界 ---------------- */
 test('resolveWithin：放行目录内路径，拦截越权', () => {
   const root = 'E:/授权目录'

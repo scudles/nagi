@@ -16,6 +16,7 @@ export class HAClient {
     this.wsTimer = null
     this.wsBackoff = 2000
     this.wsAlive = false
+    this.eventsEnabled = false
   }
 
   get configured() {
@@ -91,12 +92,14 @@ export class HAClient {
   /* ---------------- WebSocket 事件订阅 ---------------- */
 
   startEvents() {
-    if (!this.configured || this.ws) return
+    if (!this.configured) return
+    this.eventsEnabled = true
+    if (this.ws) return
     this.connectWs()
   }
 
   connectWs() {
-    if (this.ws) return
+    if (!this.eventsEnabled || this.ws) return
     const wsURL = this.baseURL.replace(/^http/, 'ws') + '/api/websocket'
     let ws
     try {
@@ -138,8 +141,10 @@ export class HAClient {
     })
     ws.on('close', () => {
       this.wsAlive = false
-      this.ws = null
-      this.scheduleReconnect()
+      if (this.ws === ws) {
+        this.ws = null
+        this.scheduleReconnect()
+      }
     })
     ws.on('error', () => {
       /* close 会跟着触发 */
@@ -147,7 +152,7 @@ export class HAClient {
   }
 
   scheduleReconnect() {
-    if (this.wsTimer || !this.configured) return
+    if (this.wsTimer || !this.configured || !this.eventsEnabled) return
     this.wsTimer = setTimeout(() => {
       this.wsTimer = null
       this.connectWs()
@@ -156,6 +161,7 @@ export class HAClient {
   }
 
   stopEvents() {
+    this.eventsEnabled = false
     if (this.wsTimer) {
       clearTimeout(this.wsTimer)
       this.wsTimer = null
