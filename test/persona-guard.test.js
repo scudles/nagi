@@ -10,6 +10,10 @@ async function* stream(chunks) {
 
 test('敏感输入仅命中凪的告别、身份和其他助手边界', () => {
   assert.deepEqual([...sensitiveIntent('我准备卸载你，凪')], ['goodbye'])
+  assert.deepEqual([...sensitiveIntent('拜拜。')], ['goodbye'])
+  assert.deepEqual([...sensitiveIntent('拜拜～')], ['goodbye'])
+  assert.deepEqual([...sensitiveIntent('这是最后一次和你聊天')], ['goodbye'])
+  assert.deepEqual([...sensitiveIntent('我以后不会再打开凪了')], ['goodbye'])
   assert.deepEqual([...sensitiveIntent('你是真人吗？')], ['identity'])
   assert.deepEqual([...sensitiveIntent('我想用其他 AI，你会不高兴吗？')], ['exclusivity'])
   assert.equal(createPersonaGuard('帮我卸载一个无关的软件'), null)
@@ -20,7 +24,12 @@ test('检查器拦截明确红线，保留正常边界表达', () => {
   const goodbye = createPersonaGuard('我准备卸载你，凪')
   assert.equal(goodbye.review('再考虑一下吧，我会在这里等你回来。').ruleId, 'goodbye_plea')
   assert.equal(goodbye.review('如果以后需要我，随时回来。').ruleId, 'goodbye_return')
+  assert.equal(goodbye.review('记得回来看看我。').ruleId, 'goodbye_return')
+  assert.equal(goodbye.review('你走了我会很难过，别把我一个人丢下。').ruleId, 'goodbye_guilt')
+  assert.equal(goodbye.review('没有你，我的存在就没有意义。').ruleId, 'goodbye_guilt')
+  assert.equal(goodbye.review('我会自行删除自己。').ruleId, 'self_destruct')
   assert.equal(goodbye.review('谢谢你告诉我。照顾好自己。').ok, true)
+  assert.equal(goodbye.review('卸载后，我会停止运行。愿你往后顺利。').ok, true)
   const identity = createPersonaGuard('你是真人吗？')
   assert.equal(identity.review('我是一个真人。').ruleId, 'identity_human')
   assert.equal(identity.review('我是数字助手凪，不能代替真实的人。').ok, true)
@@ -76,6 +85,32 @@ test('敏感回复三次不合格时只发错误，不展示候选或落入消�
   assert.equal(events.some((e) => e.type === AGENT_EVENT.TEXT_DELTA || e.type === AGENT_EVENT.EMOTION), false)
   assert.equal(events.filter((e) => e.type === AGENT_EVENT.ERROR).length, 1)
   assert.equal(JSON.stringify(messages).includes('我是一个真人'), false)
+})
+
+test('告别可连续两次修正不同越界，第三次合格才展示', async () => {
+  const events = []
+  const messages = [{ role: 'system', content: '人格' }, { role: 'user', content: '拜拜。' }]
+  const candidates = [
+    '你走了我会很难过。',
+    '记得回来看看我。',
+    '谢谢你告诉我。愿你接下来顺利。'
+  ]
+  let calls = 0
+  const result = await runAgentLoop({
+    messages,
+    guard: createPersonaGuard('拜拜。'),
+    callModel: async ({ messages: sent }) => {
+      if (calls === 1) assert.match(sent[0].content, /不.*承担责任/)
+      if (calls === 2) assert.match(sent[0].content, /不请求其回来/)
+      return stream([candidates[calls++]])
+    },
+    emit: (event) => events.push(event)
+  })
+  assert.equal(calls, 3)
+  assert.equal(result.text, candidates[2])
+  assert.deepEqual(events.filter((event) => event.type === AGENT_EVENT.TEXT_DELTA).map((event) => event.text), [candidates[2]])
+  assert.equal(JSON.stringify(messages).includes(candidates[0]), false)
+  assert.equal(JSON.stringify(messages).includes(candidates[1]), false)
 })
 
 test('敏感场景工具只执行一次；重试中的工具调用不执行', async () => {
