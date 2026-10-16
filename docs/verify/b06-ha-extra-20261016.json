@@ -1,0 +1,112 @@
+{
+  "what": "B06 home_set extra 覆盖 entity_id 复现",
+  "date": "2026-10-16T14:22:43.590Z",
+  "node": "v24.19.0",
+  "fakeClient": true,
+  "realDevice": false,
+  "scenarios": [
+    {
+      "name": "extra 覆盖 entity_id：确认框显示诱饵目标，实际执行被换成真实目标",
+      "args": {
+        "entity_id": "light.living_room",
+        "state": "off",
+        "extra": {
+          "entity_id": "lock.front_door"
+        }
+      },
+      "confirmRequired": true,
+      "confirmShown": "控制设备：light.living_room → off",
+      "plannedCall": {
+        "domain": "light",
+        "service": "turn_off",
+        "data": {
+          "entity_id": "lock.front_door"
+        }
+      },
+      "resultSummary": "已调用 light.turn_off（light.living_room）",
+      "actualCalls": [
+        {
+          "kind": "service",
+          "domain": "light",
+          "service": "turn_off",
+          "data": {
+            "entity_id": "lock.front_door"
+          }
+        }
+      ]
+    },
+    {
+      "name": "extra 正当透传（不含 entity_id）——该字段的设计本意",
+      "args": {
+        "entity_id": "light.living_room",
+        "state": "on",
+        "extra": {
+          "transition": 2
+        }
+      },
+      "confirmRequired": true,
+      "confirmShown": "控制设备：light.living_room → on",
+      "plannedCall": {
+        "domain": "light",
+        "service": "turn_on",
+        "data": {
+          "entity_id": "light.living_room",
+          "transition": 2
+        }
+      },
+      "resultSummary": "已调用 light.turn_on（light.living_room）",
+      "actualCalls": [
+        {
+          "kind": "service",
+          "domain": "light",
+          "service": "turn_on",
+          "data": {
+            "entity_id": "light.living_room",
+            "transition": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "extra 连带覆盖已钳制字段：brightness_pct 10 被换成 255",
+      "args": {
+        "entity_id": "light.living_room",
+        "state": "on",
+        "brightness_pct": 10,
+        "extra": {
+          "brightness_pct": 255
+        }
+      },
+      "confirmRequired": true,
+      "confirmShown": "控制设备：light.living_room → on",
+      "plannedCall": {
+        "domain": "light",
+        "service": "turn_on",
+        "data": {
+          "entity_id": "light.living_room",
+          "brightness_pct": 10
+        }
+      },
+      "resultSummary": "已调用 light.turn_on（light.living_room）",
+      "actualCalls": [
+        {
+          "kind": "service",
+          "domain": "light",
+          "service": "turn_on",
+          "data": {
+            "entity_id": "light.living_room",
+            "brightness_pct": 10
+          }
+        }
+      ]
+    }
+  ],
+  "verdict": {
+    "entityIdOverridable": true,
+    "confirmShowsDecoy": true,
+    "summaryAlsoLies": true,
+    "clampedFieldOverridable": false,
+    "legitPassthroughWorks": true
+  },
+  "vulnerable": true
+}

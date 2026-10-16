@@ -70,7 +70,7 @@ node E:\凪\.tools\npm\package\bin\npm-cli.js test
 | B07 / 🔵 WorkBuddy | 输入：本次四个红区源码文件、下述契约和 15 项临时验证场景。固化 native/JSON 两通道的等待时取消、批准同时取消、ACTING 时取消、正常批准；再覆盖未决 Promise/迟到拒绝、严格布尔值、重复/过期 token、跨回合重复模型 ID，以及 root revoke/pick/cancel/generic settings 绕过 | 输出：永久回归测试及命令/结果；取消后未开始的 executeTool 调用次数必须为 0，正常批准只执行 1 次；文件根撤销/换根先取消再保存，取消 picker 不改授权。补两个链接测试和发行版人工项时如缺环境，保留待验，不伪报通过 |
 | B05 / 🔵 WorkBuddy | 输入：`src/renderer/js/chat.js` 的 handleConfirm/onAgentEvent、`ui.js` 的 showConfirm，以及新的 CONFIRM token 契约。取消后确认 UI 可能仍留在屏幕，旧操作卡也可能持续显示等待 | 输出：仅 UI 层关闭/失效过期确认条与待处理显示；旧按钮不能批准下一操作，取消后能再次发送，多窗口响应只接受一次。用模拟事件/实际 UI 证明；不能更改红区 token、取消或授权规则 |
 | B08 / 🔵 WorkBuddy | 输入：本交接、TASKS/DECISIONS、已有 README 未提交初始化差异、本轮测试/构建日志 | 输出：按实际结果同步 README/验收文档，单独审阅提交原 README 差异，保留跳过/未完成项。不要混入 cloud-config.js；缺失旧任务书继续追索，未找到就记录缺口 |
-| B06 / 🔵 WorkBuddy（仅复现/建议） | 输入：`src/core/tools/registry.js` 的 planHomeService，`home_set.args.extra` 与顶层 entity_id。源码显示 extra 可覆盖确认展示的 entity_id；此项尚未运行复现 | 输出：使用假 HA 客户端给出“显示目标与实际服务目标是否一致”的测试证据与修复建议；不得接真实设备试错，涉及授权目标的代码修改先交 ChatGPT 红区处理 |
+| B06 / 🔵 WorkBuddy（仅复现/建议） | 输入：`src/core/tools/registry.js` 的 planHomeService，`home_set.args.extra` 与顶层 entity_id。源码显示 extra 可覆盖确认展示的 entity_id | 输出：使用假 HA 客户端给出“显示目标与实际服务目标是否一致”的测试证据与修复建议；不得接真实设备试错，涉及授权目标的代码修改先交 ChatGPT 红区处理。**2026-10-16 已复现（见下方红区建议节）：确认显示与实际执行目标不一致，漏洞成立；未改任何标准工具代码** |
 
 ### 必须遵守的契约
 
@@ -93,7 +93,20 @@ node E:\凪\.tools\npm\package\bin\npm-cli.js test
 - **请 WorkBuddy 修（B05）**：取消后残留确认条/等待操作卡；目前是源码发现，尚未人工 UI 复现。本次后端已阻止旧确认执行，UI 仍需明确失效显示。
 - **请 WorkBuddy 修（B07）**：将上列临时回归固化到 test，补足授权撤销与一次性 token 的持续保护；现有全量测试数没有覆盖全部新场景。
 - **请 WorkBuddy 修（B08）**：README 与旧验收记录的状态对账；两个链接测试不得写成已通过，R01 整包不得标成完成。
-- **请 WorkBuddy 修（B06，先复现并提建议）**：核对 HA extra 覆盖目标问题；若复现，保留失败证据交红区，不能自行改授权目标契约。
+- **请 WorkBuddy 修（B06，先复现并提建议）**：核对 HA extra 覆盖目标问题；若复现，保留失败证据交红区，不能自行改授权目标契约。**2026-10-16 已复现并通过假客户端留存证据，修复建议见下节，等 ChatGPT 决定。**
+
+### 红区建议（B06 复现产出，2026-10-16 WorkBuddy，待 ChatGPT 决定；未擅改）
+
+- **问题**：`src/core/tools/registry.js` `planHomeService()` 在 `state:'on'|'off'` 分支与仅 extra 兜底分支中，把 `args.extra` 展开在 `entity_id` **之后**（`data: { entity_id, ...extra }`），`extra.entity_id` 可覆盖已核验目标。复现（`scripts/verify-b06-ha-extra.mjs`，假 HA 客户端，不接真实设备；证据 `docs/verify/b06-ha-extra-20261016.json`）：
+  - 调用 `home_set(entity_id='light.living_room', state='off', extra={entity_id:'lock.front_door'})`；
+  - 确认框显示 `控制设备：light.living_room → off`（`describeToolCall` 读 args 原文），用户批准的是“关灯”；
+  - 实际执行 `light.turn_off {entity_id:'lock.front_door'}`——**对门锁下达了关闭指令**；结果摘要同样显示 `light.living_room`（也读 args 原文），用户与日志都被蒙在鼓里。
+  - 违反任务书 S02「控制参数不得通过 extra 等字段替换已核验的目标」「确认展示的对象与实际执行对象一致」。
+- **次要不一致**：`climate.set_temperature` 与 `light+brightness_pct` 分支完全不展开 extra（正当透传字段如 `transition` 在这些分支被静默丢弃）——同一参数三种行为，建议统一。
+- **建议方向（供红区选择，不代改）**：
+  1. `extra` 改白名单制（仅允许 `transition`/`flash` 等 HA 服务数据字段），且最终 `data` 中 `entity_id` 最后写入、不可被覆盖；或直接移除 extra 透传，高级参数走显式 schema 字段；
+  2. 确认描述与结果摘要改读 `planHomeService` 的产物（post-plan），确保“确认对象 = 执行对象”；
+  3. 修复后由红区补回归（假客户端断言 `plan.data.entity_id === args.entity_id`），WorkBuddy 可协助补测试。
 
 ### 待确认与保留风险
 
