@@ -160,9 +160,33 @@ export function addToolCard({ id, phase, name, args, risk, ok, ms, summary }) {
   box.scrollTop = box.scrollHeight
 }
 
-/* ---------------- 确认条 ---------------- */
-export function showConfirm({ name, description, risk }) {
+/**
+ * 回合结束/取消：把还在「执行中…」的卡片标记为已停止——
+ * 取消后旧操作卡不许永远转圈（B05：待处理显示的失效）。
+ */
+export function markToolCardsStopped(reason = '已停止') {
+  for (const [, rec] of toolCards) {
+    rec.card.classList.remove('running')
+    rec.card.classList.add('stopped')
+    rec.meta.textContent = reason
+  }
+  toolCards.clear()
+}
+
+/* ---------------- 确认条 ----------------
+ * 生命周期（B05）：确认条只对「当前仍在等待的确认」有效。
+ *   - 同一时刻只允许一条；新确认到来先作废旧条（旧按钮随之失灵）；
+ *   - 回合结束 / 取消 / 超时 / 别处已处理时，由 dismissConfirm 作废：
+ *     Promise 以 null 落款，调用方据此跳过回传——失效的按钮批不了任何操作。
+ */
+let activeConfirm = null // { id, name, resolve, active }
+
+export function showConfirm({ id, name, description, risk }) {
+  // 新确认到来：先把上一条作废（它的按钮立即失灵，不能拿去批准新操作）
+  dismissConfirm()
   return new Promise((resolve) => {
+    const state = { id, name, resolve, active: true }
+    activeConfirm = state
     els.confirmBar.innerHTML = ''
     const info = document.createElement('div')
     info.className = 'grow'
@@ -174,6 +198,9 @@ export function showConfirm({ name, description, risk }) {
     deny.className = 'deny'
     deny.textContent = '拒绝'
     const done = (v) => {
+      if (!state.active) return // 已失效：迟到点击不生效
+      state.active = false
+      if (activeConfirm === state) activeConfirm = null
       els.confirmBar.classList.add('hidden')
       els.confirmBar.innerHTML = ''
       resolve(v)
@@ -183,4 +210,24 @@ export function showConfirm({ name, description, risk }) {
     els.confirmBar.append(info, allow, deny)
     els.confirmBar.classList.remove('hidden')
   })
+}
+
+/**
+ * 作废当前确认条（回合结束/取消/超时/被新确认替换/别处已处理）。
+ * 返回是否真有作废；Promise 以 null 落款，旧按钮同时失灵。
+ */
+export function dismissConfirm() {
+  const state = activeConfirm
+  if (!state) return false
+  state.active = false
+  activeConfirm = null
+  els.confirmBar.classList.add('hidden')
+  els.confirmBar.innerHTML = ''
+  state.resolve(null)
+  return true
+}
+
+/** 是否正显示着确认条（测试/调试用） */
+export function isConfirmActive() {
+  return !!activeConfirm
 }
