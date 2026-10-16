@@ -11,6 +11,7 @@ import { EmotionTagParser, extractEmotionTag } from '../llm/stream-normalize.js'
 import { extractActions, formatToolResult, JSON_PROTOCOL_HINT } from './json-protocol.js'
 import { getToolRisk, needsConfirm } from '../safety/policy.js'
 import { NagiPersona } from '../persona.js'
+import { resolve } from 'node:path'
 
 export const DEFAULT_MAX_STEPS = 10
 
@@ -37,26 +38,40 @@ export function buildSystemPrompt({ persona, nativeTools = true, context = '' } 
 }
 
 /** 工具调用的确认描述（给用户看的一句话） */
-export function describeToolCall(name, args = {}) {
+export function describeToolCall(name, args = {}, { fileRoot } = {}) {
   switch (name) {
     case 'run_command':
       return `执行命令：${args.command || '(空)'}`
     case 'file_write':
-      return `写入文件：${args.path || '(未指定路径)'}`
+      return `${args.append ? '追加到' : '覆盖或创建'}文件：${args.path ? (fileRoot ? resolve(fileRoot, args.path) : args.path) : '(未指定路径)'}`
     case 'clipboard_write':
       return '写入剪贴板'
+    case 'clipboard_read':
+      return '读取剪贴板内容'
+    case 'screenshot':
+      return '截取当前屏幕'
     case 'home_set':
-      return `控制设备：${args.entity_id || '(未指定)'} → ${args.service || args.action || ''}`
+      return `控制设备：${args.entity_id || '(未指定)'} → ${args.service || args.action || args.state || '切换状态'}`
     case 'home_scene':
       return `触发场景：${args.entity_id || args.scene || '(未指定)'}`
     case 'open_app':
       return `打开应用：${args.name || args.path || '(未指定)'}`
     case 'browser_act':
       return `浏览器操作：${args.action || ''} ${args.selector || args.url || ''}`.trim()
+    case 'browser_open':
+      return `打开网页：${args.url || '(未指定地址)'}`
+    case 'browser_scrape':
+      return `读取网页：${args.url || args.selector || '(当前页面)'}`
+    case 'web_search':
+      return `搜索并发送查询：${args.query || '(未指定内容)'}`
+    case 'home_list':
+      return `读取智能家居设备：${args.domain || '全部'}`
+    case 'home_get':
+      return `读取智能家居设备：${args.entity_id || '(未指定设备)'}`
     case 'reminder_add':
       return `设置提醒：${args.text || ''}（${args.when || args.at || ''}）`
     case 'reminder_cancel':
-      return `取消提醒：${args.id || args.text || ''}`
+      return `取消提醒：${args.id || args.text || '(未指定提醒)'}`
     default:
       return `${name}`
   }
@@ -91,6 +106,7 @@ function clampEmotion(e) {
  * @param {number}   opts.maxSteps
  * @param {AbortSignal} opts.signal
  * @param {object} opts.guard             敏感场景最终回复检查器；存在时先缓冲正文
+ * @param {string} opts.fileRoot          文件工具的授权根，用于给用户展示准确写入目标
  * @returns {Promise<{text:string, steps:number, aborted:boolean}>}
  */
 export async function runAgentLoop(opts) {
@@ -104,7 +120,8 @@ export async function runAgentLoop(opts) {
     emit,
     maxSteps = DEFAULT_MAX_STEPS,
     signal,
-    guard = null
+    guard = null,
+    fileRoot
   } = opts
 
   let steps = 0
@@ -245,7 +262,7 @@ export async function runAgentLoop(opts) {
               name: tc.name,
               args,
               risk,
-              description: describeToolCall(tc.name, args)
+              description: describeToolCall(tc.name, args, { fileRoot })
             })
             let approved = false
             try {

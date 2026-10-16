@@ -4,8 +4,9 @@
 // 与语音链路同构：下载是几十 MB 的慢活，进度走广播（RAG_EVT.PROGRESS），
 // 不让设置页干等；其余都是一次性查状态或触发维护动作。
 
-import { ipcMain, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
 import { RAG_IPC, RAG_EVT } from '../../shared/rag-protocol.js'
+import { trustedHandle } from './trusted.js'
 import { getRag } from '../rag/index.js'
 import { downloadEmbedModel, embedLocalStatus } from '../rag/embed-local.js'
 
@@ -25,11 +26,11 @@ function broadcast(channel, payload) {
 export function registerRagIpc() {
   /* ---------------- 状态 ---------------- */
 
-  ipcMain.handle(RAG_IPC.STATUS, () => getRag().status())
+  trustedHandle(RAG_IPC.STATUS, () => getRag().status())
 
   /* ---------------- 召回自测（设置页「试一下」） ---------------- */
 
-  ipcMain.handle(RAG_IPC.RECALL_TEST, async (_e, payload = {}) => {
+  trustedHandle(RAG_IPC.RECALL_TEST, async (_e, payload = {}) => {
     const q = String((payload && payload.query) || '').trim()
     if (!q) return { ok: false, reason: '先写一句想问她的话', count: 0, results: [], text: '' }
     return getRag().recallTest(q)
@@ -38,16 +39,16 @@ export function registerRagIpc() {
   /* ---------------- 维护 ---------------- */
 
   // 重建索引：换嵌入引擎（维度变了）或向量文件损坏后用它重嵌。文本全保留。
-  ipcMain.handle(RAG_IPC.REBUILD, async () => getRag().rebuild())
+  trustedHandle(RAG_IPC.REBUILD, async () => getRag().rebuild())
 
   // 清空档案：渲染层已做过二次确认，这里不再啰嗦
-  ipcMain.handle(RAG_IPC.CLEAR, () => getRag().clear())
+  trustedHandle(RAG_IPC.CLEAR, () => getRag().clear())
 
   /* ---------------- 本地嵌入模型 ---------------- */
 
-  ipcMain.handle(RAG_IPC.MODEL_STATUS, () => embedLocalStatus())
+  trustedHandle(RAG_IPC.MODEL_STATUS, () => embedLocalStatus())
 
-  ipcMain.handle(RAG_IPC.MODEL_DOWNLOAD, async () => {
+  trustedHandle(RAG_IPC.MODEL_DOWNLOAD, async () => {
     // 约 24MB（量化 ONNX）+ 分词表。进度推给设置页，别让按钮像卡住了
     const r = await downloadEmbedModel({
       log: (s) => console.log(s),

@@ -7,6 +7,8 @@
 
 import { exec, execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
+import { realpath } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { isPathWithin } from '../safety/policy.js'
 
 const execAsync = promisify(exec)
@@ -44,10 +46,16 @@ function errResult(command, err, t0, timeout) {
  * cwd 约束：模型请求的工作目录必须落在授权根内。
  * @returns {string|undefined|null} undefined = 不设置（继承进程 cwd）；null = 拒绝执行（越权）
  */
-function resolveCwd(requested, fallback, fileRoot) {
-  if (!requested) return fallback || undefined
-  if (!fileRoot) return fallback || undefined // 未配置授权目录：不采用模型请求的 cwd
-  return isPathWithin(fileRoot, requested) ? requested : null
+async function resolveCwd(requested, fallback, fileRoot) {
+  if (!fileRoot) return requested ? null : (fallback || undefined)
+  try {
+    const rootReal = await realpath(fileRoot)
+    const target = requested ? resolve(rootReal, requested) : rootReal
+    const targetReal = await realpath(target)
+    return isPathWithin(rootReal, targetReal) ? targetReal : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -65,7 +73,7 @@ export function createSystemTools(cfg = {}) {
       if (!command) return { ok: false, summary: '缺少 command 参数' }
       const timeout = Math.min(Math.max(Number(args.timeoutMs) || 30000, 3000), 120000)
       const t0 = Date.now()
-      const cwd = resolveCwd(args.cwd, cfg.cwd, cfg.fileRoot)
+      const cwd = await resolveCwd(args.cwd, cfg.cwd, cfg.fileRoot)
       if (cwd === null) {
         return { ok: false, summary: `拒绝执行：工作目录 ${args.cwd} 不在授权目录内` }
       }

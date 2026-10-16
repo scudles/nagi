@@ -3,22 +3,43 @@
 // 两个窗口加载同一 index.html，用 ?mode=pet|workbench 区分布局。
 
 import { BrowserWindow, screen, shell } from 'electron'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { MODE, EVT, DEFAULT_SETTINGS } from '../shared/protocol.js'
 import { VOICE_EVT } from '../shared/voice-protocol.js'
 import { pickVoiceOwner } from '../core/voice/owner.js'
+import { sameRendererEntry } from '../core/safety/ipc-origin.js'
 import { getSettings, saveSettings } from './settings-store.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const isDev = !!process.env.ELECTRON_RENDERER_URL
+// 沙箱经 Live2D、语音和本地模型真机验收后默认开启；仅故障排查可显式设 0。
+export const rendererSandbox = process.env.NAGI_RENDERER_SANDBOX !== '0'
 
 let petWindow = null
 let workbenchWindow = null
 let diaryWindow = null
 let currentMode = MODE.PET
 
-const rendererPreload = () => join(__dirname, '../preload/index.mjs')
+const rendererPreload = () => join(__dirname, '../preload/index.cjs')
+
+export function rendererEntryUrl() {
+  return isDev ? process.env.ELECTRON_RENDERER_URL : pathToFileURL(join(__dirname, '../renderer/index.html')).toString()
+}
+
+function hardenNavigation(win) {
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!sameRendererEntry(url, rendererEntryUrl())) event.preventDefault()
+  })
+  win.webContents.on('will-attach-webview', (event) => event.preventDefault())
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const target = new URL(url)
+      if (target.protocol === 'https:' || target.protocol === 'http:') shell.openExternal(url).catch(() => {})
+    } catch { /* 非网页地址不打开 */ }
+    return { action: 'deny' }
+  })
+}
 
 function loadRenderer(win, mode) {
   // 自测钩子：工作台发一条消息验证对话链路；桌宠轮换情绪验证表情映射；日记窗验证日记渲染
@@ -123,7 +144,7 @@ export function createPetWindow() {
       preload: rendererPreload(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: rendererSandbox
     }
   })
   petWindow.setAlwaysOnTop(true, 'screen-saver')
@@ -135,11 +156,7 @@ export function createPetWindow() {
   petWindow.on('closed', () => {
     petWindow = null
   })
-  // 站外链接用系统浏览器打开
-  petWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  hardenNavigation(petWindow)
   return petWindow
 }
 
@@ -157,7 +174,7 @@ export function createWorkbenchWindow() {
       preload: rendererPreload(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: rendererSandbox
     }
   })
   loadRenderer(workbenchWindow, MODE.WORKBENCH)
@@ -167,10 +184,7 @@ export function createWorkbenchWindow() {
   workbenchWindow.on('closed', () => {
     workbenchWindow = null
   })
-  workbenchWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  hardenNavigation(workbenchWindow)
   return workbenchWindow
 }
 
@@ -219,7 +233,7 @@ export function createDiaryWindow() {
       preload: rendererPreload(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: rendererSandbox
     }
   })
   loadRenderer(diaryWindow, 'diary')
@@ -227,10 +241,7 @@ export function createDiaryWindow() {
   diaryWindow.on('closed', () => {
     diaryWindow = null
   })
-  diaryWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  hardenNavigation(diaryWindow)
   return diaryWindow
 }
 

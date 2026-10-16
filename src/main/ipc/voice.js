@@ -8,8 +8,9 @@
 //   ② 合成音频走「按句拉取」而不是一次性返回整段：渲染层拿到第一句就能开播，
 //      首响 = 首句合成时间；也天然支持「念到一半被打断」。
 
-import { ipcMain, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
 import { VOICE_IPC, VOICE_EVT } from '../../shared/voice-protocol.js'
+import { trustedHandle } from './trusted.js'
 import { getVoiceOwner, findWindowByWebContents } from '../windows.js'
 import {
   voiceStatus,
@@ -48,11 +49,11 @@ function toBytes(v) {
 export function registerVoiceIpc() {
   /* ---------------- 状态 ---------------- */
 
-  ipcMain.handle(VOICE_IPC.STATUS, async () => voiceStatus())
+  trustedHandle(VOICE_IPC.STATUS, async () => voiceStatus())
 
   /* ---------------- 语音输出 ---------------- */
 
-  ipcMain.handle(VOICE_IPC.SPEAK, (e, payload = {}) => {
+  trustedHandle(VOICE_IPC.SPEAK, (e, payload = {}) => {
     // V01 修复：一次回复只允许一个窗口朗读（当前形态所在窗口）。
     // 桌宠窗与工作台窗都订阅 AGENT DONE，没有这道闸门就会各自合成、重叠发声，
     // 隐藏的桌宠窗也会在用户看不见的地方出声。
@@ -63,18 +64,18 @@ export function registerVoiceIpc() {
     return r
   })
 
-  ipcMain.handle(VOICE_IPC.PULL, async (_e, payload = {}) => {
+  trustedHandle(VOICE_IPC.PULL, async (_e, payload = {}) => {
     const r = await pullUtterance(payload.sessionId, payload.index)
     if (!r.ok || r.done || !r.bytes) return r
     return { ...r, bytes: toBytes(r.bytes) }
   })
 
-  ipcMain.handle(VOICE_IPC.STOP, (_e, sessionId) => ({
+  trustedHandle(VOICE_IPC.STOP, (_e, sessionId) => ({
     ok: true,
     cleared: dropSpeech(sessionId || undefined)
   }))
 
-  ipcMain.handle(VOICE_IPC.PREVIEW, async (_e, payload = {}) => {
+  trustedHandle(VOICE_IPC.PREVIEW, async (_e, payload = {}) => {
     const r = await synthesizeOnce(payload.text, payload)
     if (!r.ok) return r
     return { ...r, bytes: toBytes(r.bytes) }
@@ -82,7 +83,7 @@ export function registerVoiceIpc() {
 
   /* ---------------- 语音输入 ---------------- */
 
-  ipcMain.handle(VOICE_IPC.LISTEN, async (_e, payload = {}) => {
+  trustedHandle(VOICE_IPC.LISTEN, async (_e, payload = {}) => {
     const wav = toBytes(payload.wav)
     if (!wav || !wav.length) return { ok: false, error: '没有收到录音数据' }
     return recognizeAudio(wav, { engine: payload.engine, culture: payload.culture })
@@ -90,9 +91,9 @@ export function registerVoiceIpc() {
 
   /* ---------------- 离线模型 ---------------- */
 
-  ipcMain.handle(VOICE_IPC.MODEL_STATUS, () => sherpaStatus())
+  trustedHandle(VOICE_IPC.MODEL_STATUS, () => sherpaStatus())
 
-  ipcMain.handle(VOICE_IPC.MODEL_DOWNLOAD, async (_e, payload = {}) => {
+  trustedHandle(VOICE_IPC.MODEL_DOWNLOAD, async (_e, payload = {}) => {
     // 下载约 98MB，耗时长：进度通过广播推给设置页，避免 UI 干等
     const cli = await downloadSherpa({
       log: (s) => console.log(s),
@@ -102,5 +103,5 @@ export function registerVoiceIpc() {
     return { ...cli, status: sherpaStatus() }
   })
 
-  ipcMain.handle(VOICE_IPC.SERVER_STOP, () => ({ ok: true, stopped: stopSherpaServer() }))
+  trustedHandle(VOICE_IPC.SERVER_STOP, () => ({ ok: true, stopped: stopSherpaServer() }))
 }

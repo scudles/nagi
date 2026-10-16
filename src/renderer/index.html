@@ -353,10 +353,11 @@
         <div id="rag-test-result" class="dim" style="max-height:200px;overflow:auto;white-space:pre-wrap"></div>
 
         <h3>工具与隐私</h3>
-        <label>文件工具授权目录 <input id="set-fileroot" type="text" placeholder="留空 = 使用「文档」目录" /></label>
+        <label>文件工具授权目录 <input id="set-fileroot" type="text" placeholder="未授权；文件工具不可用" readonly /></label>
+        <div class="sp-row"><button id="btn-pick-fileroot">选择目录并授权</button><button id="btn-revoke-fileroot">撤销目录授权</button></div>
         <label>Chrome 调试端口（CDP） <input id="set-cdp" type="number" /></label>
         <p class="dim" style="margin:0 0 8px;line-height:1.7">
-          高危操作始终需要确认（不可关闭）。仅受控只读命令可直接执行：
+          写入、外部控制与敏感读取逐次确认。仅受控只读命令可直接执行：
           dir / ipconfig / tasklist / systeminfo / where / ver / node -v / npm -v / git status。
         </p>
         <div class="sp-row">

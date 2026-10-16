@@ -73,7 +73,7 @@ test('工具表含日程提醒三件套，且风险为 low', () => {
   const names = TOOL_SCHEMAS.map((s) => s.function.name)
   for (const n of ['reminder_add', 'reminder_list', 'reminder_cancel']) {
     assert.ok(names.includes(n), `工具表缺 ${n}`)
-    assert.equal(getToolRisk(n), RISK.LOW, `${n} 应为 low 风险（不弹确认）`)
+    assert.equal(getToolRisk(n), RISK.LOW, `${n} 的风险等级仍为 low`)
   }
   // schema 必填字段：add 至少要 text
   const add = TOOL_SCHEMAS.find((s) => s.function.name === 'reminder_add')

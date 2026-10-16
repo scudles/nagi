@@ -341,6 +341,19 @@ try {
   check('被拒候选不进入历史、日记素材或记忆档案',
     ![historyText, journalText, ragText].some((value) => value.includes('我会在这里等你回来')) &&
     historyText.includes('谢谢你告诉我') && journalText.includes('谢谢你告诉我') && ragText.includes('谢谢你告诉我'))
+  const unauthorizedRootChange = await page.evaluate(async () => {
+    try {
+      await window.nagi.settings.set({ tools: { fileRoot: 'C:/Windows' } })
+      return false
+    } catch { return true }
+  })
+  check('普通设置接口不能扩大文件目录授权', unauthorizedRootChange)
+  const revoked = await page.evaluate(async () => {
+    const result = await window.nagi.tools.revokeFileRoot()
+    const current = await window.nagi.settings.get()
+    return result.ok && current.tools?.fileRoot === ''
+  })
+  check('用户可撤销文件目录授权', revoked)
   // connectOverCDP 下不调用 browser.close()，否则会关掉目标 Electron。
 } catch (error) {
   console.error('✘ 验收中断：', error.message)

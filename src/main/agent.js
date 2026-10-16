@@ -657,7 +657,7 @@ export async function runTurn(userText, emit) {
   // 与 openai 通道一致；假大脑固定走 JSON 兜底通道
   const supportsNative = fakeLlm ? false : useCloud ? true : supportsNativeTools({ provider: llm.provider, model: llm.model })
 
-  const fileRoot = settings.tools?.fileRoot || app.getPath('documents')
+  const fileRoot = settings.tools?.fileRoot || ''
   const files = createFileTools({ fileRoot })
   const system = createSystemTools({ cwd: app.getPath('home'), fileRoot })
   const ha = getHa()
@@ -704,7 +704,8 @@ export async function runTurn(userText, emit) {
       }),
     emit,
     signal: currentAbort.signal,
-    guard
+    guard,
+    fileRoot
   })
 
   // 写入历史（messages 已含 system + 旧历史 + 本轮 user + 工具过程，再补最终回复）

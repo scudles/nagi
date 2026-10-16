@@ -1424,10 +1424,22 @@ function wireSettingsPage() {
     ui.addToolLog('对话历史已清空（长期记忆保留）')
   })
 
+  on('btn-pick-fileroot', async () => {
+    const result = await window.nagi.tools.pickFileRoot()
+    if (!result?.ok) return
+    document.getElementById('set-fileroot').value = result.fileRoot
+    settings = await window.nagi.settings.get()
+    ui.addToolLog(`已授权文件目录：${result.fileRoot}`)
+  })
+  on('btn-revoke-fileroot', async () => {
+    await window.nagi.tools.revokeFileRoot()
+    document.getElementById('set-fileroot').value = ''
+    settings = await window.nagi.settings.get()
+    ui.addToolLog('已撤销文件目录授权')
+  })
   on('btn-save-tools', async () => {
     await window.nagi.settings.set({
       tools: {
-        fileRoot: document.getElementById('set-fileroot').value.trim(),
         cdpPort: Number(document.getElementById('set-cdp').value) || 9222
       }
     })

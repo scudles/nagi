@@ -5,7 +5,7 @@
 
 import { app, protocol, net } from 'electron'
 import { join, normalize, sep, extname } from 'node:path'
-import { existsSync } from 'node:fs'
+import { realpath } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
 export const SCHEME = 'nagi-local'
@@ -62,10 +62,18 @@ export function registerHandler(modelsDir) {
       if (target !== base && !target.startsWith(base + sep)) {
         return new Response('Forbidden', { status: 403 })
       }
-      if (!existsSync(target)) {
-        return new Response('Not found: ' + rel, { status: 404 })
+      let rootReal, targetReal
+      try {
+        rootReal = await realpath(base)
+        targetReal = await realpath(target)
+      } catch (err) {
+        if (err.code === 'ENOENT') return new Response('Not found', { status: 404 })
+        throw err
       }
-      const res = await net.fetch(pathToFileURL(target).toString())
+      if (targetReal !== rootReal && !targetReal.startsWith(rootReal + sep)) {
+        return new Response('Forbidden', { status: 403 })
+      }
+      const res = await net.fetch(pathToFileURL(targetReal).toString())
       const type = MIME[extname(target).toLowerCase()]
       if (type) {
         const headers = new Headers(res.headers)

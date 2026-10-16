@@ -2,8 +2,9 @@
 // 文件工具：读取 / 写入 / 列目录。所有路径强制限制在授权根目录（fileRoot）内。
 // 纯 Node 依赖（fs/promises + path），无 Electron。
 
-import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises'
-import { dirname, join, normalize, resolve, sep } from 'node:path'
+import { readFile, writeFile, mkdir, readdir, stat, lstat, realpath, rename, unlink } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { basename, dirname, join, normalize, relative, resolve, sep } from 'node:path'
 import { isPathWithin } from '../safety/policy.js'
 
 const MAX_READ_BYTES = 64 * 1024
@@ -24,17 +25,56 @@ export function resolveWithin(fileRoot, p) {
   return normalize(abs)
 }
 
+/** 实际文件访问前再校验物理路径；路径中的符号链接不得指向授权根外。 */
+export async function resolveRealWithin(fileRoot, p) {
+  const abs = resolveWithin(fileRoot, p)
+  const rootReal = await realpath(fileRoot)
+  const targetReal = await realpath(abs)
+  if (!isPathWithin(rootReal, targetReal)) throw new PathOutsideRootError(p, fileRoot)
+  return targetReal
+}
+
+/** 写入先逐级创建/校验真实父目录，然后在同目录原子替换目标。 */
+async function writableTarget(fileRoot, p) {
+  const abs = resolveWithin(fileRoot, p)
+  const rootReal = await realpath(fileRoot)
+  const parts = relative(resolve(fileRoot), dirname(abs)).split(sep).filter(Boolean)
+  let parent = rootReal
+  for (const part of parts) {
+    const next = join(parent, part)
+    try {
+      const info = await lstat(next)
+      if (info.isSymbolicLink() || !info.isDirectory()) throw new PathOutsideRootError(p, fileRoot)
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err
+      await mkdir(next)
+    }
+    parent = await realpath(next)
+    if (!isPathWithin(rootReal, parent)) throw new PathOutsideRootError(p, fileRoot)
+  }
+  const target = join(parent, basename(abs))
+  try {
+    const info = await lstat(target)
+    if (info.isSymbolicLink() || !info.isFile()) throw new PathOutsideRootError(p, fileRoot)
+    const actual = await realpath(target)
+    if (!isPathWithin(rootReal, actual)) throw new PathOutsideRootError(p, fileRoot)
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err
+  }
+  return target
+}
+
 /**
  * @param {{fileRoot:string}} cfg
  * @returns {{read:Function, write:Function, list:Function}}
  */
 export function createFileTools(cfg) {
-  const guard = (p) => resolveWithin(cfg.fileRoot, p)
+  const guard = (p) => resolveRealWithin(cfg.fileRoot, p)
 
   return {
     /** file_read {path, maxBytes?} */
     async read(args) {
-      const abs = guard(args.path)
+      const abs = await guard(args.path)
       const info = await stat(abs)
       if (info.isDirectory()) {
         return { ok: false, summary: `${args.path} 是目录，请用 file_list 列目录` }
@@ -58,21 +98,29 @@ export function createFileTools(cfg) {
 
     /** file_write {path, content, append?} */
     async write(args) {
-      const abs = guard(args.path)
+      const abs = await writableTarget(cfg.fileRoot, args.path)
       const content = args.content == null ? '' : String(args.content)
-      await mkdir(dirname(abs), { recursive: true })
+      let next = content
       if (args.append) {
-        const old = await readFile(abs, 'utf8').catch(() => '')
-        await writeFile(abs, old + content, 'utf8')
-      } else {
-        await writeFile(abs, content, 'utf8')
+        try {
+          next = (await readFile(abs, 'utf8')) + content
+        } catch (err) {
+          if (err.code !== 'ENOENT') throw err
+        }
+      }
+      const temp = join(dirname(abs), `.${basename(abs)}.${randomUUID()}.tmp`)
+      try {
+        await writeFile(temp, next, { encoding: 'utf8', flag: 'wx' })
+        await rename(temp, abs)
+      } finally {
+        await unlink(temp).catch(() => {})
       }
       return { ok: true, summary: `已${args.append ? '追加' : '写入'} ${args.path}（${Buffer.byteLength(content, 'utf8')} 字节）`, data: { path: abs } }
     },
 
     /** file_list {path?, depth?} */
     async list(args) {
-      const abs = guard(args.path || '.')
+      const abs = await guard(args.path || '.')
       const depth = Math.min(Math.max(Number(args.depth) || 1, 1), 3)
       const out = []
       const walk = async (dir, rel, d) => {
@@ -86,7 +134,9 @@ export function createFileTools(cfg) {
         for (const ent of entries.slice(0, 200)) {
           const full = join(dir, ent.name)
           const r = rel ? `${rel}/${ent.name}` : ent.name
-          if (ent.isDirectory()) {
+          if (ent.isSymbolicLink()) {
+            out.push(`${r}  (链接，未跟随)`)
+          } else if (ent.isDirectory()) {
             out.push(`${r}/`)
             if (d < depth) await walk(full, r, d + 1)
           } else {

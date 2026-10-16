@@ -9,6 +9,8 @@ export const IPC = {
   // 设置
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
+  TOOLS_PICK_ROOT: 'tools:pick-root',
+  TOOLS_REVOKE_ROOT: 'tools:revoke-root',
   // 密钥（safeStorage 加密，渲染层只能保存/查状态/删除）
   SECRET_SET: 'secret:set',
   SECRET_STATUS: 'secret:status',

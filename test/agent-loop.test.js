@@ -127,6 +127,33 @@ test('高危工具需确认：拒绝则不执行', async () => {
   assert.equal(r.text, '好的，不执行了。')
 })
 
+test('文件写入逐次展示真实目标；用户拒绝后不执行', async () => {
+  const { events, emit } = fakeEmitter()
+  let calls = 0
+  let executed = false
+  const callModel = async () => {
+    calls++
+    return calls === 1
+      ? streamOf([{ type: 'tool_call', toolCalls: [{ id: 'write-1', name: 'file_write', arguments: '{"path":"notes/a.txt","content":"x"}' }] }])
+      : streamOf(['[calm] 没有写入。'])
+  }
+  await runAgentLoop({
+    messages: [{ role: 'user', content: '写入' }],
+    supportsNative: true,
+    callModel,
+    executeTool: async () => { executed = true; return { ok: true, summary: '已写入' } },
+    confirm: async () => false,
+    emit,
+    fileRoot: 'E:/授权目录'
+  })
+  const ask = events.find((event) => event.type === AGENT_EVENT.CONFIRM)
+  assert.ok(ask)
+  assert.match(ask.description, /notes[\\/]a\.txt/)
+  assert.match(ask.description, /覆盖或创建/)
+  assert.equal(executed, false)
+  assert.ok(events.some((event) => event.type === AGENT_EVENT.TOOL_RESULT && /拒绝/.test(event.summary)))
+})
+
 test('受控命令免确认直接执行，safe 计划透传给 executeTool', async () => {
   const { emit } = fakeEmitter()
   let confirmCalled = false

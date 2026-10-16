@@ -28,6 +28,10 @@ const api = {
     get: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
     set: (patch) => ipcRenderer.invoke(IPC.SETTINGS_SET, patch)
   },
+  tools: {
+    pickFileRoot: () => ipcRenderer.invoke(IPC.TOOLS_PICK_ROOT),
+    revokeFileRoot: () => ipcRenderer.invoke(IPC.TOOLS_REVOKE_ROOT)
+  },
   secrets: {
     set: (key, value) => ipcRenderer.invoke(IPC.SECRET_SET, { key, value }),
     status: () => ipcRenderer.invoke(IPC.SECRET_STATUS),

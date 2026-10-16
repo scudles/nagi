@@ -56,6 +56,15 @@ export function getToolRisk(name) {
   return TOOL_RISK[name] || RISK.HIGH // 未知工具按最高风险处理
 }
 
+// 这些操作会写入、控制外部目标，或读取比文件授权根更敏感的信息。
+// 逐次确认绑定本次工具名和参数；不保存跨目标的笼统许可。
+export const CONFIRM_TOOLS = new Set([
+  'browser_open', 'browser_scrape', 'browser_act', 'web_search',
+  'screenshot', 'clipboard_read', 'clipboard_write', 'file_write',
+  'open_app', 'home_list', 'home_get', 'home_set', 'home_scene',
+  'reminder_add', 'reminder_cancel'
+])
+
 /** 命令是否被永久拒绝 */
 export function isCommandBlocked(cmd) {
   const s = String(cmd || '').toLowerCase().replace(/\s+/g, ' ')
@@ -90,6 +99,7 @@ export function needsConfirm(call, opts = {}) {
     if (safe) return { confirm: false, blocked: false, risk: RISK.LOW, safe }
     return { confirm: true, blocked: false, risk: RISK.HIGH } // 其余 shell 命令一律确认
   }
+  if (CONFIRM_TOOLS.has(call.name)) return { confirm: true, blocked: false, risk }
   if (risk === RISK.HIGH) return { confirm: true, blocked: false, risk } // 不再有开关
   if (opts.allowedTools && !opts.allowedTools.includes(call.name) && risk !== RISK.LOW) {
     return { confirm: true, blocked: false, risk }
@@ -115,7 +125,7 @@ const SAFE_COMMANDS = {
 }
 
 /** 受限参数：仅字母数字与路径字符，禁空格/通配符/引号/一切元字符 */
-const SAFE_ARG = /^[A-Za-z0-9_\-./:]+$/
+const SAFE_ARG = /^(?:[A-Za-z0-9_.-]+|\/[A-Za-z]+)$/
 
 /** shell 元字符（cmd 与 bash 交集）：出现即无免确认资格 */
 const SHELL_META = /[&|;<>`$(){}[\]*?~^!'"\n\r]/
@@ -135,7 +145,7 @@ export function planSafeCommand(cmd) {
     if (lower === key) return { file: spec.win[0], args: [...spec.win[1]] }
     if (lower.startsWith(key + ' ')) {
       const rest = s.slice(key.length + 1).split(' ')
-      if (rest.length && rest.every((t) => SAFE_ARG.test(t))) {
+      if (rest.length && rest.every((t) => t !== '..' && SAFE_ARG.test(t))) {
         return { file: spec.win[0], args: [...spec.win[1], ...rest] }
       }
     }

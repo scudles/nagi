@@ -5,6 +5,9 @@
 // 通过 mock.module 替换 node:child_process，不产生真实子进程。
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 
 const calls = { exec: [], execFile: [] }
 let execFileBehavior = 'ok' // 'ok' | 'timeout'
@@ -65,23 +68,32 @@ test('完整路径：无 safe 时仍走 exec 全串（回归既有行为）', as
   assert.ok(r.data.stdout.includes('shell-out'))
 })
 
-test('cwd 约束：授权目录外拒绝且不产生子进程，目录内放行', async () => {
+test('cwd 约束：按真实目录与授权根校验，目录外拒绝', async (t) => {
   reset()
-  const sys = createSystemTools({ cwd: 'D:/fallback', fileRoot: 'D:/work' })
+  const base = mkdtempSync(join(tmpdir(), 'nagi-sys-'))
+  const root = join(base, 'work')
+  const inside = join(root, 'sub')
+  const outside = join(base, 'other')
+  mkdirSync(inside, { recursive: true })
+  mkdirSync(outside)
+  t.after(() => {
+    if (resolve(base).startsWith(resolve(tmpdir()) + '\\')) rmSync(base, { recursive: true, force: true })
+  })
+  const sys = createSystemTools({ cwd: outside, fileRoot: root })
   // 越权：模型请求的 cwd 在授权根之外
-  const r = await sys.run({ command: 'node -v', cwd: 'D:/other' }, { safe: { file: 'node', args: ['-v'] } })
+  const r = await sys.run({ command: 'node -v', cwd: outside }, { safe: { file: 'node', args: ['-v'] } })
   assert.equal(r.ok, false)
   assert.ok(r.summary.includes('拒绝执行'), r.summary)
   assert.equal(calls.execFile.length + calls.exec.length, 0, '拒绝时不得产生任何子进程')
   // 授权目录内：放行
-  const r2 = await sys.run({ command: 'node -v', cwd: 'D:/work/sub' }, { safe: { file: 'node', args: ['-v'] } })
+  const r2 = await sys.run({ command: 'node -v', cwd: inside }, { safe: { file: 'node', args: ['-v'] } })
   assert.equal(r2.ok, true)
   assert.equal(calls.execFile.length, 1)
-  // 未配置授权目录：不采用模型请求的 cwd，回退 cfg.cwd，不拒绝
-  const sys2 = createSystemTools({ cwd: 'D:/fallback' })
-  const r3 = await sys2.run({ command: 'node -v', cwd: 'D:/other' }, { safe: { file: 'node', args: ['-v'] } })
-  assert.equal(r3.ok, true)
-  assert.equal(calls.execFile.length, 2)
+  // 未配置授权目录：模型指定的 cwd 不得悄悄回退到别处执行
+  const sys2 = createSystemTools({ cwd: outside })
+  const r3 = await sys2.run({ command: 'node -v', cwd: outside }, { safe: { file: 'node', args: ['-v'] } })
+  assert.equal(r3.ok, false)
+  assert.equal(calls.execFile.length, 1)
   // 无任何 cwd：不设置（继承进程 cwd），不拒绝
   const sys3 = createSystemTools({})
   const r4 = await sys3.run({ command: 'dir' }, { safe: { file: 'cmd.exe', args: ['/c', 'dir'] } })

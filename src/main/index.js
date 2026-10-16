@@ -4,7 +4,7 @@
 import { app, BrowserWindow } from 'electron'
 import { registerScheme, registerHandler } from './local-protocol.js'
 import { modelsDir } from './paths.js'
-import { createPetWindow, createWorkbenchWindow, switchMode, getMode, getPetWindow, openDiaryWindow } from './windows.js'
+import { createPetWindow, createWorkbenchWindow, switchMode, getMode, getPetWindow, openDiaryWindow, rendererSandbox } from './windows.js'
 import { createTray } from './tray.js'
 import { registerSettingsIpc } from './ipc/settings.js'
 import { registerChatIpc } from './ipc/chat.js'
@@ -29,7 +29,7 @@ if (softwareGl) {
   app.commandLine.appendSwitch('use-gl', 'swiftshader')
   app.commandLine.appendSwitch('enable-unsafe-swiftshader')
 }
-app.commandLine.appendSwitch('no-sandbox')
+if (!rendererSandbox) app.commandLine.appendSwitch('no-sandbox')
 
 // 必须在 app ready 之前注册特权协议
 registerScheme()

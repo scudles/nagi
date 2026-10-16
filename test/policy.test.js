@@ -78,7 +78,10 @@ test('planSafeCommand：未知命令与不可指定的可执行文件一律拒�
     'node --version', // 模型不能换标志位
     'cmd /c dir', // 模型不能自选 shell 可执行文件
     'powershell -c dir',
-    ''
+    '',
+    'dir C:/Windows',
+    'dir ../',
+    'where /r C:/Windows node'
   ]
   for (const cmd of bad) {
     assert.equal(planSafeCommand(cmd), null, `应拒绝：${JSON.stringify(cmd)}`)
@@ -116,11 +119,13 @@ test('needsConfirm：免确认绕过向量全部要求确认', () => {
   }
 })
 
-test('needsConfirm：confirmHighRisk 开关已移除，传 false 也无效', () => {
+test('needsConfirm：有副作用或敏感读取逐次确认，旧开关不可绕过', () => {
   assert.equal(needsConfirm({ name: 'run_command', args: { command: 'del x' } }, { confirmHighRisk: false }).confirm, true)
   assert.equal(needsConfirm({ name: 'unknown_tool', args: {} }, { confirmHighRisk: false }).confirm, true)
-  // MEDIUM/LOW 工具本就免确认，不受影响
-  assert.equal(needsConfirm({ name: 'file_write', args: {} }, { confirmHighRisk: false }).confirm, false)
+  for (const name of ['file_write', 'home_set', 'browser_act', 'clipboard_read', 'screenshot', 'reminder_add', 'reminder_cancel']) {
+    assert.equal(needsConfirm({ name, args: {} }, { confirmHighRisk: false }).confirm, true, name)
+  }
+  assert.equal(needsConfirm({ name: 'file_list', args: {} }).confirm, false)
 })
 
 test('needsConfirm：黑名单命令被拒', () => {
