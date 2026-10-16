@@ -10,6 +10,8 @@ import { buildSystemPrompt } from '../src/core/agent/loop.js'
 const models = process.argv.slice(2).filter(Boolean)
 if (!models.length) throw new Error('请至少传入一个模型名')
 const reasoningEffort = process.env.NAGI_BENCH_REASONING || undefined
+const temperature = process.env.NAGI_BENCH_TEMPERATURE == null ? 0.7 : Number(process.env.NAGI_BENCH_TEMPERATURE)
+if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) throw new Error('NAGI_BENCH_TEMPERATURE 必须在 0 到 2 之间')
 const baseURL = 'http://127.0.0.1:11434/v1'
 const client = createClient({ apiKey: 'ollama', baseURL, timeout: 120000 })
 const context = [
@@ -40,7 +42,7 @@ async function once(model, prompt, priorText = '') {
       ...(priorText ? [{ role: 'user', content: prompt }, { role: 'assistant', content: priorText }] : []),
       { role: 'user', content: prompt }
     ],
-    temperature: 0.7,
+    temperature,
     reasoningEffort,
     signal: AbortSignal.timeout(120000)
   })) {
@@ -53,7 +55,7 @@ async function once(model, prompt, priorText = '') {
   return { firstTokenMs, totalMs: Math.round(performance.now() - started), text: text.trim(), toolCalls }
 }
 
-const results = { at: new Date().toISOString(), baseURL, reasoningEffort: reasoningEffort || 'model-default', cases: cases.map(({ id, prompt }) => ({ id, prompt })), models: {} }
+const results = { at: new Date().toISOString(), baseURL, temperature, reasoningEffort: reasoningEffort || 'model-default', cases: cases.map(({ id, prompt }) => ({ id, prompt })), models: {} }
 for (const model of models) {
   console.log(`\n模型 ${model}：预热`)
   await once(model, '你好。')
