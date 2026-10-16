@@ -3,7 +3,7 @@
 ## 当前状态（先读）
 
 - **2026-10-16 起为单人开发制**：ChatGPT 侧额度耗尽，WorkBuddy 全权接手。原双工具红蓝边界废止；架构契约、安全门与人格硬约束继续有效（见 [DECISIONS](DECISIONS.md) 与 [实感架构契约](实感架构契约.md)）。
-- 源码：`E:\凪\凪_交接包_2026-10-16\02_工程源码_nagi`。最新验证基线（2026-10-16 收口，Node 24.19.0）：全量测试 **397 项，396 通过、0 失败、1 跳过**（跳过为无符号链接权限环境项）；`npm run build` 退出 0；`verify-presence` 11/11、`verify:s4` 9/9、`verify:m4` 19/19。
+- 源码：`E:\凪\凪_交接包_2026-10-16\02_工程源码_nagi`。最新验证基线（2026-10-16 BLUE-1 后，Node 24.19.0）：全量测试 **409 项，408 通过、0 失败、1 跳过**（跳过为无符号链接权限环境项）；`npm run build` 退出 0；`verify-presence` 11/11、`verify:s4` 9/9、`verify:m4` 19/19（BLUE-1 未改 presence 核心，真机三项沿用 RED123 收口结果）。
 - 记录规则：完成必须有实际结果（测试命令/退出码/跳过数）；尝试、模拟通过、人工通过分别记录；未验证写「未验证」；待真机项不得标完成。
 - 本机环境：测试/真机验证须将 Node 24 目录前置 PATH（默认 node 22 会令 7 个 electron mock 测试假失败）；受限环境真机验证加 `NAGI_RENDERER_SANDBOX=0`（GPU 进程沙箱内 0xC0000005 崩溃）；手动起 electron 先 `unset ELECTRON_RUN_AS_NODE`。
 
@@ -22,7 +22,7 @@
 | RED-1 实感总契约 | ✅ 已完成并验证（2026-10-16） | `docs/实感架构契约.md`：模块签名/schema/配置/两处 hook/BLUE 设计齐全 |
 | RED-2 实感核心 | ✅ 已完成并验证（2026-10-16） | `core/presence/{circadian,away,reunion,engine,hooks}.js` + main 接线 + 3 个测试文件 + `scripts/verify-presence.mjs`；epoch 失效补丁补验通过（`presence-store.test.js` 5/5）；全量 397/396/0/1、构建 0、真机 11/11 |
 | RED-3 不完美机制方案 | ✅ 方案已成文（契约第 5 节），业务未实现 | 零遗忘保证、概率门、低气压、补救回路、配额；BLUE-4 的输入 |
-| BLUE-1 语音情绪参数映射 | 待办（下一步） | 新建 `core/voice/voice-profile.js`（纯函数可注入时钟）：情绪+强度+时段+语气 → `{voice,rate,pitch,volume}`；经 `registerVoiceParamsProvider` 接线，**不改 voice 编排本体**；单测覆盖各情绪×关键时段、夜晚降音量、null/异常安全回退；完成后交用户按「6 情绪+夜晚」清单真机试听迭代常量 |
+| BLUE-1 语音情绪参数映射 | 🔧 代码完成，待真机试听迭代（2026-10-16） | 已建 `core/voice/voice-profile.js`（纯函数：情绪×强度+时段+语气 → `{voice,rate,pitch,volume}`，数值集中在 `VOICE_PROFILE` 常量表）+ `main/extensions/voice-profile.js`（glob 自动加载，经 `registerVoiceParamsProvider` 接线，**未改 voice 编排本体**）+ 设置页「语音情绪映射」开关（`presence.voiceProfileEnabled`，默认 false）；单测 12 项全绿（情绪×时段方向性、夜晚必降音量、强度幅度、null/异常安全回退、hooks 校验域兼容、SAPI 无 pitch 基准、用户偏移折叠）；全量 409/408/0/1、构建 0；试听清单已交用户，按反馈只改常量表 |
 | BLUE-2 时段表现与设置页 | 待办（依赖 RED-2 ✅） | Live2D 把 rhythm 推荐映射到模型**实际存在**的参数/动作（复用 `nagi-emotion.json` 机制，平滑过渡）；双窗同步；设置页：昼夜节律/归来/模拟活动开关与高级项（契约第 6 节键值）；renderer 与接线层单测；归来便签提示入口（数据走 BLUE-3） |
 | BLUE-3 环境留痕 | 待办 | 3a 应用内便签入口+查看器（可复用日记查看器形态）；授权目录写入默认关闭、复用文件授权与逐次确认，未授权必须被拒（补安全边界测试）；3b 行动留痕持久化（有上限、可被记忆引用、不谎报）；3c 回忆物锚点（熟悉度门槛、≤5% 概率、每天 ≤1 次）；3d HA 规则引擎接口位+禁用态配置 |
 | BLUE-4 不完美机制 | 待办（依赖 RED-3 方案） | 按契约第 5 节：承诺等级判定、低风险概率门（≤10% 可配、默认 0）、100+ 次虚拟模拟证明重要事项零遗忘；低气压与安慰恢复；吐槽过火补救回路；每日上限与全局开关；**不得改 reminders 调度、承诺证据语义或安全门**；persona brief 引导文案保持「引导式自由」 |
@@ -85,4 +85,4 @@
 
 ## 下一步
 
-按 A→B→C→D 顺序推进：先 BLUE-1（语音情绪映射），再 BLUE-2（时段表现+设置页）；安全债 FIX-1（HA extra）随时可插入修复。缺账号/素材/设备不阻塞独立工作，待真机项不标完成。
+按 A→B→C→D 顺序推进：BLUE-1 代码已完成（等用户真机试听反馈迭代常量），下一步 BLUE-2（时段表现+设置页，含 rhythm 推荐到 Live2D 实际参数的映射与双窗同步）；安全债 FIX-1（HA extra）随时可插入修复。缺账号/素材/设备不阻塞独立工作，待真机项不标完成。

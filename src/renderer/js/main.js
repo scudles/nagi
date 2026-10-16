@@ -1213,6 +1213,7 @@ async function refreshVoice() {
   set('set-voice-enabled', cfg.ttsEnabled)
   set('set-speak-reply', cfg.speakOnReply)
   set('set-speak-proactive', cfg.speakOnProactive)
+  set('set-voice-profile', settings?.presence?.voiceProfileEnabled === true)
   set('set-lipsync', cfg.lipSync)
 
   const rate = document.getElementById('set-voice-rate')
@@ -1314,6 +1315,10 @@ function wireVoiceSettings(on) {
         speakOnProactive: document.getElementById('set-speak-proactive').checked,
         lipSync: document.getElementById('set-lipsync').checked,
         asrEngine: document.getElementById('set-asr-engine').value
+      },
+      presence: {
+        // 只写这一个键：deepMerge 保留其余 presence 配置
+        voiceProfileEnabled: document.getElementById('set-voice-profile').checked
       }
     })
     settings = await window.nagi.settings.get()

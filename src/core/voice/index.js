@@ -54,3 +54,8 @@ export {
   pickEngine,
   noEngineAvailable
 } from './engines.js'
+
+export {
+  VOICE_PROFILE,
+  resolveVoiceProfile
+} from './voice-profile.js'

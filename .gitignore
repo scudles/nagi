@@ -23,3 +23,6 @@ src/renderer/public/vendor/*.download
 
 # 测试运行残留的临时 userData 目录
 .nagi-*
+
+# vite 构建过程中的临时配置副本
+electron.vite.config.*.mjs

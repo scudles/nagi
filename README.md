@@ -1220,10 +1220,13 @@ PowerShell 中运行 `$env:NAGI_VERIFY_RAG_RECALL='1'; npm run verify:local-llm`
 
 ### 4. 语音与扩展 hook
 
-- `voiceProfileEnabled` 开启后，语音参数提供者可依据情绪+节律建议语速/音量/表达
+- `voiceProfileEnabled` 开启后，语音参数提供者可依据情绪+强度+节律+语气建议语速/音量/表达
   （默认关闭；试听与显式参数永远优先；不切引擎、不写设置）
 - 蓝区扩展放 `src/main/extensions/*.js` 导出 `install(api)`，可注册语音参数提供者、
   主动内容提供者、订阅实感事件与行动留痕；无需改红区编排文件
+- 首个提供者已落地（BLUE-1，2026-10-16）：`core/voice/voice-profile.js` 纯映射表
+  （六情绪 × 五时段 × 语气标记，数值集中在 `VOICE_PROFILE` 常量）+ 设置页
+  「她的声音」区「语音情绪映射」开关；单测 `test/voice-profile.test.js`
 
 ### 5. 自测与验收
 

@@ -38,6 +38,15 @@
 - 实感 BLUE-1~4 与 RED-4 复核、B06 HA extra 覆盖漏洞、R01 外部路径竞态、R03 Playwright 生命周期纳入 TASKS 队列，按序推进。
 - 活动记录边界不变：默认仅内存，显式开启后才保存之后的新活动；模拟活动不是用户离开期间的真实外界经历；归来开口受打扰预算与窗口可见限制，用户对话优先。
 
+### 2026-10-16：BLUE-1 语音情绪参数映射（全权接手后首个蓝区任务）
+
+- 落地 `src/core/voice/voice-profile.js`：纯函数 `resolveVoiceProfile({emotion,intensity,rhythm,toneTag,engine})`，输出恒为 hooks 校验域内的绝对参数（rate/pitch ±50、volume 0–100、整数、`voice` 恒空串=沿用音色）；所有数值集中在 `VOICE_PROFILE` 常量表，真机听感反馈只改表不改逻辑。
+- 情绪语义按任务书卡 B 独立于旧 `MOOD_SPEECH` 表（worry 为「放慢低沉」，与旧表「略快」有意不同）：两条路径互不影响，关开关即回旧路径。
+- 接线只走蓝区扩展 `src/main/extensions/voice-profile.js`（glob 自动加载），**未改 `main/voice` 编排本体**；设置页「语音情绪映射」开关写 `presence.voiceProfileEnabled`（默认 false，deepMerge 单键写入不影响其余 presence 配置）。
+- 用户偏移折叠：设置页语速/音量滑条折进基准后再做情绪/时段调制（与编排层 `paramsFor` 同语义），避免开开关后滑条失效。
+- 验证：新增单测 12 项（含「喂给 `createPresenceHooks` 原样通过」的契约兼容测试）；全量 409/408/0/1、构建 0；未改 presence 核心，真机三项沿用 RED123 收口结果。待用户按「6 情绪+夜晚」清单真机试听后迭代常量。
+- 已知边界（非本次引入）：profile 开启时编排层整体替换参数，用户自定义音色（`voiceByEngine`）不受影响（voice 空串），但**每引擎自定义音色以外的显式 rate/volume 仅能经设置页滑条表达**；句间停顿由分句架构天然提供，精确停顿时长需编排层支持（属红线，未动）。
+
 ### 2026-10-16：R01 本次收口（ChatGPT）
 
 - 用户明确选择：先完成 Agent 取消、确认失效和授权撤销；外部进程替换路径竞态保留为未完成红线项。本次不引入原生文件访问方案，也不宣称 R01 整包完成。
