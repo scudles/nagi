@@ -10,11 +10,12 @@
 | 开发启动 | `npm run dev` |
 | 构建后启动 | 先 `npm run build`，再 `npm start` |
 | 测试 | `npm test`（须用 Node ≥24，本机默认 node 22 会令 7 个 electron mock 测试假失败） |
-| 真机验证 | `npm run verify:presence` / `verify:s4` / `verify:m4` / `verify:frame` / `verify:pose` / `verify:rhythm` / `verify:notes` / `verify:imperfection:ui` / `verify:rag` / `verify:local-llm`；`node scripts/verify-stage8-voice.mjs`、`verify-signals.mjs`、`verify-stage10-lifecycle.mjs` |
+| 真机验证 | `npm run verify:presence` / `verify:s4` / `verify:m4` / `verify:frame` / `verify:pose` / `verify:rhythm` / `verify:notes` / `verify:rag` / `verify:local-llm` / `verify:maine-live`；`node scripts/verify-stage8-voice.mjs`、`verify-signals.mjs`、`verify-stage10-lifecycle.mjs` |
 
 当前验证环境：Windows、Node.js **24.19.0**、npm **11.6.4**。2026-10-17 BLUE-4 收口测试退出码 **0**：共 **512** 项，**511 通过、0 失败、1 跳过**；跳过的是当前权限下无法创建链接的安全边界测试，不等于这些场景已验收。完整记录见 [HANDOFF](docs/HANDOFF.md)。
 
 > 受限/虚拟化环境里 Electron 的 GPU 进程可能崩溃（0xC0000005）：主进程已默认强制软件渲染；若仍崩溃，设 `NAGI_RENDERER_SANDBOX=0` 启动（会关闭渲染沙箱，仅限本机可信场景）。
+> **跑任何 `verify:*` 真机脚本前务必确认这个开关**：不设的话 GPU 进程会 `exit_code=-1073741819` 直接崩，桌宠页永远 ready 不了，表现是"脚本卡住/找不到页面"，很容易被误判成模型或代码问题（`scripts/verify-maine-live.mjs` 已在内部自己设上，`npm run probe:gpu` 可排查）。
 
 **提交规范：**一项任务、一个清晰提交；标题形如 `feat(presence): 实感归来候选` / `fix(tools): 修复 HA 目标覆盖`。提交前更新 TASKS 的状态与实际测试结果（含跳过），仅暂存自己修改的明确文件；不要用 `git add .` 混入凭证、用户数据、依赖或构建产物。
 
@@ -54,6 +55,9 @@ npm run dev        # 开发模式启动
 | `npm run dist` | 构建 + 打包出安装包与免安装版到 `dist/` |
 | `npm test` | 跑核心、主进程边界与数据迁移测试（node --test） |
 | `npm run verify:frame` | 取景/对齐实机矩阵：多窗口尺寸 + 面板宽度 + 真实像素不越界 |
+| `npm run verify:maine` | 缅因妹妹模型验收：加载 / 表情清单 / 6 情绪映射 / 动作组可播 / 全表情可应用 / 画面非空 / 无控制台报错（7 项，独立浏览器 + 预览页，验的是模型文件与接线） |
+| `npm run verify:maine-live` | 缅因妹妹**真机**验收（真实 Electron 桌宠 + 生产渲染层）：取景预设命中缅因 / 表情清单 / 6 情绪面容指纹比对 / 5 动作组参数真的在摆 / 画面非空 / 无控制台报错（6 项） |
+| `npm run probe:maine` | 缅因妹妹美术范围探针：量真实不透明像素范围，用来标定专属取景带 |
 | `npm run verify:s4` | 无头验证关系层（情绪跨重启延续 / 离线衰减 / 时间线落盘 / 保留策略） |
 | `npm run verify:m4` | 无头验证日程提醒（到点→主动开口→日记落盘 / 重复推进 / 错过作废） |
 | `npm run verify:pose` | 实机验证立绘行为（黑脸移除 / 鼠标不跟随 / 对话状态驱动姿态） |
@@ -77,22 +81,33 @@ npm run dev        # 开发模式启动
 
 ## 一、放好 Live2D 模型
 
-模型不进 git，需要你自行下载后放进 `models/`。主用 **Lisette**（ShiraLive2D，免费·非商用）：
+模型不进 git，需要你自行获取后放进 `models/`。
 
-1. 打开 Booth 页 <https://booth.pm/ja/items/5354776>（需登录，Agent 无法代劳）
-2. 下载 `lisette_v2.zip`（约 31MB）并解压
-3. 放到 `models/Lisette/`，确保里面有 `*.model3.json`
+当前主用 **缅因妹妹**（猫娘，B 站工坊售卖，**禁止二传 / 禁止商用**），
+已装好并作为默认模型：`models/Maine/`（立绘：赛博撸猫人　建模：糖糖锦鲤）。
 
 ```
 models/
-└── Lisette/
-    ├── lisette.model3.json   ← 入口
-    ├── lisette.moc3
-    ├── *.exp3.json  *.motion3.json  *.png ...
+└── Maine/
+    ├── Maine.model3.json     ← 入口
+    ├── Maine.moc3  Maine.physics3.json  Maine.cdi3.json
+    ├── Maine.4096/           ← 贴图（4096×4096 ×3，原包 8192 已降采样，见下）
+    ├── Expressions/          ← 31 个原包表情 + 5 个 nagi_* 定制
+    ├── Motions/              ← 4 个原包动作 + 1 个自写待机
+    ├── nagi-emotion.json     ← 6 情绪 → 表情/动作 映射
+    └── _source/              ← VTS 配置与按键说明（留档，不参与加载）
 ```
 
-没有 Lisette 时，可先用 Live2D 官方免费模型跑通管线——本工程已内置 **Mao**（官方免费示例，
-132 参数、8 表情），可用脚本随时重新拉取：
+> 接线细节、表情/动作清单、以及贴图降分辨率的说明见 `models/README.md`。
+> 原包表情/动作是散放给 VTube Studio 用的，已在副本里挂进 `model3.json`，
+> 并补了 `LipSync` 参数组。
+>
+> **贴图降分辨率**（2026-10-17）：原包 8192×8192 ×3（磁盘 94MB / 显存 768MB）已统一降到
+> 4096，显存 **192MB（−75%）**、冷启动 **6.4s → 2.8s**，PSNR 35.8~37.0 dB 肉眼基本无感。
+> 原图一张没删，在 `models-archive/Maine-textures-8192/`；工具与还原方式见 `models/README.md`。
+
+想换成别的模型：把目录放进 `models/`（确保里面有 `*.model3.json`），
+在「设置 → Live2D → 模型」里选即可。缺模型时可先用 Live2D 官方免费示例跑通管线：
 
 ```bash
 node scripts/fetch-sample-model.mjs          # 默认 Mao；也可 Hiyori / Haru
@@ -228,7 +243,7 @@ nagi/
 ├── scripts/verify-s4.mjs           # 关系层无头验证（真实 electron + 隔离 userData）
 ├── scripts/verify-m4.mjs           # 日程提醒无头验证（到点/重复推进/错过作废）
 ├── resources/                      # tray.png / icon.png / portraits 立绘
-├── models/                         # Live2D 模型（Lisette/Mao）
+├── models/                         # Live2D 模型（Maine 为主角；Lisette/Mao 已归档到 models-archive/）
 └── src/
     ├── shared/protocol.js          # IPC 通道 / 事件 / 情绪 / 工具 / 风险等级
     ├── main/                       # 主进程
@@ -325,7 +340,7 @@ winCodeSign 包含 macOS 符号链接，Windows 无符号链接权限时 7za 退
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
-| M0 形象 | Live2D 模型（**Lisette 已入库**，专属表情 nagi_calm/joy/puzzled/pout 全命中） | ✅ |
+| M0 形象 | Live2D 模型（**缅因妹妹 Maine 已入库并设为唯一生效形象**，36 表情 / 5 动作组 / 6 情绪映射全命中；原 Lisette、Mao 归档至 `models-archive/`） | ✅ |
 | M1 桌宠原型 | 透明置顶窗 / 托盘 / 双形态 / 戳一戳 | ✅ |
 | M2 情感系统 | 连续情绪状态机 + 独白日记 + 6/6 情绪映射 + 情绪注入 LLM | ✅ |
 | T7 LLM 适配 | 凪云（默认，免密钥）+ OpenAI 兼容 + 双通道 | ✅ |
@@ -543,18 +558,29 @@ layout 会让桌宠窗口变超大特写。
 | 改动 | 文件 | 作用 |
 |---|---|---|
 | 取景纯逻辑 | `src/core/frame.js` | `FRAME_PRESETS.bust/full`、`fitBand()` 做 contain 装框；取景带按实测美术范围左右留量，支持偏心（`centerOffset`） |
+| 按模型分档 | `src/core/frame.js` | 2026-10-17：新增 `FRAME_PROFILES` + `frameProfile(frame, modelName)`——不同模型的美术范围不一样，取景带不再全局共用一套，按模型名匹配各自的 `bust` 预设（命中不到就回落通用预设） |
 | 渲染层装框 | `src/renderer/js/live2d.js` | `load()` 时缓存稳定基准尺寸；`ResizeObserver` 监听容器变化并 `layout()`；底部锚定，左右随带 |
 | 调试钩子 | `src/renderer/js/main.js` | `__nagiFrame` / `__nagiSnapshot` / `__nagiSetFrame` / `__nagiArtBox`：看取景参数、抓帧、换帧、测真实像素范围 |
 | 多分辨率验证 | `scripts/verify-frame.mjs` | 自起隔离实例，把「桌宠 200×300~900×1300」和「工作台面板 240/300/460 + 矮窗/中窗/大窗」跑成矩阵；读回像素确认：① canvas 尺寸 == 容器尺寸 ② 取景矩形在可用区 ③ 真实像素不越出画布 ④ 控件栏在画布之外 ⑤ 取景是胸像 |
 | 美术范围探针 | `scripts/probe-art.mjs` | 一次性开发工具：量出 Lisette 的真实绘制范围，用来决定取景带该留多少余量 |
+| 美术范围探针（缅因） | `scripts/probe-maine-frame.mjs` | 2026-10-17 同样的探针，跑 Maine 在 5 种桌宠尺寸下的真实不透明像素范围，用来定 Maine 专属取景带 |
 
-取景带的最终数值（基于 Lisette 实测）：
+取景带数值**按模型分别标定**（都在 `src/core/frame.js` 里）：
 
 ```js
+// 通用默认（原 Lisette 实测）
 bust: { left: 0.11, right: 0.95, top: -0.02, bottom: 0.46 }
+
+// Maine 专属（2026-10-17 实测标定）
+Maine: { left: 0.255, right: 0.83, top: -0.01, bottom: 0.46 }
 ```
 
-- 左右不对称：Lisette 的美术本身偏右，取景带跟着偏，`centerOffset` 让实际形象落在画面正中；
+缅因妹妹的美术范围实测为 `fx ∈ [0.273, 0.813]`、`fy ∈ [0.046, 0.459]`——**纵向和 Lisette 几乎一致，
+但横向只占画幅的一半多且明显偏右**。直接套通用带会把它缩得很小（contain 拟合系数 0.095），
+换成 Maine 专属带后拟合系数 0.139，形象放大约 **46%**；400×600 / 360×540 / 320×480 /
+240×640 / 160×800 五种尺寸下均无溢出。
+
+- 左右不对称：Lisette、Maine 的美术本身都偏右，取景带跟着偏，`centerOffset` 让实际形象落在画面正中；
 - 横向留量覆盖静止姿态下头发/手臂的最宽范围，大幅动作时手臂会短暂伸到画布边缘被裁——这是 Live2D 桌宠常态，且**永远不会盖住 UI**：画布被容器 `overflow:hidden` 裁切，UI 是 HTML 绘制在画布之上的；
 - `bottom: 0.46` 就是从腰截断，下半身不再出现。
 

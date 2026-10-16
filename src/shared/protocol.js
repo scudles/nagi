@@ -154,7 +154,9 @@ export const DEFAULT_SETTINGS = {
   },
   llmProfiles: {}, // 每个提供商最后保存的地址、模型与温度；密钥仍在 keystore
   live2d: {
-    modelPath: 'Lisette/Lisette.model3.json',
+    // 2026-10-17：角色形象换成「缅因妹妹」（models/Maine）。
+    // 旧的 Lisette / Mao 已移出 models/（归档到 models-archive/），此处同步指到新模型。
+    modelPath: 'Maine/Maine.model3.json',
     scale: 1,
     mirror: false,
     // 取景：'bust' = 只显示胸像（上半身），'full' = 全身。

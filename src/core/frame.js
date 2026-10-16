@@ -12,7 +12,9 @@
 /**
  * 取景模式：值都是「声明 moc 画布」的归一化坐标（0~1，左上角为原点）。
  *
- * ⚠ 为什么横向要取到 0.11~0.95（而不是"角色核心"的 0.15~0.85）：
+ * ⚠ 每个模型的画布"留白量"差别巨大，所以预设**按模型档案选**（见 FRAME_PROFILES）。
+ *
+ * 为什么横向要取到 0.11~0.95（Lisette 的情况，而不是"角色核心"的 0.15~0.85）：
  * 该模型的美术**画到了角色核心之外**，而且随待机动作摆动。实测（scripts/probe-art.mjs +
  * verify:frame 的像素统计）：
  *   · 静止姿态：整体范围 fx ∈ [0.131, 0.925]、fy ∈ [0.053, 0.963]；
@@ -30,11 +32,41 @@
  */
 export const FRAME_PRESETS = {
   bust: { left: 0.11, right: 0.95, top: -0.02, bottom: 0.46 },
+  // 缅因妹妹（models/Maine）：moc 画布 5000×7000，而美术只占 fx∈[0.273,0.81]、fy∈[0.043,0.459]
+  // ——左右各空 1/4 多、上下更是大片空白（原稿是竖长画布 + 角色瘦长）。实测（scripts/probe-art.mjs
+  // 同款像素读回，2026-10-17）：沿用 Lisette 的 0.11~0.95 时人物只占窗口宽度的 40% 左右、
+  // 头顶上方空掉一大半。这里按美术真实范围重新收框（左/右各留 0.02 余量，
+  // 顶 -0.01 给抬手/耳朵留一点，底 0.46 保持"裁到腰"的胸像语义）。
+  Maine: { left: 0.255, right: 0.83, top: -0.01, bottom: 0.46 },
   // 全身（保留能力：个别模型若原本就是半身稿，可用 full 原样显示）
   full: { left: 0, right: 1, top: 0, bottom: 1 }
 }
 
 export const DEFAULT_FRAME = 'bust'
+
+/**
+ * 模型档案：按模型目录名/文件名匹配，命中则用一个"更贴合该模型画布"的预设覆盖同名的通用预设。
+ * 匹配规则与渲染层 live2d.js 的 MODEL_PROFILES 同源（拿模型目录名去试）。
+ */
+export const FRAME_PROFILES = [
+  { match: /maine|缅因/i, presets: { bust: FRAME_PRESETS.Maine } }
+]
+
+/**
+ * 解析"该用哪套预设"。
+ * @param {string} frame 取景模式（bust / full / …）
+ * @param {string} modelName 模型目录名（如 'Maine'、'Lisette'）；缺省则用通用预设
+ */
+export function frameProfile(frame, modelName) {
+  const name = String(modelName || '')
+  for (const p of FRAME_PROFILES) {
+    if (p.match.test(name)) {
+      const hit = p.presets[frame]
+      if (hit) return hit
+    }
+  }
+  return framePreset(frame)
+}
 
 /** 取某个取景模式的比例表；未知模式回落到默认 */
 export function framePreset(frame) {
@@ -50,11 +82,12 @@ export function isBustFrame(frame) {
  * @param {string} frame 取景模式
  * @param {number} baseW 模型原始宽（模型单位）
  * @param {number} baseH 模型原始高（模型单位）
+ * @param {string} [modelName] 模型目录名；给了就按模型档案挑预设（如 Maine）
  * @returns {{x:number,y:number,w:number,h:number,anchorY:number}}
  *   anchorY = 取景带底边在"整张模型"里的高度占比，也就是 pixi 的 anchor.y
  */
-export function frameBand(frame, baseW, baseH) {
-  const p = framePreset(frame)
+export function frameBand(frame, baseW, baseH, modelName) {
+  const p = frameProfile(frame, modelName)
   const w = baseW * (p.right - p.left)
   const h = baseH * (p.bottom - p.top)
   return {
@@ -63,6 +96,7 @@ export function frameBand(frame, baseW, baseH) {
     w,
     h,
     anchorY: p.bottom,
+    preset: p,
     // 取景带中心相对"画布中心"的偏移（模型单位）。美术偏右时取景带也偏右，
     // fitBand 靠它把取景带摆到框中央，而不是把画布中心摆到框中央。
     centerOffset: baseW * ((p.left + p.right) / 2 - 0.5)

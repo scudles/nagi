@@ -11,11 +11,16 @@ import { join } from 'node:path'
 import { POSE_PRESETS, POSE_NEUTRAL, poseTargets, easePose, poseSettled, isSubtlePose } from '../src/core/pose.js'
 import { isHiddenExpression } from '../src/renderer/js/live2d.js'
 
-const MODEL_DIR = join(process.cwd(), 'models', 'Lisette')
+// 注意：2026-10-17 换装后 models/ 下只剩「缅因妹妹」；Lisette 归档到 models-archive/。
+// 这两条针对 Lisette 资源的断言改成在归档目录里查（归档没了一起跳过，不是失败）。
+const ARCHIVED = join(process.cwd(), 'models-archive', 'Lisette')
+const MODEL_DIR = ARCHIVED
+const ARCHIVE_OK = existsSync(join(ARCHIVED, 'Lisette.model3.json'))
+const skipArchive = ARCHIVE_OK ? false : 'models-archive/Lisette 不存在（旧模型未归档）'
 
 /* ---------------- ① 「黑脸」系列：资源与清单 ---------------- */
 
-test('黑脸资源文件已删除（4 个 dark_mask*.exp3.json 一个不留），其余表情一个没动', () => {
+test('黑脸资源文件已删除（4 个 dark_mask*.exp3.json 一个不留），其余表情一个没动', { skip: skipArchive }, () => {
   const files = readdirSync(join(MODEL_DIR, 'Expressions')).filter((f) => f.endsWith('.exp3.json'))
   const dark = files.filter((f) => /dark[_-]?mask/i.test(f))
   assert.deepEqual(dark, [], `仍存在黑脸资源：${dark.join(', ')}`)
@@ -39,7 +44,7 @@ test('黑脸资源文件已删除（4 个 dark_mask*.exp3.json 一个不留）�
   ])
 })
 
-test('模型清单里没有黑脸条目', () => {
+test('模型清单里没有黑脸条目', { skip: skipArchive }, () => {
   const d = JSON.parse(readFileSync(join(MODEL_DIR, 'Lisette.model3.json'), 'utf8'))
   const names = (d.FileReferences?.Expressions || []).map((e) => e.Name)
   assert.equal(names.length, 11, `表情条目应为 11，实际 ${names.length}`)

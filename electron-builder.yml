@@ -25,6 +25,7 @@ files:
   - '!scripts/**/*'
   - '!tools/**/*'
   - '!models/**/*'
+  - '!models-archive/**/*'   # 2026-10-17：Lisette/Mao 归档只留作测试基准，运行时不需要，别进 asar
   - '!resources/**/*'
   - '!dist/**/*'
   - '!.git/**/*'

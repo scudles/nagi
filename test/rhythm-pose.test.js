@@ -21,7 +21,9 @@ import {
 } from '../src/core/presence/rhythm-pose.js'
 import { isSubtlePose } from '../src/core/pose.js'
 
-const MODEL_CDI = join(process.cwd(), 'models', 'Lisette', 'Lisette.cdi3.json')
+// 2026-10-17 换装：主模型改成「缅因妹妹」，Lisette 归档到 models-archive/。
+// 时段表现预设的参数口径仍以 Lisette（参数最全的那一份）为基准扫。
+const MODEL_CDI = join(process.cwd(), 'models-archive', 'Lisette', 'Lisette.cdi3.json')
 
 /* ---------------- ① 预设方向性与保守度 ---------------- */
 

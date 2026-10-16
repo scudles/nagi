@@ -12,9 +12,12 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { pickRedParams, shouldRemoveRedGlow } from '../src/core/redform.js'
 
-const EMOTION_CFG = new URL('../models/Lisette/nagi-emotion.json', import.meta.url)
-const CDI = new URL('../models/Lisette/Lisette.cdi3.json', import.meta.url)
-const MODEL3 = new URL('../models/Lisette/Lisette.model3.json', import.meta.url)
+// 2026-10-17 换装：主模型变成「缅因妹妹」（models/Maine），Lisette 归档到 models-archive/。
+// 这里以归档的 Lisette 为资源基准（红色形态那套参数只有它有）。
+const ARCH = '../models-archive/Lisette/'
+const EMOTION_CFG = new URL(ARCH + 'nagi-emotion.json', import.meta.url)
+const CDI = new URL(ARCH + 'Lisette.cdi3.json', import.meta.url)
+const MODEL3 = new URL(ARCH + 'Lisette.model3.json', import.meta.url)
 
 const readJson = (u) => JSON.parse(readFileSync(u, 'utf8'))
 const hasModel = existsSync(EMOTION_CFG) && existsSync(CDI) && existsSync(MODEL3)

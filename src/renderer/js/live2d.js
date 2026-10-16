@@ -13,7 +13,7 @@
 //
 // 依赖：vendor/live2dcubismcore.min.js（在 index.html 中先加载）+ pixi.js v7 + pixi-live2d-display/cubism4
 import { pickRedParams, shouldRemoveRedGlow } from '../../core/redform.js'
-import { DEFAULT_FRAME, fitBand, frameBand, framePreset } from '../../core/frame.js'
+import { DEFAULT_FRAME, fitBand, frameBand, framePreset, frameProfile } from '../../core/frame.js'
 import { POSE_EASE_RATE, easePose, poseSettled, poseTargets } from '../../core/pose.js'
 import { rhythmPoseTargets, RHYTHM_POSE_EASE_RATE } from '../../core/presence/rhythm-pose.js'
 
@@ -139,7 +139,7 @@ export function probeArtBounds() {
 export function frameInfo() {
   if (!app || !model) return null
   const { width, height } = app.screen
-  const band = frameBand(frameMode, baseW, baseH)
+  const band = frameBand(frameMode, baseW, baseH, modelName)
   const fit = fitBand({ band, boxW: width, boxH: height, scale: userScale, pad: readPads() })
   let bounds = null
   try {
@@ -150,7 +150,7 @@ export function frameInfo() {
   }
   return {
     frame: frameMode,
-    preset: framePreset(frameMode),
+    preset: frameProfile(frameMode, modelName),
     band,
     fit,
     base: { w: baseW, h: baseH },
@@ -517,7 +517,7 @@ export function layout(scale = userScale, mirror = mirrorOn, frame = frameMode) 
   if (!app || !model) return
 
   const { width, height } = app.screen
-  const band = frameBand(frameMode, baseW, baseH)
+  const band = frameBand(frameMode, baseW, baseH, modelName)
   const fit = fitBand({ band, boxW: width, boxH: height, scale: userScale, pad: readPads() })
 
   baseScale = fit.scale
