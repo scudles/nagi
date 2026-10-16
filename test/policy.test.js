@@ -128,6 +128,25 @@ test('needsConfirm：有副作用或敏感读取逐次确认，旧开关不可�
   assert.equal(needsConfirm({ name: 'file_list', args: {} }).confirm, false)
 })
 
+// 2026-10-17 放宽（用户指示）：只读观察类不再逐次确认，写入/对外/不可逆仍然确认。
+test('needsConfirm：只读观察类免确认（2026-10-17 放宽）', () => {
+  for (const name of ['browser_open', 'browser_scrape', 'web_search', 'home_list', 'home_get', 'reminder_list']) {
+    const r = needsConfirm({ name, args: {} })
+    assert.equal(r.confirm, false, name)
+    assert.equal(r.blocked, false, name)
+  }
+  // 带参数的真实调用形态同样免确认（确认与否只看工具名，不做内容判断）
+  assert.equal(needsConfirm({ name: 'browser_scrape', args: { url: 'https://example.com' } }).confirm, false)
+})
+
+test('needsConfirm：放宽不得波及写入类与危险命令', () => {
+  for (const name of ['file_write', 'clipboard_write', 'open_app', 'home_set', 'home_scene', 'browser_act', 'clipboard_read', 'screenshot']) {
+    assert.equal(needsConfirm({ name, args: {} }).confirm, true, name + ' 必须仍然确认')
+  }
+  assert.equal(needsConfirm({ name: 'run_command', args: { command: 'del x' } }).confirm, true)
+  assert.equal(needsConfirm({ name: 'run_command', args: { command: 'format C:' } }).blocked, true)
+})
+
 test('needsConfirm：黑名单命令被拒', () => {
   const r = needsConfirm({ name: 'run_command', args: { command: 'format C:' } })
   assert.equal(r.blocked, true)

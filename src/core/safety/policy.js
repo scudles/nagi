@@ -58,11 +58,17 @@ export function getToolRisk(name) {
 
 // 这些操作会写入、控制外部目标，或读取比文件授权根更敏感的信息。
 // 逐次确认绑定本次工具名和参数；不保存跨目标的笼统许可。
+//
+// 2026-10-17 放宽（用户指示，见 DECISIONS）：**只读观察类不再逐次确认**。
+// browser_open / browser_scrape / web_search / home_list / home_get / reminder_list
+// 只是「看」，不改变任何状态，此前每看一次都要点确认条，严重拖累日常使用，故移出本名单。
+// 仍逐次确认的是「写入 / 对外 / 不可逆」，其中两项特别说明：
+//   · screenshot / clipboard_read —— 剪贴板里可能正躺着密码，截屏可能拍到银行页或私密窗口，
+//     而窗口标题黑名单只保护「活动监测」，保护不到这两条通道，故维持确认。
+//   · reminder_add / reminder_cancel 虽是 LOW 风险，但会真的新增/撤销提醒（写），维持确认。
 export const CONFIRM_TOOLS = new Set([
-  'browser_open', 'browser_scrape', 'browser_act', 'web_search',
-  'screenshot', 'clipboard_read', 'clipboard_write', 'file_write',
-  'open_app', 'home_list', 'home_get', 'home_set', 'home_scene',
-  'reminder_add', 'reminder_cancel'
+  'browser_act', 'screenshot', 'clipboard_read', 'clipboard_write', 'file_write',
+  'open_app', 'home_set', 'home_scene', 'reminder_add', 'reminder_cancel'
 ])
 
 /** 命令是否被永久拒绝 */
