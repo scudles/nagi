@@ -10,6 +10,8 @@ import { AGENT_EVENT, AGENT_STATE, EMOTIONS } from '../../shared/protocol.js'
 import { EmotionTagParser, extractEmotionTag } from '../llm/stream-normalize.js'
 import { extractActions, formatToolResult, JSON_PROTOCOL_HINT } from './json-protocol.js'
 import { getToolRisk, needsConfirm } from '../safety/policy.js'
+import { waitForConfirmation } from '../safety/confirmation.js'
+import { randomUUID } from 'node:crypto'
 import { NagiPersona } from '../persona.js'
 import { resolve } from 'node:path'
 
@@ -257,20 +259,22 @@ export async function runAgentLoop(opts) {
             emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.ACTING })
           } else if (decision.confirm) {
             emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.WAITING })
+            if (aborted) break
+            // 确认 token 由宿主生成，不复用模型 ID；先登记，再向 UI 发出请求。
+            const confirmationId = randomUUID()
+            const approval = waitForConfirmation(
+              () => confirm?.({ id: confirmationId, name: tc.name, args, risk }), signal
+            )
             emit({
               type: AGENT_EVENT.CONFIRM,
-              id: tc.id,
+              id: confirmationId,
               name: tc.name,
               args,
               risk,
               description: describeToolCall(tc.name, args, { fileRoot })
             })
-            let approved = false
-            try {
-              approved = confirm ? await confirm({ id: tc.id, name: tc.name, args, risk }) : false
-            } catch {
-              approved = false
-            }
+            const approved = await approval
+            if (aborted) break
             if (!approved) {
               result = { ok: false, summary: '用户拒绝执行该操作' }
             }
@@ -278,6 +282,7 @@ export async function runAgentLoop(opts) {
 
           if (!result) {
             emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.ACTING, detail: tc.name })
+            if (aborted) break
             try {
               result = (await executeTool(tc.name, args, { id: tc.id, safe: decision.safe })) || { ok: false, summary: '工具无返回' }
             } catch (err) {
@@ -316,6 +321,7 @@ export async function runAgentLoop(opts) {
 
     if (aborted) {
       emit({ type: AGENT_EVENT.ERROR, message: '已取消' })
+      emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.IDLE })
       return { text: finalText, steps, aborted: true }
     }
     if (steps >= maxSteps && !finalText) {

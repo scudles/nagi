@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/protocol.js'
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createPersonaGuard } from '../core/agent/persona-guard.js'
+import { createConfirmationGate } from '../core/safety/confirmation.js'
 import { createClient, chatStream } from '../core/llm/openai-compatible.js'
 import { apiKeyForLlm, isLocalLlm, resolveLlm, supportsNativeTools } from '../core/llm/providers.js'
 import { checkOllama } from '../core/llm/ollama.js'
@@ -95,7 +96,7 @@ let historyLoaded = false
 let busy = false
 let currentAbort = null
 let mockAnnounced = false // 本地占位大脑的说明只在第一次说一次
-const pendingConfirms = new Map() // id -> resolve
+const confirmations = createConfirmationGate()
 
 /** 首次用到时从磁盘恢复对话历史（重启后凪还记得昨天聊过什么） */
 function ensureHistory() {
@@ -628,6 +629,9 @@ function trimHistory(messages) {
 
 /** 组装依赖并执行一轮 */
 export async function runTurn(userText, emit, turnRef = null) {
+  const controller = new AbortController()
+  currentAbort = controller
+  const signal = controller.signal
   ensureHistory()
   const settings = getSettings()
   const llm = resolveLlm(settings.llm || {})
@@ -645,6 +649,7 @@ export async function runTurn(userText, emit, turnRef = null) {
   // 云端大脑：未就绪则尝试初始化；仍不可用则降级本地占位（中文原因提示）
   if (useCloud && !cloudBrainStatus().ok) {
     const st = await initCloudBrain()
+    signal.throwIfAborted()
     if (!st.ok) {
       broadcast(EVT.AGENT, { type: AGENT_EVENT.ERROR, message: '云端大脑暂不可用（' + (st.error || '未知原因') + '），先用本地模式陪你。' })
       return mockRun(userText, emit)
@@ -653,6 +658,7 @@ export async function runTurn(userText, emit, turnRef = null) {
 
   if (local && !fakeLlm) {
     const status = await checkOllama({ baseURL: llm.baseURL, model: llm.model })
+    signal.throwIfAborted()
     if (!status.ok) throw new Error(status.error)
   }
 
@@ -677,11 +683,19 @@ export async function runTurn(userText, emit, turnRef = null) {
     native: nativeTools,
     reminders: reminderTools()
   })
-  const executeTool = (name, args, opts) => runRecordedTool(rawExecuteTool, name, args, opts)
+  const executeTool = (name, args, opts) => {
+    signal.throwIfAborted()
+    // 确认绑定本轮授权根；设置变化后不能继续使用创建工具时的旧授权快照。
+    if ((name.startsWith('file_') || name === 'run_command') &&
+        fileRoot !== (getSettings().tools?.fileRoot || '')) {
+      return { ok: false, summary: '文件目录授权已变更，未执行操作；请重新发起请求' }
+    }
+    return runRecordedTool(rawExecuteTool, name, args, opts)
+  }
 
   const messages = await buildMessages(userText, supportsNative)
   const guard = local && !fakeLlm ? createPersonaGuard(userText) : null
-  currentAbort = new AbortController()
+  signal.throwIfAborted()
 
   const r = await runAgentLoop({
     messages,
@@ -690,29 +704,19 @@ export async function runTurn(userText, emit, turnRef = null) {
     callModel: fakeLlm
       ? fakeCallModel()
       : useCloud
-        ? async ({ messages: modelMessages, tools, signal }) => cloudChatStream({ messages: modelMessages, tools, signal: signal || currentAbort.signal })
+        ? async ({ messages: modelMessages, tools, signal }) => cloudChatStream({ messages: modelMessages, tools, signal: signal || controller.signal })
         : async ({ messages: modelMessages, tools, signal }) =>
             chatStream(client, {
               model: llm.model,
               messages: modelMessages,
               temperature: llm.temperature,
               tools,
-              signal: signal || currentAbort.signal
+              signal: signal || controller.signal
             }),
     executeTool,
-    confirm: ({ id }) =>
-      new Promise((resolve) => {
-        pendingConfirms.set(id, resolve)
-        // 兜底：30 秒无人回应按拒绝处理
-        setTimeout(() => {
-          if (pendingConfirms.has(id)) {
-            pendingConfirms.delete(id)
-            resolve(false)
-          }
-        }, 30000).unref?.()
-      }),
+    confirm: ({ id }) => confirmations.request(id, signal),
     emit,
-    signal: currentAbort.signal,
+    signal,
     guard,
     fileRoot
   })
@@ -798,13 +802,7 @@ export function handlePoke() {
 
 /** 确认条回传 */
 export function resolveConfirm(id, approved) {
-  const resolve = pendingConfirms.get(id)
-  if (resolve) {
-    pendingConfirms.delete(id)
-    resolve(Boolean(approved))
-    return { ok: true }
-  }
-  return { ok: false, error: '没有等待中的确认' }
+  return confirmations.resolve(id, approved)
 }
 
 /** 中止当前回合 */
@@ -815,6 +813,7 @@ export function abortChat() {
 
 /** 退出前清理 */
 export async function disposeAgent() {
+  abortChat()
   stopMoodEngine()
   stopActivityMonitor()
   stopReminderEngine()

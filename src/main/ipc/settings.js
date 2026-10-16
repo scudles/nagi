@@ -11,7 +11,7 @@ import { checkOllama } from '../../core/llm/ollama.js'
 import { getSettings, saveSettings, settingsPath } from '../settings-store.js'
 import { setSecret, hasSecret, deleteSecret } from '../keystore.js'
 import { broadcast, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow, resizePetWindow, movePetWindow } from '../windows.js'
-import { memoryList, memoryAdd, historyClear } from '../agent.js'
+import { memoryList, memoryAdd, historyClear, abortChat } from '../agent.js'
 import { getLedger } from '../ledger.js'
 import { forgetExperience } from '../ledger-actions.js'
 import { modelsDir, projectRoot } from '../paths.js'
@@ -167,12 +167,14 @@ export function registerSettingsIpc() {
     if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true }
     const root = realpathSync(r.filePaths[0])
     if (!statSync(root).isDirectory()) return { ok: false, error: '请选择目录' }
+    abortChat() // 新授权不能复用旧回合的待确认操作。
     const next = saveSettings({ tools: { fileRoot: root } })
     broadcast(EVT.SETTINGS_CHANGED, next)
     return { ok: true, fileRoot: root }
   })
 
   trustedHandle(IPC.TOOLS_REVOKE_ROOT, () => {
+    abortChat() // 撤销立即终止待确认及尚未开始的工具调用。
     const next = saveSettings({ tools: { fileRoot: '' } })
     broadcast(EVT.SETTINGS_CHANGED, next)
     return { ok: true }
