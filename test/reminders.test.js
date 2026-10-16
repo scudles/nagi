@@ -139,6 +139,8 @@ test('isDue：到点且未完成才算', () => {
   assert.equal(isDue(it, BASE - 1), false)
   assert.equal(isDue(it, BASE), true)
   assert.equal(isDue({ ...it, doneAt: BASE }, BASE + 1000), false)
+  assert.equal(isDue({ ...it, firedAt: BASE }, BASE + 1000), false)
+  assert.equal(isDue({ ...it, repeat: 'daily', firedAt: BASE }, BASE + 1000), true)
 })
 
 test('advanceRepeat：每天 / 每周推进；不重复返回 null', () => {

@@ -143,6 +143,24 @@ try {
     toolEvents.some((event) => event.type === 'tool-result' && event.name === 'file_list' && event.ok),
     toolEvents.filter((event) => event.type === 'tool-call' || event.type === 'tool-result' || event.type === 'error').map((event) => JSON.stringify(event)).join(' | ').slice(0, 350))
 
+  const promiseRoundtrip = await page.evaluate(async () => {
+    const added = await window.nagi.reminders.add({ text: '承诺簿验收喝水', at: Date.now() + 600000 })
+    const scheduled = await window.nagi.promises.list()
+    document.getElementById('btn-open-reminder')?.click()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const shown = document.getElementById('promise-list')?.textContent || ''
+    const done = added.ok ? await window.nagi.reminders.done(added.item.id) : { ok: false }
+    const completed = await window.nagi.promises.list()
+    return { added, scheduled: scheduled.items?.find((x) => x.id === `reminder:${added.item?.id}`), shown,
+      done, completed: completed.items?.find((x) => x.id === `reminder:${added.item?.id}`) }
+  })
+  check('提醒通过可信 IPC 进入承诺簿并在界面展示', promiseRoundtrip.added.ok &&
+    promiseRoundtrip.scheduled?.status === 'scheduled' && promiseRoundtrip.shown.includes('承诺簿验收喝水'))
+  check('用户明确确认后才有完成证据', promiseRoundtrip.done.ok &&
+    promiseRoundtrip.completed?.status === 'completed' &&
+    promiseRoundtrip.completed?.evidence?.some((e) => e.kind === 'user-confirmation'))
+  await page.evaluate(() => document.getElementById('btn-close-reminder')?.click())
+
   const rag = await page.evaluate(() => window.nagi.rag.status())
   check('本地回复进入长期档案流水', rag.chunks + rag.pending >= 2, `chunks=${rag.chunks} pending=${rag.pending}`)
   const journalDir = join(profile, 'journal')

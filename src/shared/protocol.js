@@ -53,6 +53,7 @@ export const IPC = {
   REMINDER_ADD: 'reminder:add',
   REMINDER_REMOVE: 'reminder:remove',
   REMINDER_DONE: 'reminder:done',
+  PROMISE_LIST: 'promise:list',
   // 智能家居
   HA_TEST: 'ha:test',
   HA_LIST: 'ha:list',

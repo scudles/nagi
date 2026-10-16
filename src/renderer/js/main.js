@@ -1784,6 +1784,7 @@ async function renderReminders() {
   const box = document.getElementById('reminder-list')
   const empty = document.getElementById('reminder-empty')
   if (!box || !window.nagi.reminders) return
+  renderPromises()
   try {
     const r = await window.nagi.reminders.list()
     const items = (r && r.items) || []
@@ -1794,11 +1795,12 @@ async function renderReminders() {
     }
     empty?.classList.add('hidden')
     for (const it of items) {
+      const isComplete = it.promiseStatus === 'completed'
       const row = document.createElement('div')
-      row.className = 'rm-item' + (it.doneAt ? ' done' : '') + (!it.doneAt && it.firedAt ? ' fired' : '')
+      row.className = 'rm-item' + (isComplete ? ' done' : '') + (!isComplete && it.firedAt ? ' fired' : '')
       const when = document.createElement('span')
       when.className = 'rm-when'
-      when.textContent = it.doneAt ? '已完成' : it.when
+      when.textContent = isComplete ? '你已确认完成' : it.promiseStatus === 'legacy-unknown' ? '旧记录，结果未知' : it.missedAt ? '未送达' : it.repeat === 'none' && it.firedAt ? '提醒已发出' : it.when
       const text = document.createElement('span')
       text.className = 'rm-text'
       text.textContent = it.text
@@ -1809,10 +1811,10 @@ async function renderReminders() {
         rep.textContent = it.repeatLabel
         row.appendChild(rep)
       }
-      if (!it.doneAt) {
+      if (!isComplete) {
         const remain = document.createElement('span')
         remain.className = 'rm-remain'
-        remain.textContent = it.remain
+        remain.textContent = it.promiseStatus === 'legacy-unknown' ? '旧版没有完成证据' : it.missedAt ? '已过期' : it.repeat === 'none' && it.firedAt ? '事情是否完成，由你确认' : it.remain
         row.appendChild(remain)
         const done = document.createElement('button')
         done.textContent = '✓'
@@ -1835,6 +1837,37 @@ async function renderReminders() {
     }
   } catch (err) {
     console.warn('[reminder] 列表读取失败', err.message)
+  }
+}
+
+async function renderPromises() {
+  const box = document.getElementById('promise-list')
+  if (!box || !window.nagi.promises) return
+  const labels = { scheduled: '已记下', attempting: '正在尝试', attempted: '已尝试，效果待核实',
+    delivered: '通知已发出', completed: '已完成', failed: '失败', missed: '未送达',
+    cancelled: '已取消', 'legacy-unknown': '旧记录，结果未知' }
+  try {
+    const result = await window.nagi.promises.list()
+    box.replaceChildren()
+    for (const it of result.items || []) {
+      const row = document.createElement('div')
+      row.className = 'rm-item'
+      const status = document.createElement('span')
+      status.className = 'rm-when'
+      status.textContent = labels[it.status] || it.status
+      const title = document.createElement('span')
+      title.className = 'rm-text'
+      title.textContent = it.title
+      const proof = document.createElement('span')
+      proof.className = 'rm-remain'
+      const last = it.evidence?.at(-1)
+      proof.textContent = last ? `${new Date(last.at).toLocaleString()} · ${last.kind}` : '暂无结果证据'
+      row.append(status, title, proof)
+      box.appendChild(row)
+    }
+    if (!result.items?.length) box.textContent = '还没有承诺记录。'
+  } catch (err) {
+    box.textContent = `承诺簿读取失败：${err.message}`
   }
 }
 

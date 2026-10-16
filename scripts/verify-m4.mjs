@@ -70,6 +70,8 @@ function runApp(userData, ms, extraEnv = {}) {
 }
 
 const remindersFile = (ud) => join(ud, 'reminders.json')
+const promiseFile = (ud) => join(ud, 'promises.json')
+const findPromise = (ud, id) => readJson(promiseFile(ud))?.entries?.find((x) => x.id === `reminder:${id}`)
 const diaryDir = (ud) => join(ud, 'monologue')
 
 const logLine = (out, re) => {
@@ -108,10 +110,12 @@ console.log('=== 1. 全链路：到点 → 她主动开口 + 情绪 + 日记 + �
 
   const it = findItem(ud, 'selftest')
   check(
-    '一次性提醒触发后标记完成（firedAt + doneAt）',
-    !!it && it.firedAt > 0 && it.doneAt > 0,
+    '一次性提醒发出后仍待用户确认完成',
+    !!it && it.firedAt > 0 && !it.doneAt,
     it ? `firedAt=${!!it.firedAt} doneAt=${!!it.doneAt}` : '（reminders.json 里找不到自测条目）'
   )
+  const promise = findPromise(ud, 'selftest')
+  check('承诺簿记录通知证据而非完成', promise?.status === 'delivered' && promise.evidence?.some((e) => e.kind === 'notification-dispatched'))
 
   const diary = readDiary(ud)
   check('日记落盘且含提醒内容', /该起来喝口水了/.test(diary), /该起来喝口水了/.test(diary) ? '日记命中' : '（日记里没有提醒内容）')
@@ -158,6 +162,7 @@ console.log('\n=== 2. 重复推进 / 错过作废 / 未到期不动 ===')
   const staleLog = logLine(out, /\[reminder\] 未送达且已过时：很久以前的事/)
   const stale = findItem(ud, 'stale1')
   check('错过太久的一次性提醒标为未送达', !!staleLog && !!stale && stale.missedAt > 0 && !stale.doneAt && !stale.firedAt, stale ? `missedAt=${!!stale.missedAt} doneAt=${!!stale.doneAt}` : '（条目丢失）')
+  check('错过的承诺状态为未送达', findPromise(ud, 'stale1')?.status === 'missed')
   check('未送达的提醒没有打扰用户', !/已送达：很久以前的事/.test(out), /已送达：很久以前的事/.test(out) ? '不该触发却触发了' : '未触发，正确')
 
   const future = findItem(ud, 'future1')
@@ -180,12 +185,13 @@ console.log('\n=== 3. 勿扰优先与跨重启补送 ===')
   const pending = findItem(ud, 'selftest')
   check('勿扰下提醒不宣称送达或完成', !!pending && !pending.firedAt && !pending.doneAt &&
     !/\[reminder\] 已送达：\[自测\]/.test(muted))
+  check('勿扰下承诺仍待执行', findPromise(ud, 'selftest')?.status === 'scheduled')
   settings.privacy.doNotDisturb = false
   writeFileSync(settingsFile, JSON.stringify(settings), 'utf8')
   const resumed = await runApp(ud, 7000, { NAGI_SELFTEST_REMINDER: '1', NAGI_SELFTEST_REMINDER_SEED: '0' })
   const delivered = findItem(ud, 'selftest')
-  check('解除勿扰后跨重启补送且有落盘证据', !!delivered && delivered.firedAt > 0 && delivered.doneAt > 0 &&
-    /\[reminder\] 已送达：\[自测\]/.test(resumed))
+  check('解除勿扰后跨重启补送且有落盘证据', !!delivered && delivered.firedAt > 0 && !delivered.doneAt &&
+    findPromise(ud, 'selftest')?.status === 'delivered' && /\[reminder\] 已送达：\[自测\]/.test(resumed))
 }
 
 /* ---------- 清理与汇总 ---------- */

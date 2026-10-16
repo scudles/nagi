@@ -102,6 +102,9 @@ const api = {
     remove: (payload) => ipcRenderer.invoke(IPC.REMINDER_REMOVE, payload),
     done: (id) => ipcRenderer.invoke(IPC.REMINDER_DONE, { id })
   },
+  promises: {
+    list: () => ipcRenderer.invoke(IPC.PROMISE_LIST)
+  },
   /** 语音链路（M5）：她既能开口，也能听见 */
   voice: {
     /** 能力快照：各引擎可用性 + 本机语音清单 + 离线模型状态 */

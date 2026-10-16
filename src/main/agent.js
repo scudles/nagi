@@ -55,6 +55,7 @@ import { noteEvent, todayEvents, pruneJournals, flushJournal } from './journal.j
 import { startMonitor, stopMonitor } from './monitor/index.js'
 import { getRag } from './rag/index.js'
 import { getLedger } from './ledger.js'
+import { runRecordedTool } from './promises.js'
 import {
   startReminderEngine,
   stopReminderEngine,
@@ -685,7 +686,7 @@ export async function runTurn(userText, emit, turnRef = null) {
   const files = createFileTools({ fileRoot })
   const system = createSystemTools({ cwd: app.getPath('home'), fileRoot })
   const ha = getHa()
-  const executeTool = createToolRunner({
+  const rawExecuteTool = createToolRunner({
     files,
     system,
     browser: browserTools,
@@ -693,6 +694,7 @@ export async function runTurn(userText, emit, turnRef = null) {
     native: nativeTools,
     reminders: reminderTools()
   })
+  const executeTool = (name, args, opts) => runRecordedTool(rawExecuteTool, name, args, opts)
 
   const messages = await buildMessages(userText, supportsNative)
   const guard = local && !fakeLlm ? createPersonaGuard(userText) : null

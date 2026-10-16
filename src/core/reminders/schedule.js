@@ -257,7 +257,7 @@ export function normalizeItems(list) {
 }
 
 export function isDue(item, now = Date.now()) {
-  return !!(item && !item.doneAt && !item.missedAt && Number.isFinite(item.at) && item.at <= now)
+  return !!(item && !item.doneAt && !item.missedAt && (item.repeat !== 'none' || !item.firedAt) && Number.isFinite(item.at) && item.at <= now)
 }
 
 /**

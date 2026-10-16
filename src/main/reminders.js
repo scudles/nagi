@@ -6,7 +6,7 @@
 
 import { app } from 'electron'
 import { join } from 'node:path'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import {
   normalizeItem,
@@ -23,6 +23,7 @@ import {
   REMINDER_LIMIT,
   MAX_AHEAD_MS
 } from '../core/reminders/schedule.js'
+import { createReminderPromise, getPromiseBook, markReminder, rescheduleReminder, syncReminderPromises } from './promises.js'
 
 /** 默认检查间隔（秒）。20 秒足够准，也不至于频繁读盘 */
 const DEFAULT_CHECK_SEC = 20
@@ -48,27 +49,49 @@ function load() {
 }
 
 function save() {
-  try {
-    mkdirSync(app.getPath('userData'), { recursive: true })
-    writeFileSync(filePath(), JSON.stringify({ version: 1, items }, null, 2), 'utf8')
-  } catch (err) {
-    console.error('[reminder] 写入失败：', err && err.message)
-  }
+  mkdirSync(app.getPath('userData'), { recursive: true })
+  const temp = filePath() + '.' + randomUUID() + '.tmp'
+  writeFileSync(temp, JSON.stringify({ version: 1, items }, null, 2), 'utf8')
+  renameSync(temp, filePath())
 }
 
 /** 装配（首次用到时读盘）。app ready 之后调用 */
 export function initReminders() {
   load()
+  syncReminderPromises(items)
+  let changed = false
+  const store = getPromiseBook()
+  items = items.filter((it) => {
+    const p = store.get(`reminder:${it.id}`)
+    if (p?.status === 'cancelled') { changed = true; return false }
+    if (p?.status === 'completed' && !it.doneAt) { it.doneAt = p.updatedAt; changed = true }
+    if (p?.status === 'missed' && !it.missedAt) { it.missedAt = p.updatedAt; changed = true }
+    if (p?.status === 'delivered') {
+      const sentAt = p.evidence?.findLast((e) => e.kind === 'notification-dispatched')?.at || p.updatedAt
+      if (it.repeat === 'none' && !it.firedAt) { it.firedAt = sentAt; changed = true }
+      if (it.repeat !== 'none') {
+        if (it.at <= sentAt) {
+          Object.assign(it, advanceRepeat(it, sentAt))
+          changed = true
+        }
+        rescheduleReminder(it.id, it.at, sentAt)
+      }
+    }
+    return true
+  })
+  if (changed) save()
   return items.length
 }
 
 /** 列表：附带展示字段，未完成在前 */
 export function listReminders(now = Date.now()) {
+  initReminders()
   return sortItems(load()).map((x) => ({
     ...x,
     when: formatWhen(x.at, now),
     remain: remainingText(x.at, now),
-    repeatLabel: REPEAT_LABEL[x.repeat] || REPEAT_LABEL.none
+    repeatLabel: REPEAT_LABEL[x.repeat] || REPEAT_LABEL.none,
+    promiseStatus: getPromiseBook().get(`reminder:${x.id}`)?.status || 'legacy-unknown'
   }))
 }
 
@@ -94,7 +117,7 @@ function enforceLimit() {
  * @returns {{ok:boolean, item?:object, error?:string}}
  */
 export function addReminder(input = {}, now = Date.now()) {
-  load()
+  initReminders()
   const text = String(input.text || '').trim()
   if (!text) return { ok: false, error: '缺少提醒内容' }
 
@@ -112,6 +135,9 @@ export function addReminder(input = {}, now = Date.now()) {
   if (!Number.isFinite(at)) return { ok: false, error: '时间无法识别' }
   if (at < now - 5000) return { ok: false, error: `这个时间已经过去了（${formatWhen(at, now)}）` }
   if (at > now + MAX_AHEAD_MS) return { ok: false, error: '时间太远了（最多一年后）' }
+  if (items.length >= REMINDER_LIMIT && !items.some((x) => x.doneAt)) {
+    return { ok: false, error: '提醒已满，请先完成或删除旧提醒' }
+  }
 
   const repeat = REPEATS.includes(input.repeat) ? input.repeat : 'none'
   const item = normalizeItem({
@@ -122,15 +148,25 @@ export function addReminder(input = {}, now = Date.now()) {
     repeat,
     createdAt: now
   })
+  const before = items
+  items = [...items]
   items.push(item)
   enforceLimit()
-  save()
+  try {
+    save()
+    createReminderPromise(item)
+  } catch (err) {
+    items = before
+    try { save() } catch { /* 下次启动会从承诺簿与提醒文件恢复可见状态 */ }
+    return { ok: false, error: `提醒未能可靠保存：${err.message}` }
+  }
   return { ok: true, item }
 }
 
 /** 删除（按 id，或按内容子串匹配） */
 export function removeReminder({ id, text } = {}, _now = Date.now()) {
-  load()
+  initReminders()
+  const oldItems = items
   const before = items.length
   if (id) {
     items = items.filter((x) => x.id !== id)
@@ -141,40 +177,60 @@ export function removeReminder({ id, text } = {}, _now = Date.now()) {
     return { ok: false, error: '需要 id 或 text' }
   }
   const removed = before - items.length
-  if (removed) save()
+  if (removed) {
+    try {
+      save()
+      for (const it of oldItems.filter((x) => !items.some((y) => y.id === x.id))) {
+        markReminder(it.id, 'cancelled', { kind: 'user-cancelled' })
+      }
+    } catch (err) {
+      items = oldItems
+      try { save() } catch { /* 下次启动可再核对 */ }
+      return { ok: false, error: `取消未能可靠保存：${err.message}` }
+    }
+  }
   return { ok: true, removed }
 }
 
 /** 标记完成（还在列表里，但不再触发） */
 export function completeReminder(id, now = Date.now()) {
-  load()
+  initReminders()
   const it = items.find((x) => x.id === id)
   if (!it) return { ok: false, error: '找不到该提醒' }
+  const previous = it.doneAt
   it.doneAt = now
-  save()
+  try {
+    save()
+    markReminder(it.id, 'completed', { kind: 'user-confirmation' }, now)
+  } catch (err) {
+    it.doneAt = previous
+    try { save() } catch { /* 下次启动可再核对 */ }
+    return { ok: false, error: `完成状态未能可靠保存：${err.message}` }
+  }
   return { ok: true }
 }
 
 /* ---------------- 调度 ---------------- */
 
 function tick(log) {
-  load()
+  initReminders()
   const now = Date.now()
 
   // 一次性提醒错过太久（>12h）记为未送达，不可冒充已完成。
   // 重复提醒不在此列——advanceRepeat 会把它们推到下一次。
   let changed = false
   for (const it of items) {
-    if (!it.doneAt && !it.missedAt && it.repeat === 'none' && it.at < now - STALE_MS) {
+    if (!it.doneAt && !it.firedAt && !it.missedAt && it.repeat === 'none' && it.at < now - STALE_MS) {
       it.missedAt = now
+      markReminder(it.id, 'missed', { kind: 'expired-without-dispatch' }, now)
       changed = true
       log && log(`[reminder] 未送达且已过时：${it.text}`)
     }
   }
 
+  if (changed) save()
   const due = items.filter((x) => isDue(x, now))
   if (!due.length) {
-    if (changed) save()
     return
   }
   for (const it of due) {
@@ -185,16 +241,17 @@ function tick(log) {
       log && log('[reminder] 回调失败：' + (err && err.message ? err.message : err))
     }
     if (!delivered) continue
+    markReminder(it.id, 'delivered', { kind: 'notification-dispatched' }, now)
     const next = advanceRepeat(it, now)
     if (next) {
       const idx = items.findIndex((x) => x.id === it.id)
       if (idx >= 0) items[idx] = next
     } else {
       it.firedAt = now
-      it.doneAt = now
     }
+    save()
+    if (next) rescheduleReminder(it.id, next.at, now)
   }
-  save()
 }
 
 /** 自测用：塞一条几秒后到期的提醒（NAGI_SELFTEST_REMINDER=1） */
@@ -204,6 +261,7 @@ function seedSelftest(log) {
   const item = normalizeItem({ id: 'selftest', text: '[自测] 该起来喝口水了', at: now + 3000, repeat: 'none', createdAt: now })
   items.push(item)
   save()
+  createReminderPromise(item)
   log && log('[reminder] 已塞入自测提醒，3 秒后到期')
 }
 
@@ -213,7 +271,7 @@ function seedSelftest(log) {
  */
 export function startReminderEngine({ onDue, log = console.log, checkSec } = {}) {
   if (timer) return
-  load()
+  initReminders()
   onDueCb = onDue
   const selftest = process.env.NAGI_SELFTEST_REMINDER === '1'
   const sec = selftest ? 1.2 : Math.max(5, Number(checkSec) || DEFAULT_CHECK_SEC)
@@ -246,7 +304,7 @@ export function reminderTools() {
       }
     },
     async list() {
-      const pending = listReminders().filter((x) => !x.doneAt)
+      const pending = listReminders().filter((x) => !x.doneAt && !x.missedAt && !(x.repeat === 'none' && x.firedAt))
       if (!pending.length) return { ok: true, summary: '目前没有待提醒的事。' }
       const lines = pending.slice(0, 20).map((x) => `- [${x.id}] ${x.when}${x.repeat !== 'none' ? '（' + x.repeatLabel + '）' : ''} ${x.text}`)
       return { ok: true, summary: `待提醒 ${pending.length} 条：\n${lines.join('\n')}`, data: { count: pending.length } }

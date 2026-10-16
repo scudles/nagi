@@ -741,6 +741,9 @@ body[data-mode="workbench"] {
   overflow: hidden;
 }
 .rm-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.promise-details { margin: 10px 0 16px; color: var(--text-dim); font-size: 12px; }
+.promise-details summary { cursor: pointer; padding: 5px 0; }
+.promise-details .rm-list { max-height: 220px; overflow: auto; margin-top: 8px; }
 #reminder-empty.hidden { display: none; }
 .rm-item {
   display: flex; align-items: baseline; gap: 10px;
