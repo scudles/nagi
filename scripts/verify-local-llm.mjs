@@ -238,10 +238,12 @@ try {
       return body.messages?.some((message) => message.role === 'user' && message.content?.includes('请用一句简短中文介绍你自己'))
     } catch { return false }
   }))
-  const persistedProfiles = JSON.parse(readFileSync(join(profile, 'settings.json'), 'utf8')).llmProfiles || {}
+  const settingsFileText = readFileSync(join(profile, 'settings.json'), 'utf8')
+  const persistedProfiles = JSON.parse(settingsFileText).llmProfiles || {}
   check('旧配置与新提供商配置分别落盘',
     persistedProfiles.ollama?.model === model && persistedProfiles.ollama?.baseURL === baseURL &&
     persistedProfiles.custom?.model === 'fixture-model' && persistedProfiles.custom?.baseURL === fixtureURL)
+  check('提供商配置文件不包含云端 Key', !settingsFileText.includes('fixture-secret'))
 
   await page.evaluate(() => {
     const provider = document.getElementById('set-provider')
