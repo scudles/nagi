@@ -14,6 +14,7 @@ const WINDOW_POLL_SEC = 5 // PowerShell 刷新率（窗口信息多久更新一�
 let timer = null
 let engine = null
 let sampler = null
+let syncSamplerNow = () => {}
 
 /** 无头自测用的假采样器：固定「凌晨 2:30 + 正在用工作类程序」→ 必中 late_night_awake */
 function createFakeSampler() {
@@ -74,6 +75,8 @@ export function startMonitor({ onProactive, log = console.log } = {}) {
     else if (!live && sampler.isRunning()) sampler.dispose?.()
   }
 
+  syncSamplerNow = syncSampler
+
   syncSampler() // 启动时若已关闭监测，就不拉起采样进程
 
   engine = createMonitorEngine({
@@ -111,6 +114,11 @@ export function stopMonitor() {
   }
   sampler = null
   engine = null
+  syncSamplerNow = () => {}
+}
+
+export function refreshMonitorPrivacy() {
+  syncSamplerNow()
 }
 
 export function monitorSnapshot() {

@@ -113,6 +113,7 @@ async function boot() {
     noteActivity()
     if (!p || !p.text) return
     if (mode === MODE.PET) {
+      document.getElementById('bubble-ignore')?.classList.toggle('hidden', p.kind !== 'proactive')
       // 提醒是她答应过的事，气泡多停一会儿
       ui.showBubble(p.text, { autoHide: p.kind === 'reminder' ? 12000 : 6000 })
     } else if (p.kind === 'proactive' || p.kind === 'reminder') {
@@ -257,6 +258,10 @@ function wireWindowButtons() {
   on('btn-pet-settings', () => openSettings())
   on('btn-pet-hide', () => window.nagi.win.hide())
   on('btn-open-diary', () => window.nagi.win.openDiary())
+  on('bubble-ignore', async () => {
+    await window.nagi.companion.ignore()
+    ui.hideBubble()
+  })
 
   on('btn-wb-pet', () => window.nagi.win.setMode(MODE.PET))
   on('btn-wb-min', () => window.nagi.win.minimize())
@@ -679,6 +684,13 @@ function fillSettingsForm() {
   if (monEl) monEl.checked = privacy.monitorEnabled !== false
   const dndEl = document.getElementById('set-dnd')
   if (dndEl) dndEl.checked = privacy.doNotDisturb === true
+  const presenceEl = document.getElementById('set-only-presence')
+  if (presenceEl) presenceEl.checked = privacy.onlyPresence === true
+  const companion = settings?.companion || {}
+  const maxEl = document.getElementById('set-companion-max')
+  if (maxEl) maxEl.value = String(companion.maxDaily ?? 3)
+  const gapEl = document.getElementById('set-companion-gap')
+  if (gapEl) gapEl.value = String(companion.minGapMinutes ?? 90)
   const blEl = document.getElementById('set-blacklist')
   if (blEl) blEl.value = (privacy.blacklist || []).join('\n')
 
@@ -686,6 +698,7 @@ function fillSettingsForm() {
   refreshModels()
   refreshMemory()
   refreshLedger()
+  refreshCompanionStatus()
   refreshVoice()
   refreshRag()
 }
@@ -844,6 +857,18 @@ async function refreshLedger(reset = true) {
   } catch (err) {
     status.textContent = '账本读取失败：' + err.message
   }
+}
+
+async function refreshCompanionStatus() {
+  const line = document.getElementById('companion-status')
+  if (!line) return
+  try {
+    const result = await window.nagi.companion.status()
+    const state = result.state
+    const next = state.nextAllowedAt > Date.now()
+      ? `；下次最早 ${new Date(state.nextAllowedAt).toLocaleTimeString()}` : ''
+    line.textContent = `今天已主动搭话 ${state.deliveredToday}/${result.config.maxDaily} 次；连续被忽略 ${state.ignoredStreak} 次${next}`
+  } catch (err) { line.textContent = '打扰预算读取失败：' + err.message }
 }
 
 async function refreshModels() {
@@ -1544,11 +1569,17 @@ function wireSettingsPage() {
       privacy: {
         monitorEnabled: document.getElementById('set-monitor').checked,
         doNotDisturb: document.getElementById('set-dnd').checked,
+        onlyPresence: document.getElementById('set-only-presence').checked,
         blacklist
+      },
+      companion: {
+        maxDaily: Number(document.getElementById('set-companion-max').value),
+        minGapMinutes: Number(document.getElementById('set-companion-gap').value)
       }
     })
     settings = await window.nagi.settings.get()
-    ui.addToolLog('监测设置已保存')
+    await refreshCompanionStatus()
+    ui.addToolLog('陪伴与监测设置已保存')
   })
 
   on('btn-save-ha', async () => {

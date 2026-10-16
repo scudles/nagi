@@ -161,14 +161,14 @@ function tick(log) {
   load()
   const now = Date.now()
 
-  // 一次性提醒错过太久（>12h）就直接作废：关着应用错过了的事，事后提醒没意义。
+  // 一次性提醒错过太久（>12h）记为未送达，不可冒充已完成。
   // 重复提醒不在此列——advanceRepeat 会把它们推到下一次。
   let changed = false
   for (const it of items) {
-    if (!it.doneAt && it.repeat === 'none' && it.at < now - STALE_MS) {
-      it.doneAt = now
+    if (!it.doneAt && !it.missedAt && it.repeat === 'none' && it.at < now - STALE_MS) {
+      it.missedAt = now
       changed = true
-      log && log(`[reminder] 错过太久，不再提醒：${it.text}`)
+      log && log(`[reminder] 未送达且已过时：${it.text}`)
     }
   }
 
@@ -178,11 +178,13 @@ function tick(log) {
     return
   }
   for (const it of due) {
+    let delivered = false
     try {
-      onDueCb && onDueCb({ ...it, when: formatWhen(it.at, now) })
+      delivered = onDueCb?.({ ...it, when: formatWhen(it.at, now) }) === true
     } catch (err) {
       log && log('[reminder] 回调失败：' + (err && err.message ? err.message : err))
     }
+    if (!delivered) continue
     const next = advanceRepeat(it, now)
     if (next) {
       const idx = items.findIndex((x) => x.id === it.id)
@@ -215,7 +217,7 @@ export function startReminderEngine({ onDue, log = console.log, checkSec } = {})
   onDueCb = onDue
   const selftest = process.env.NAGI_SELFTEST_REMINDER === '1'
   const sec = selftest ? 1.2 : Math.max(5, Number(checkSec) || DEFAULT_CHECK_SEC)
-  if (selftest) seedSelftest(log)
+  if (selftest && process.env.NAGI_SELFTEST_REMINDER_SEED !== '0') seedSelftest(log)
 
   timer = setInterval(() => tick(log), Math.round(sec * 1000))
   timer.unref?.()

@@ -181,6 +181,20 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('#ledger-list .ledger-item').length > 0, null, { timeout: 10000 })
   check('设置页展示经历来源与纠错入口', await page.evaluate(() =>
     !!document.querySelector('#ledger-list details') && !!document.querySelector('#ledger-list .ledger-actions button')))
+  await page.waitForFunction(() => document.getElementById('companion-status')?.textContent?.includes('今天已主动搭话'), null, { timeout: 10000 })
+  const companionUi = await page.evaluate(() => ({
+    presence: !!document.getElementById('set-only-presence'),
+    max: Number(document.getElementById('set-companion-max')?.value),
+    status: document.getElementById('companion-status')?.textContent || ''
+  }))
+  check('设置页可查看和调整主动搭话预算', companionUi.presence && companionUi.max === 3 && companionUi.status.includes('今天已主动搭话'))
+  const presence = await page.evaluate(async () => {
+    await window.nagi.settings.set({ privacy: { doNotDisturb: false, onlyPresence: true } })
+    const result = await window.nagi.companion.status()
+    await window.nagi.settings.set({ privacy: { doNotDisturb: true, onlyPresence: false } })
+    return result
+  })
+  check('只陪着优先阻止主动搭话', presence.allowed === false && presence.reason === 'only-presence')
   await page.evaluate(() => document.getElementById('btn-close-settings')?.click())
   if (process.env.NAGI_VERIFY_RAG_RECALL === '1' && diaryChunk) {
     const downloaded = await page.evaluate(() => window.nagi.rag.downloadModel())

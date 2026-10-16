@@ -43,6 +43,8 @@ export const IPC = {
   LEDGER_CORRECT: 'ledger:correct',
   LEDGER_FORGET: 'ledger:forget',
   LEDGER_EXPORT: 'ledger:export',
+  COMPANION_STATUS: 'companion:status',
+  COMPANION_IGNORE: 'companion:ignore',
   // 关系层（S4）：熟悉度 + 情绪时间线
   RELATION_GET: 'relation:get',
   RELATION_TIMELINE: 'relation:timeline',
@@ -153,8 +155,10 @@ export const DEFAULT_SETTINGS = {
   privacy: {
     monitorEnabled: true, // 活动监测总开关（首次启动有告知弹窗，可一键关）
     doNotDisturb: false, // 勿扰模式：临时停采，不落任何样本
+    onlyPresence: false, // 只陪着：不监测活动、不主动开口；手动对话与戳击仍可用
     noticeShown: false, // 「她在观察你在用什么程序」的首次告知是否已展示
     sampleSec: 20, // 多久看一眼（秒）
     blacklist: [...DEFAULT_BLACKLIST] // 命中即丢样本（窗口标题/应用名，支持 * 通配）
-  }
+  },
+  companion: { maxDaily: 3, minGapMinutes: 90 }
 }

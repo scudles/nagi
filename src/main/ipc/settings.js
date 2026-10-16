@@ -15,6 +15,7 @@ import { memoryList, memoryAdd, historyClear } from '../agent.js'
 import { getLedger } from '../ledger.js'
 import { forgetExperience } from '../ledger-actions.js'
 import { modelsDir, projectRoot } from '../paths.js'
+import { refreshMonitorPrivacy } from '../monitor/index.js'
 
 const ALL_SECRET_KEYS = Object.values(SECRET_KEYS)
 
@@ -58,6 +59,7 @@ export function registerSettingsIpc() {
       throw new Error('文件授权目录只能通过系统选择窗口修改')
     }
     const next = saveSettings(patch || {})
+    if (patch?.privacy) refreshMonitorPrivacy()
     broadcast(EVT.SETTINGS_CHANGED, next)
     if (patch && (patch.mode === MODE.PET || patch.mode === MODE.WORKBENCH)) {
       switchMode(patch.mode)

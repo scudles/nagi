@@ -22,6 +22,7 @@
     </div>
     <div id="bubble" class="bubble hidden">
       <div class="bubble-inner"></div>
+      <button id="bubble-ignore" class="hidden" title="这次先不聊，凪之后会少打扰">稍后</button>
     </div>
     <div id="pet-status" class="pet-status hidden"></div>
     <!-- 语音提示：录音计时 / 没听清 等 -->
@@ -373,6 +374,12 @@
           <button id="btn-save-tools">保存工具设置</button>
         </div>
 
+        <h3>主动陪伴</h3>
+        <label class="check"><input id="set-only-presence" type="checkbox" /> 只陪着（不监测活动、不主动开口；手动聊天仍可用）</label>
+        <label>每天最多主动搭话 <input id="set-companion-max" type="number" min="0" max="10" step="1" /></label>
+        <label>两次主动搭话至少间隔（分钟） <input id="set-companion-gap" type="number" min="15" max="720" step="15" /></label>
+        <div id="companion-status" class="dim" aria-live="polite"></div>
+
         <h3>活动监测</h3>
         <p class="dim" style="margin:0 0 8px;line-height:1.7">
           开启后，凪 会在本机偶尔看一眼你正在用什么程序（只看类别，不保存窗口标题原文），
@@ -384,7 +391,7 @@
           <textarea id="set-blacklist" rows="4" placeholder="例如：&#10;*密码*&#10;*银行*&#10;*1password*"></textarea>
         </label>
         <div class="sp-row">
-          <button id="btn-save-monitor">保存监测设置</button>
+          <button id="btn-save-monitor">保存陪伴与监测设置</button>
         </div>
 
         <h3>智能家居（Home Assistant）</h3>

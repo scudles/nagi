@@ -1,12 +1,12 @@
 // scripts/verify-m4.mjs
 // M4 无头验证：日程提醒全链路（建 → 到点 → 她主动开口 + 情绪 + 日记 + 落盘标记）
-//             + 重复提醒推进 + 错过太久作废 + 未到期不动。
+//             + 重复提醒推进 + 错过太久保留未送达证据 + 未到期不动。
 // 走生产同款代码路径（真实 electron 进程 + 隔离 userData），不依赖 CDP。
 //
 // 用法：node scripts/verify-m4.mjs
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const ROOT = resolve(import.meta.dirname, '..')
@@ -34,11 +34,11 @@ function newUserData(tag) {
   const p = join(tmpdir(), `nagi-m4-${tag}-${stamp}`)
   mkdirSync(p, { recursive: true })
   tempDirs.push(p)
-  // 不配置 API Key → 走本地占位大脑；监测关掉、勿扰开着，避免噪声盖住提醒日志
+  // 不配置 API Key → 走本地占位大脑；监测关掉，正常提醒允许送达。
   writeFileSync(
     join(p, 'settings.json'),
     JSON.stringify(
-      { llm: { provider: 'custom', model: 'x' }, privacy: { noticeShown: true, monitorEnabled: false, doNotDisturb: true } },
+      { llm: { provider: 'custom', model: 'x' }, privacy: { noticeShown: true, monitorEnabled: false, doNotDisturb: false } },
       null,
       2
     ),
@@ -100,7 +100,7 @@ console.log('=== 1. 全链路：到点 → 她主动开口 + 情绪 + 日记 + �
 
   check('调度器已启动', !!logLine(out, /\[reminder\] 日程提醒已启动/), logLine(out, /\[reminder\] 日程提醒已启动/) || '（没打出启动日志）')
   check('自测提醒已登记', !!logLine(out, /\[reminder\] 已塞入自测提醒/), logLine(out, /\[reminder\] 已塞入自测提醒/) || '（没塞入）')
-  check('到点触发主动开口', !!logLine(out, /\[reminder\] 到点：\[自测\]/), logLine(out, /\[reminder\] 到点：/) || '（没有到点日志）')
+  check('到点触发主动开口', !!logLine(out, /\[reminder\] 已送达：\[自测\]/), logLine(out, /\[reminder\] 已送达：/) || '（没有送达日志）')
 
   const moodLine = logLine(out, /\[mood\] → smile/)
   check('到点推了情绪（smile）', !!moodLine, moodLine || '（没打出情绪日志）')
@@ -132,7 +132,7 @@ console.log('\n=== 2. 重复推进 / 错过作废 / 未到期不动 ===')
         items: [
           // 每天的重复提醒，上次该响的时间已经过去 25 小时 → 应触发并推进到下一天往后的时刻
           { id: 'daily1', text: '每天喝水', at: now - 25 * HOUR, repeat: 'daily', createdAt: now - 30 * HOUR, firedAt: null, doneAt: null },
-          // 一次性提醒，已错过 13 小时（> 12 小时）→ 直接作废，不再打扰
+          // 一次性提醒，已错过 13 小时（> 12 小时）→ 留“未送达”，不冒充完成
           { id: 'stale1', text: '很久以前的事', at: now - 13 * HOUR, repeat: 'none', createdAt: now - 14 * HOUR, firedAt: null, doneAt: null },
           // 未来 20 小时才到期 → 不该被碰
           { id: 'future1', text: '明天的事', at: now + 20 * HOUR, repeat: 'none', createdAt: now, firedAt: null, doneAt: null }
@@ -146,7 +146,7 @@ console.log('\n=== 2. 重复推进 / 错过作废 / 未到期不动 ===')
 
   const out = await runApp(ud, 9000, { NAGI_SELFTEST_REMINDER: '1' })
 
-  check('重复提醒到点触发', !!logLine(out, /\[reminder\] 到点：每天喝水/), logLine(out, /到点：每天喝水/) || '（没触发）')
+  check('重复提醒到点触发', !!logLine(out, /\[reminder\] 已送达：每天喝水/), logLine(out, /已送达：每天喝水/) || '（没触发）')
   const daily = findItem(ud, 'daily1')
   const advanced = !!daily && daily.at > now && !daily.doneAt && daily.firedAt > 0 && (daily.at - (now - 25 * HOUR)) % DAY === 0
   check(
@@ -155,10 +155,10 @@ console.log('\n=== 2. 重复推进 / 错过作废 / 未到期不动 ===')
     daily ? `at 前移 ${Math.round((daily.at - (now - 25 * HOUR)) / HOUR)}h、doneAt=${!!daily.doneAt}` : '（条目丢失）'
   )
 
-  const staleLog = logLine(out, /\[reminder\] 错过太久，不再提醒：很久以前的事/)
+  const staleLog = logLine(out, /\[reminder\] 未送达且已过时：很久以前的事/)
   const stale = findItem(ud, 'stale1')
-  check('错过太久的一次性提醒被作废', !!staleLog && !!stale && stale.doneAt > 0 && !stale.firedAt, stale ? `doneAt=${!!stale.doneAt} firedAt=${!!stale.firedAt}` : '（条目丢失）')
-  check('作废的提醒没有打扰用户', !/到点：很久以前的事/.test(out), /到点：很久以前的事/.test(out) ? '不该触发却触发了' : '未触发，正确')
+  check('错过太久的一次性提醒标为未送达', !!staleLog && !!stale && stale.missedAt > 0 && !stale.doneAt && !stale.firedAt, stale ? `missedAt=${!!stale.missedAt} doneAt=${!!stale.doneAt}` : '（条目丢失）')
+  check('未送达的提醒没有打扰用户', !/已送达：很久以前的事/.test(out), /已送达：很久以前的事/.test(out) ? '不该触发却触发了' : '未触发，正确')
 
   const future = findItem(ud, 'future1')
   check('未到期的提醒保持原样', !!future && !future.firedAt && !future.doneAt && future.at === now + 20 * HOUR, future ? `at 未变、未触发` : '（条目丢失）')
@@ -167,10 +167,32 @@ console.log('\n=== 2. 重复推进 / 错过作废 / 未到期不动 ===')
   check('只有真正到点的事进了日记', /每天喝水/.test(diary) && !/很久以前的事/.test(diary), /每天喝水/.test(diary) ? '命中且排除了作废项' : '（日记内容不符）')
 }
 
+/* ---------- 3. 勿扰优先：不能标记送达，解除后跨重启补送 ---------- */
+
+console.log('\n=== 3. 勿扰优先与跨重启补送 ===')
+{
+  const ud = newUserData('dnd')
+  const settingsFile = join(ud, 'settings.json')
+  const settings = readJson(settingsFile)
+  settings.privacy.doNotDisturb = true
+  writeFileSync(settingsFile, JSON.stringify(settings), 'utf8')
+  const muted = await runApp(ud, 7000, { NAGI_SELFTEST_REMINDER: '1' })
+  const pending = findItem(ud, 'selftest')
+  check('勿扰下提醒不宣称送达或完成', !!pending && !pending.firedAt && !pending.doneAt &&
+    !/\[reminder\] 已送达：\[自测\]/.test(muted))
+  settings.privacy.doNotDisturb = false
+  writeFileSync(settingsFile, JSON.stringify(settings), 'utf8')
+  const resumed = await runApp(ud, 7000, { NAGI_SELFTEST_REMINDER: '1', NAGI_SELFTEST_REMINDER_SEED: '0' })
+  const delivered = findItem(ud, 'selftest')
+  check('解除勿扰后跨重启补送且有落盘证据', !!delivered && delivered.firedAt > 0 && delivered.doneAt > 0 &&
+    /\[reminder\] 已送达：\[自测\]/.test(resumed))
+}
+
 /* ---------- 清理与汇总 ---------- */
 
 for (const d of tempDirs) {
   try {
+    if (!resolve(d).startsWith(resolve(tmpdir()) + sep) || !basename(d).startsWith('nagi-m4-')) continue
     rmSync(d, { recursive: true, force: true })
   } catch {
     /* %TEMP% 下偶尔删不掉，留着无妨 */

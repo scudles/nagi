@@ -102,6 +102,8 @@ body[data-mode="workbench"] {
   user-select: text;
 }
 .bubble.hidden { display: none; }
+#bubble-ignore { float: right; margin: 4px 2px 0 0; font-size: 11px; }
+#bubble-ignore.hidden { display: none; }
 
 .pet-status {
   position: absolute;

@@ -15,6 +15,7 @@ import { registerReminderIpc } from './ipc/reminders.js'
 import { registerVoiceIpc } from './ipc/voice.js'
 import { registerRagIpc } from './ipc/rag.js'
 import { registerLedgerIpc } from './ipc/ledger.js'
+import { registerCompanionIpc } from './ipc/companion.js'
 import { initRag } from './rag/index.js'
 import { migrateLegacyLedger } from './ledger.js'
 import { loadSettings, saveSettings } from './settings-store.js'
@@ -59,6 +60,7 @@ if (!gotLock) {
     registerVoiceIpc()
     registerRagIpc()
     registerLedgerIpc()
+    registerCompanionIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。

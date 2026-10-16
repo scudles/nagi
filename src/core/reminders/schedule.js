@@ -246,6 +246,7 @@ export function normalizeItem(raw) {
     repeat: REPEATS.includes(raw.repeat) ? raw.repeat : 'none',
     createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : Math.round(at),
     firedAt: Number.isFinite(raw.firedAt) ? raw.firedAt : null,
+    missedAt: Number.isFinite(raw.missedAt) ? raw.missedAt : null,
     doneAt: Number.isFinite(raw.doneAt) ? raw.doneAt : null
   }
 }
@@ -256,7 +257,7 @@ export function normalizeItems(list) {
 }
 
 export function isDue(item, now = Date.now()) {
-  return !!(item && !item.doneAt && Number.isFinite(item.at) && item.at <= now)
+  return !!(item && !item.doneAt && !item.missedAt && Number.isFinite(item.at) && item.at <= now)
 }
 
 /**

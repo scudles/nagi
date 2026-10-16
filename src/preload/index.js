@@ -86,6 +86,10 @@ const api = {
     forget: (id) => ipcRenderer.invoke(IPC.LEDGER_FORGET, { id }),
     export: () => ipcRenderer.invoke(IPC.LEDGER_EXPORT)
   },
+  companion: {
+    status: () => ipcRenderer.invoke(IPC.COMPANION_STATUS),
+    ignore: () => ipcRenderer.invoke(IPC.COMPANION_IGNORE)
+  },
   /** 关系层（S4）：熟悉度 + 情绪时间线 */
   relation: {
     get: () => ipcRenderer.invoke(IPC.RELATION_GET),

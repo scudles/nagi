@@ -49,7 +49,8 @@ export function createMonitorEngine({
     // 采集前先过隐私闸：关闭监测 / 勿扰时不采样。
     // 若先采样后过闸，窗口标题仍会被读到（只是结果被丢弃），那不算「停采」。
     if (!collectionAllowed(privacy)) {
-      return { skipped: privacy.monitorEnabled === false ? 'disabled' : 'dnd' }
+      return { skipped: privacy.monitorEnabled === false ? 'disabled'
+        : privacy.doNotDisturb === true ? 'dnd' : 'only-presence' }
     }
 
     let raw = null
@@ -80,13 +81,15 @@ export function createMonitorEngine({
     }
     if (!text) return { empty: hit.rule.id, stats }
 
-    thr.note(hit.rule)
-    last = { ruleId: hit.rule.id, mood: hit.rule.mood, vars: hit.vars || {}, text, stats, ts: now() }
+    const candidate = { ruleId: hit.rule.id, mood: hit.rule.mood, vars: hit.vars || {}, text, stats, ts: now() }
     try {
-      onProactive(last)
+      if (onProactive(candidate) === false) return { suppressed: hit.rule.id, stats }
     } catch (err) {
       log('[monitor] 回调失败：' + (err && err.message ? err.message : err))
+      return { error: 'callback', stats }
     }
+    thr.note(hit.rule)
+    last = candidate
     return last
   }
 

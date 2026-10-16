@@ -46,6 +46,7 @@ export function gateSample(sample, privacy) {
   const cfg = privacy || {}
   if (cfg.monitorEnabled === false) return { skip: true, reason: 'disabled' }
   if (cfg.doNotDisturb === true) return { skip: true, reason: 'dnd' }
+  if (cfg.onlyPresence === true) return { skip: true, reason: 'only-presence' }
   if (isBlocked(sample, cfg.blacklist)) return { skip: true, reason: 'blacklist' }
   return { skip: false }
 }
@@ -57,7 +58,7 @@ export function gateSample(sample, privacy) {
  */
 export function collectionAllowed(privacy) {
   const cfg = privacy || {}
-  return cfg.monitorEnabled !== false && cfg.doNotDisturb !== true
+  return cfg.monitorEnabled !== false && cfg.doNotDisturb !== true && cfg.onlyPresence !== true
 }
 
 /**

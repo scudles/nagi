@@ -48,7 +48,8 @@ import { HAClient, summarizeHaEvent } from '../core/homeassistant/ha.js'
 import { createNativeTools } from './native-tools.js'
 import { getSettings } from './settings-store.js'
 import { getSecret, hasSecret } from './keystore.js'
-import { broadcast, getWorkbenchWindow } from './windows.js'
+import { broadcast, getWorkbenchWindow, getPetWindow } from './windows.js'
+import { companionStatus, companionDelivered, companionInteracted } from './companion.js'
 import { appendDiary, recentDiaryLines, cacheLeakCount, noteCacheLeak } from './diary.js'
 import { noteEvent, todayEvents, pruneJournals, flushJournal } from './journal.js'
 import { startMonitor, stopMonitor } from './monitor/index.js'
@@ -402,12 +403,25 @@ function maybeWriteDiary(trigger = 'ambient') {
  */
 function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monitor', force = false } = {}) {
   if (!text) return false
+  const privacy = getSettings().privacy || {}
+  if (privacy.doNotDisturb || privacy.onlyPresence) return false
+  if (!force && busy) return false
+  if (![getPetWindow(), getWorkbenchWindow()].some((win) => win && !win.isDestroyed() && win.isVisible())) return false
+  if (kind === 'proactive') {
+    try {
+      if (!companionStatus().allowed) return false
+      companionDelivered()
+    } catch (err) {
+      console.warn('[companion] 预算不可用，保持安静：', err?.message)
+      return false
+    }
+  }
   if (hitMood) {
     mood.propose(hitMood, 0.5, source)
     broadcastMood()
   }
   const snap = mood.current()
-  if (force || !busy) broadcast(EVT.PET, { kind, text, expr: snap.expr })
+  broadcast(EVT.PET, { kind, text, expr: snap.expr })
   // 记进「今天发生的事」：她开过口、提醒过什么，都是她这一天的一部分
   try {
     noteEvent({ kind: kind === 'reminder' ? 'reminder' : 'proactive', text })
@@ -420,9 +434,10 @@ function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monit
 
 /** 活动监测触发：她看你在做什么，忍不住开口（正在对话时不抢话） */
 function handleProactive({ mood: hitMood, text, ruleId }) {
-  if (!text) return
-  console.log(`[monitor] 主动搭话（${ruleId}）：${text}`)
-  saySomething({ mood: hitMood, text, kind: 'proactive', source: 'monitor' })
+  if (!text) return false
+  const said = saySomething({ mood: hitMood, text, kind: 'proactive', source: 'monitor' })
+  if (said) console.log(`[monitor] 主动搭话（${ruleId}）：${text}`)
+  return said
 }
 
 /** 启动活动监测（app ready 后调用；幂等）。总开关在 settings.privacy.monitorEnabled */
@@ -441,10 +456,11 @@ export function stopActivityMonitor() {
  * 这是「不能错过」的事，force=true —— 正在对话时也开口。
  */
 function handleReminderDue(item) {
-  if (!item || !item.text) return
+  if (!item || !item.text) return false
   const line = item.say || NagiPersona.pickProactive('reminder', { what: item.text }) || `……提醒你：${item.text}。`
-  console.log(`[reminder] 到点：${item.text}`)
-  saySomething({ mood: 'smile', text: line, kind: 'reminder', source: 'reminder', force: true })
+  const said = saySomething({ mood: 'smile', text: line, kind: 'reminder', source: 'reminder', force: true })
+  if (said) console.log(`[reminder] 已送达：${item.text}`)
+  return said
 }
 
 /** 启动日程提醒调度器（app ready 后调用；幂等） */
@@ -735,6 +751,7 @@ export async function handleChatSend(text) {
   if (!t) return { ok: false, error: '空消息' }
   if (busy) return { ok: false, error: '正在处理上一条消息' }
   busy = true
+  try { companionInteracted() } catch { /* 预算文件故障不影响主动发起的对话 */ }
   mood.noteInteraction() // 连聊 burst 统计 + 刷新互动时间
   noteRelationInteraction() // 关系层记账：认识多久、聊过多少次、活跃几天
   const emit = (e) => emitAgentEvent(e)
@@ -780,6 +797,7 @@ export function getMoodSnapshot() {
 
 /** 戳一戳：返回气泡台词 + 当时表情，并广播 PET 事件 */
 export function handlePoke() {
+  try { companionInteracted() } catch { /* 戳击始终可用 */ }
   mood.noteInteraction() // 戳她也是互动：刷新冷落计时
   noteRelationInteraction() // 关系层同样记一笔（戳也算搭理她）
   try {

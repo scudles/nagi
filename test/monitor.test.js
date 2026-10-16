@@ -217,6 +217,22 @@ test('engine：开关关闭 / 勿扰 → 直接跳过，不采样不触发', asy
   const e2 = engineWith({ sample: { ts: clock.now(), idleSec: 5, app: 'Code', title: 'x' }, privacy: { monitorEnabled: true, doNotDisturb: true }, clock })
   assert.equal((await e2.eng.tickOnce()).skipped, 'dnd')
   assert.equal(e1.fired.length + e2.fired.length, 0)
+  const e3 = engineWith({ sample: { ts: clock.now(), idleSec: 5, app: 'Code', title: 'x' }, privacy: { onlyPresence: true }, clock })
+  assert.equal((await e3.eng.tickOnce()).skipped, 'only-presence')
+})
+
+test('engine：主进程因打扰预算拒绝开口时，不记作送达或消耗规则冷却', async () => {
+  const clock = fakeClock('2026-10-14T02:30:00')
+  let attempts = 0
+  const eng = createMonitorEngine({
+    sampler: { async sample() { return { ts: clock.now(), idleSec: 5, app: 'Code', title: 'x' } } },
+    getPrivacy: () => ({}), pickText: () => '候选台词', now: clock.now,
+    onProactive: () => { attempts++; return false }
+  })
+  assert.equal((await eng.tickOnce()).suppressed, 'late_night_awake')
+  assert.equal((await eng.tickOnce()).suppressed, 'late_night_awake')
+  assert.equal(attempts, 2)
+  assert.equal(eng.snapshot(), null)
 })
 
 test('engine：黑名单样本被丢弃', async () => {
