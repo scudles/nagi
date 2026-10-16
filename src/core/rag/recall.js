@@ -64,7 +64,7 @@ export function scoreCandidates(store, queryVec, opts = {}) {
     const base = Number.isFinite(c.weight) ? c.weight : 1
     const covered = o.covered && o.covered.has(c.id) ? COVERED_TURN_FACTOR : 1
     const score = sim * base * covered * decayFactor(ageDays, o.halfLifeDays)
-    out.push({ row: r, id: c.id, kind: c.kind, text: c.text, at: c.at, sim, score })
+    out.push({ row: r, id: c.id, kind: c.kind, text: c.text, at: c.at, meta: c.meta, sim, score })
   }
   return out.sort((a, b) => b.score - a.score)
 }
@@ -119,7 +119,10 @@ export function recall(store, queryVec, opts = {}) {
     const label = timeLabel(c.at, o.now)
     let body = String(c.text).replace(/\s*\n\s*/g, '；') // 一轮对话压成一行
     if (body.length > 200) body = body.slice(0, 200) + '…'
-    const piece = `「${label}：${body}」`
+    const source = c.kind === 'diary'
+      ? c.meta?.kind === 'spoken' ? '当时说过：' : '心里记下、未对用户说出：'
+      : ''
+    const piece = `「${label}：${source}${body}」`
     if (out.length && used + piece.length > o.budgetChars) break
     out.push({ ...c, label, piece })
     used += piece.length
@@ -136,8 +139,10 @@ export function formatRecall(results = []) {
   if (!results.length) return ''
   const pieces = results.map((r) => (typeof r === 'string' ? r : r && r.piece)).filter(Boolean)
   if (!pieces.length) return ''
+  const hasInnerDiary = results.some((r) => r && typeof r === 'object' && r.kind === 'diary' && r.meta?.kind !== 'spoken')
   return [
     '- 你想起的相关往事（这些是检索到的记忆，不是刚发生的事；用得上的自然带一句，不必逐条复读）：',
+    ...(hasInnerDiary ? ['  心里独白只是你自己的回忆线索；不要逐字说出，也不要当作曾对他说过的话。'] : []),
     ...pieces.map((p) => `  ${p}`)
   ].join('\n')
 }

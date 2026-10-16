@@ -356,7 +356,7 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
     }
     if (!text) return false
 
-    appendDiary(snap, text, { kind: 'inner' })
+    if (!appendDiary(snap, text, { kind: 'inner' })) return false
     // 泄露计数：只在"真的由模型写出来、且当时给了缓存许可"时记一笔（护栏：极低频）
     if (useCache && generated) noteCacheLeak(now)
     lastDiaryAt = now
@@ -512,7 +512,7 @@ function upcomingReminderLines(now = Date.now()) {
 async function recalledPieces(query) {
   try {
     const r = await getRag().recall(query)
-    return Array.isArray(r.results) ? r.results.map((x) => x.piece).filter(Boolean) : []
+    return Array.isArray(r.results) ? r.results.filter((x) => x && x.piece) : []
   } catch {
     return []
   }

@@ -139,6 +139,28 @@ try {
   for (let n = 0; n < 60 && !logs.includes('[diary] 生成一条'); n++) await sleep(1000)
   const diaryDir = join(profile, 'monologue')
   check('本地模型生成独白并落盘', logs.includes('[diary] 生成一条') && existsSync(diaryDir) && readdirSync(diaryDir).some((name) => name.endsWith('.md')))
+  const pendingFile = join(profile, 'rag', 'pending.jsonl')
+  const pending = existsSync(pendingFile)
+    ? readFileSync(pendingFile, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    : []
+  const diaryChunk = pending.find((item) => item.kind === 'diary' && item.meta?.kind === 'inner')
+  check('新独白进入记忆档案并标注为心里话', !!diaryChunk)
+  if (process.env.NAGI_VERIFY_RAG_RECALL === '1' && diaryChunk) {
+    const downloaded = await page.evaluate(() => window.nagi.rag.downloadModel())
+    check('本机嵌入模型下载完成', downloaded?.ok === true, downloaded?.error || '')
+    if (downloaded?.ok) {
+      let indexed = false
+      for (let n = 0; n < 60; n++) {
+        const state = await page.evaluate(() => window.nagi.rag.status())
+        if (state.pending === 0 && state.chunks > 0) { indexed = true; break }
+        await sleep(1000)
+      }
+      check('独白已进入本地向量索引', indexed)
+      const recalled = await page.evaluate((query) => window.nagi.rag.recallTest(query), diaryChunk.text)
+      check('能召回独白且提示词标明心里话边界', recalled?.results?.some((item) => item.kind === 'diary') &&
+        recalled?.text?.includes('不要逐字说出'), String(recalled?.text || recalled?.reason || '').slice(0, 180))
+    }
+  }
   // connectOverCDP 下不调用 browser.close()，否则会关掉目标 Electron。
 } catch (error) {
   console.error('✘ 验收中断：', error.message)

@@ -20,6 +20,7 @@ import {
   VectorStore,
   makeTurnChunk,
   makeFactChunk,
+  makeDiaryChunk,
   makeSummaryChunk,
   contentHash,
   planEmbedding,
@@ -184,6 +185,14 @@ export class RagService {
   ingestFact({ text, at = Date.now() }) {
     if (!this.ready || !this.cfg.enabled) return { ok: false, reason: 'off' }
     const chunk = makeFactChunk({ text, at })
+    if (!chunk) return { ok: false, reason: 'empty' }
+    return this._ingestChunk(chunk)
+  }
+
+  /** 日记原文进档案；保留「心里想」与「真的说过」的边界。 */
+  ingestDiary({ text, at = Date.now(), kind = 'inner', mood = '', intensity = 0 } = {}) {
+    if (!this.ready || !this.cfg.enabled) return { ok: false, reason: 'off' }
+    const chunk = makeDiaryChunk({ text, at, meta: { kind, mood, intensity } })
     if (!chunk) return { ok: false, reason: 'empty' }
     return this._ingestChunk(chunk)
   }

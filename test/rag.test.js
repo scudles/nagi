@@ -13,6 +13,7 @@ import {
   normalizeText,
   makeTurnChunk,
   makeFactChunk,
+  makeDiaryChunk,
   makeSummaryChunk,
   normalizeChunk,
   finalizeChunk,
@@ -358,6 +359,19 @@ test('formatRecall：空数组空串；有内容带头注', () => {
   const text = formatRecall(recall(s, new Float32Array([1, 0]), { now: NOW }))
   assert.match(text, /你想起的相关往事/)
   assert.match(text, /今天/)
+})
+
+test('独白召回保留心里话边界，口头日记按说过的话标注', () => {
+  const s = new VectorStore({ dim: 2 })
+  const inner = makeDiaryChunk({ text: '他说肩膀酸，我想让他停一会儿。', at: NOW, meta: { kind: 'inner' } })
+  const spoken = makeDiaryChunk({ text: '先起来走两分钟。', at: NOW, meta: { kind: 'spoken' } })
+  assert.equal(s.append(inner, new Float32Array([1, 0])).ok, true)
+  assert.equal(s.append(spoken, new Float32Array([0.9, 0.1])).ok, true)
+  const results = recall(s, new Float32Array([1, 0]), { now: NOW, maxResults: 2 })
+  const text = formatRecall(results)
+  assert.match(text, /心里记下、未对用户说出/)
+  assert.match(text, /不要逐字说出/)
+  assert.match(text, /当时说过/)
 })
 
 test('scoreCandidates：库空 / 查询空不炸', () => {

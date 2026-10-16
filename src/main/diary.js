@@ -10,6 +10,7 @@
 import { app } from 'electron'
 import { join } from 'node:path'
 import { mkdirSync, appendFileSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { getRag } from './rag/index.js'
 
 function diaryDir() {
   return join(app.getPath('userData'), 'monologue')
@@ -34,13 +35,23 @@ function timeStr(d = new Date()) {
  */
 export function appendDiary(snapshot, text, { kind } = {}) {
   try {
+    const now = Date.now()
+    const at = new Date(now)
     const dir = diaryDir()
     mkdirSync(dir, { recursive: true })
     const mark = kind === 'inner' ? '（心里）' : ''
-    const line = `- ${timeStr()} ［${snapshot.label}·${Math.round(snapshot.intensity * 100)}%］ ${mark}${text}\n`
-    appendFileSync(join(dir, `diary-${dateStr()}.md`), line, 'utf8')
+    const line = `- ${timeStr(at)} ［${snapshot.label}·${Math.round(snapshot.intensity * 100)}%］ ${mark}${text}\n`
+    appendFileSync(join(dir, `diary-${dateStr(at)}.md`), line, 'utf8')
+    // RAG 的任何失败都不能让独白变成「没写」。文本先落日记文件，再尝试入档。
+    try {
+      getRag().ingestDiary({ text, at: now, kind: kind === 'inner' ? 'inner' : 'spoken', mood: snapshot.label, intensity: snapshot.intensity })
+    } catch {
+      /* 日记文件是原件；检索档案失效时仍保留原件。 */
+    }
+    return true
   } catch (err) {
     console.error('[diary] 写入失败：', err && err.message)
+    return false
   }
 }
 

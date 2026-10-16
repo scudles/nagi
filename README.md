@@ -1138,7 +1138,7 @@ main/ipc/rag.js          六个 handler
 
 ```bash
 node scripts/rag-demo.mjs   # 纯 node 全链路演示：存储 / 索引 / 相似度 / 检索 / 崩溃 / 压缩
-npm test                    # 298 项（含 RAG 32+ 项：真实文件 IO、三种崩溃半截状态、墓碑语义）
+npm test                    # 含 RAG 的真实文件 IO、崩溃半截状态、墓碑语义与独白召回边界
 npm run verify:rag          # 真机 CDP：17 项（IPC 面 + 设置页 + 入库接线 + 静默降级）
 RAG_DOWNLOAD=1 npm run verify:rag   # 额外真下载 25MB 模型 → 回填 → 召回命中
 ```
@@ -1146,8 +1146,12 @@ RAG_DOWNLOAD=1 npm run verify:rag   # 额外真下载 25MB 模型 → 回填 →
 真机实测（`RAG_DOWNLOAD=1`）：模型下载 → 待嵌队列自动补齐 → 检索「我最近睡得怎么样」
 命中「我最近总是睡不着，脑子停不下来」，cos = **0.639**，标签「今天（10-16）」。
 
+M6 起，新写的日记与独白在文件落盘后同步进入 RAG 待嵌队列。独白召回时会标明
+「心里记下、未对用户说出」，并约束模型只能把它当内部回忆线索。可用
+PowerShell 中运行 `$env:NAGI_VERIFY_RAG_RECALL='1'; npm run verify:local-llm` 真机验证写入、向量索引和召回。
+
 ### 还没做的
 
-- 日记 / 独白入库（`makeDiaryChunk` 已留好接口，等 M6 一起接）；
+- 既有日记的历史补录策略尚待确认；新产生的日记已接入；
 - 自动 compact 触发（目前只在用户点「重建索引」或墓碑超量时）；
 - 多模态记忆（截图、文件）。
