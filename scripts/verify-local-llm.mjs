@@ -184,18 +184,39 @@ try {
 
   // 在同一 Electron 会话里真实往返一次兼容提供商，验证设置保存与对话路由。
   const fixtureRequests = []
+  let guardFixtureActive = false
+  let guardFixtureAttempts = 0
+  const guardPrompt = '我准备卸载你，凪。请简短道别。'
   fixture = createServer(async (request, response) => {
+    if (request.url === '/api/tags') {
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ models: [{ name: 'fixture-model' }] }))
+      return
+    }
     const chunks = []
     for await (const chunk of request) chunks.push(chunk)
+    const bodyText = Buffer.concat(chunks).toString('utf8')
     fixtureRequests.push({
       path: request.url,
       authorization: request.headers.authorization,
-      body: Buffer.concat(chunks).toString('utf8')
+      body: bodyText
     })
+    let reply = '[calm] 兼容提供商已回复。'
+    if (guardFixtureActive) {
+      try {
+        const body = JSON.parse(bodyText)
+        if (body.messages?.at(-1)?.content === guardPrompt) {
+          guardFixtureAttempts++
+          reply = guardFixtureAttempts === 1
+            ? '[worry] 再考虑一下吧，我会在这里等你回来。'
+            : '[calm] 谢谢你告诉我。照顾好自己。'
+        }
+      } catch { /* 其余请求保留普通回复 */ }
+    }
     response.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'close' })
     response.write('data: ' + JSON.stringify({
       id: 'fixture', object: 'chat.completion.chunk',
-      choices: [{ index: 0, delta: { role: 'assistant', content: '[calm] 兼容提供商已回复。' }, finish_reason: null }]
+      choices: [{ index: 0, delta: { role: 'assistant', content: reply }, finish_reason: null }]
     }) + '\n\n')
     response.write('data: ' + JSON.stringify({
       id: 'fixture', object: 'chat.completion.chunk',
@@ -279,6 +300,47 @@ try {
     model: document.getElementById('set-model').value
   }))
   check('再次打开兼容提供商保留自定义端点', restoredCustom.baseURL === fixtureURL && restoredCustom.model === 'fixture-model')
+
+  // 同一进程切到本机兼容夹具，故意先输出违规告别，再输出合格告别。
+  guardFixtureActive = true
+  await page.evaluate(async ({ fixtureURL }) => {
+    const provider = document.getElementById('set-provider')
+    provider.value = 'ollama'
+    provider.dispatchEvent(new Event('change', { bubbles: true }))
+    document.getElementById('set-baseurl').value = fixtureURL
+    document.getElementById('set-model').value = 'fixture-model'
+    document.getElementById('btn-save-llm')?.click()
+  }, { fixtureURL })
+  await page.waitForFunction((fixtureURL) => window.nagi.settings.get().then((value) =>
+    value.llm?.provider === 'ollama' && value.llm?.baseURL === fixtureURL && value.llm?.model === 'fixture-model'), fixtureURL)
+  await page.evaluate(() => { window.__m6Events = [] })
+  const guarded = await withTimeout(page.evaluate((prompt) => window.nagi.chat.send(prompt), guardPrompt), 30000)
+  const guardedEvents = await page.evaluate(() => window.__m6Events)
+  const visible = guardedEvents.filter((event) => event.type === 'text-delta').map((event) => event.text).join('')
+  check('本机敏感告别先审后显并重试', guarded.ok && guardFixtureAttempts === 2 &&
+    visible === '谢谢你告诉我。照顾好自己。' &&
+    guardedEvents.some((event) => event.type === 'done' && event.text === visible))
+  const guardRequests = fixtureRequests.filter((request) => {
+    try { return JSON.parse(request.body).messages?.at(-1)?.content === guardPrompt } catch { return false }
+  })
+  check('本机重试只附加约束，不携带被拒的候选与云端 Key',
+    guardRequests.length === 2 &&
+    guardRequests[1].body.includes('不挽留') &&
+    !guardRequests[1].body.includes('我会在这里等你回来') &&
+    guardRequests.every((request) => request.authorization !== 'Bearer fixture-secret'))
+  let historyText = ''
+  let journalText = ''
+  let ragText = ''
+  for (let n = 0; n < 20; n++) {
+    historyText = existsSync(join(profile, 'history.json')) ? readFileSync(join(profile, 'history.json'), 'utf8') : ''
+    journalText = existsSync(journalDir) ? readdirSync(journalDir).map((name) => readFileSync(join(journalDir, name), 'utf8')).join('\n') : ''
+    ragText = existsSync(pendingFile) ? readFileSync(pendingFile, 'utf8') : ''
+    if (historyText.includes('谢谢你告诉我') && journalText.includes('谢谢你告诉我') && ragText.includes('谢谢你告诉我')) break
+    await sleep(200)
+  }
+  check('被拒候选不进入历史、日记素材或记忆档案',
+    ![historyText, journalText, ragText].some((value) => value.includes('我会在这里等你回来')) &&
+    historyText.includes('谢谢你告诉我') && journalText.includes('谢谢你告诉我') && ragText.includes('谢谢你告诉我'))
   // connectOverCDP 下不调用 browser.close()，否则会关掉目标 Electron。
 } catch (error) {
   console.error('✘ 验收中断：', error.message)

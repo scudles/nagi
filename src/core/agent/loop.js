@@ -90,6 +90,7 @@ function clampEmotion(e) {
  * @param {Function} opts.emit             (event) => void   向前端广播
  * @param {number}   opts.maxSteps
  * @param {AbortSignal} opts.signal
+ * @param {object} opts.guard             敏感场景最终回复检查器；存在时先缓冲正文
  * @returns {Promise<{text:string, steps:number, aborted:boolean}>}
  */
 export async function runAgentLoop(opts) {
@@ -102,12 +103,15 @@ export async function runAgentLoop(opts) {
     confirm,
     emit,
     maxSteps = DEFAULT_MAX_STEPS,
-    signal
+    signal,
+    guard = null
   } = opts
 
   let steps = 0
   let finalText = ''
   let aborted = false
+  let guardRetries = 0
+  let guardCorrection = ''
   const onAbort = () => {
     aborted = true
   }
@@ -125,22 +129,26 @@ export async function runAgentLoop(opts) {
       let emotion = null
       let nativeToolCalls = []
       let jsonActions = []
+      const modelMessages = !guardCorrection ? messages
+        : messages[0]?.role === 'system'
+          ? [{ ...messages[0], content: messages[0].content + '\n\n' + guardCorrection }, ...messages.slice(1)]
+          : [{ role: 'system', content: guardCorrection }, ...messages]
 
       if (supportsNative) {
         // ---- 原生通道：流式直出 ----
         const parser = new EmotionTagParser()
-        const stream = await callModel({ messages, tools: toolSchemas.length ? toolSchemas : undefined, signal })
+        const stream = await callModel({ messages: modelMessages, tools: guardRetries ? undefined : (toolSchemas.length ? toolSchemas : undefined), signal })
         for await (const evt of stream) {
           if (aborted) break
           if (evt.type === 'delta') {
             const r = parser.push(evt.text)
             if (r.emotion && !emotion) {
               emotion = r.emotion
-              emit({ type: AGENT_EVENT.EMOTION, emotion, intensity: 1 })
+              if (!guard) emit({ type: AGENT_EVENT.EMOTION, emotion, intensity: 1 })
             }
             if (r.text) {
               visibleText += r.text
-              emit({ type: AGENT_EVENT.TEXT_DELTA, text: r.text })
+              if (!guard) emit({ type: AGENT_EVENT.TEXT_DELTA, text: r.text })
             }
           } else if (evt.type === 'tool_call') {
             nativeToolCalls = evt.toolCalls || []
@@ -151,12 +159,12 @@ export async function runAgentLoop(opts) {
         const rest = parser.flush()
         if (rest.text) {
           visibleText += rest.text
-          emit({ type: AGENT_EVENT.TEXT_DELTA, text: rest.text })
+          if (!guard) emit({ type: AGENT_EVENT.TEXT_DELTA, text: rest.text })
         }
       } else {
         // ---- JSON 兜底通道：缓冲全文再解析（避免把 JSON 块漏给用户）----
         let raw = ''
-        const stream = await callModel({ messages, tools: undefined, signal })
+        const stream = await callModel({ messages: modelMessages, tools: undefined, signal })
         for await (const evt of stream) {
           if (aborted) break
           if (evt.type === 'delta') raw += evt.text || ''
@@ -165,12 +173,12 @@ export async function runAgentLoop(opts) {
         const tagged = extractEmotionTag(raw)
         if (tagged.emotion) {
           emotion = tagged.emotion
-          emit({ type: AGENT_EVENT.EMOTION, emotion, intensity: 1 })
+          if (!guard) emit({ type: AGENT_EVENT.EMOTION, emotion, intensity: 1 })
         }
         const parsed = extractActions(tagged.text)
         jsonActions = parsed.actions
         visibleText = parsed.cleanedText
-        if (visibleText) emit({ type: AGENT_EVENT.TEXT_DELTA, text: visibleText })
+        if (visibleText && !guard) emit({ type: AGENT_EVENT.TEXT_DELTA, text: visibleText })
       }
 
       if (emotion && !clampEmotion(emotion)) {
@@ -182,12 +190,32 @@ export async function runAgentLoop(opts) {
         ? nativeToolCalls.map((tc, i) => ({ id: tc.id || `native_${steps}_${i}`, name: tc.name, arguments: tc.arguments }))
         : jsonActions.map((a, i) => ({ id: `json_${steps}_${i}`, name: a.name, arguments: JSON.stringify(a.args) }))
 
+      if (aborted) break
+      if (guard) {
+        // 重试只生成最终正文；即使模型仍提出工具调用，也不得再次执行。
+        const review = guardRetries && toolCalls.length
+          ? { ok: false, ruleId: 'retry_tool_call' }
+          : toolCalls.length ? { ok: true } : guard.review(visibleText)
+        if (!review.ok) {
+          if (guardRetries < guard.maxRetries && steps < maxSteps) {
+            guardRetries++
+            guardCorrection = guard.retryInstruction(review.ruleId)
+            console.warn('[persona-guard] retry', review.ruleId, guardRetries)
+            continue
+          }
+          console.warn('[persona-guard] exhausted', review.ruleId, guardRetries)
+          emit({ type: AGENT_EVENT.ERROR, message: '这次回答没通过表达检查。请稍后再试。' })
+          emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.IDLE })
+          return { text: '', steps, aborted: false, guardFailed: true }
+        }
+      }
+
       if (toolCalls.length) {
         // 把这一轮助手输出（含工具调用意图）记入上下文
         if (supportsNative) {
           messages.push({
             role: 'assistant',
-            content: visibleText || null,
+            content: guard ? null : (visibleText || null),
             tool_calls: toolCalls.map((tc) => ({
               id: tc.id,
               type: 'function',
@@ -195,7 +223,7 @@ export async function runAgentLoop(opts) {
             }))
           })
         } else {
-          messages.push({ role: 'assistant', content: visibleText || `（调用工具 ${toolCalls[0].name}）` })
+          messages.push({ role: 'assistant', content: guard ? `（调用工具 ${toolCalls[0].name}）` : (visibleText || `（调用工具 ${toolCalls[0].name}）`) })
         }
 
         for (const tc of toolCalls) {
@@ -260,6 +288,10 @@ export async function runAgentLoop(opts) {
       }
 
       // 无工具调用 → 本轮文本即最终回复
+      if (guard) {
+        if (emotion) emit({ type: AGENT_EVENT.EMOTION, emotion, intensity: 1 })
+        if (visibleText) emit({ type: AGENT_EVENT.TEXT_DELTA, text: visibleText })
+      }
       finalText = visibleText
       break
     }
@@ -269,6 +301,11 @@ export async function runAgentLoop(opts) {
       return { text: finalText, steps, aborted: true }
     }
     if (steps >= maxSteps && !finalText) {
+      if (guard) {
+        emit({ type: AGENT_EVENT.ERROR, message: '这次回答没能完成。请稍后再试。' })
+        emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.IDLE })
+        return { text: '', steps, aborted: false, guardFailed: true }
+      }
       finalText = '……步骤数达到上限，先停在这里。需要的话我再继续。'
       emit({ type: AGENT_EVENT.TEXT_DELTA, text: finalText })
     }

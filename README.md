@@ -114,6 +114,7 @@ API Key 通过 Electron `safeStorage` 加密落盘（`userData/secrets.json`）�
 
 这一阶段只把 **LLM 推理**搬到本机。Edge TTS 仍需网络；要实现完全断网语音，还需选择和验证本地 TTS。
 端侧模型的实际延迟和人格边界对比见 [M6 端侧模型初测](docs/M6_端侧模型实测_2026-10-16.md)；当前尚未把任何本机模型设为默认。
+对卸载告别、真人身份与其他助手等敏感输入，本地模型的最终回复会先通过[人格护栏](docs/M6_敏感场景人格护栏草案.md)再显示；未通过最多重试两次，普通对话继续流式输出。此护栏只处理明确可识别的红线，默认模型仍需真实对话复核。记忆档案只接入此后新写的日记，不补录旧日记；现有语音配置继续使用。
 验收打包版时，在 PowerShell 设置 `$env:NAGI_VERIFY_EXECUTABLE=(Resolve-Path 'dist\win-unpacked\Nagi.exe').Path` 后运行 `npm run verify:local-llm`；也可指向 `dist\Nagi-Portable-<版本>.exe`。模型权重由本机 Ollama 管理，不包含在凪的安装包中。
 
 ### 情感系统（合并自桌宠原型，2026-10-14）

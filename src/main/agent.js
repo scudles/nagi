@@ -6,6 +6,7 @@ import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/protocol.js'
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
+import { createPersonaGuard } from '../core/agent/persona-guard.js'
 import { createClient, chatStream } from '../core/llm/openai-compatible.js'
 import { apiKeyForLlm, isLocalLlm, resolveLlm, supportsNativeTools } from '../core/llm/providers.js'
 import { checkOllama } from '../core/llm/ollama.js'
@@ -670,6 +671,7 @@ export async function runTurn(userText, emit) {
   })
 
   const messages = await buildMessages(userText, supportsNative)
+  const guard = local && !fakeLlm ? createPersonaGuard(userText) : null
   currentAbort = new AbortController()
 
   const r = await runAgentLoop({
@@ -679,11 +681,11 @@ export async function runTurn(userText, emit) {
     callModel: fakeLlm
       ? fakeCallModel()
       : useCloud
-        ? async ({ tools, signal }) => cloudChatStream({ messages, tools, signal: signal || currentAbort.signal })
-        : async ({ tools, signal }) =>
+        ? async ({ messages: modelMessages, tools, signal }) => cloudChatStream({ messages: modelMessages, tools, signal: signal || currentAbort.signal })
+        : async ({ messages: modelMessages, tools, signal }) =>
             chatStream(client, {
               model: llm.model,
-              messages,
+              messages: modelMessages,
               temperature: llm.temperature,
               tools,
               signal: signal || currentAbort.signal
@@ -701,7 +703,8 @@ export async function runTurn(userText, emit) {
         }, 30000).unref?.()
       }),
     emit,
-    signal: currentAbort.signal
+    signal: currentAbort.signal,
+    guard
   })
 
   // 写入历史（messages 已含 system + 旧历史 + 本轮 user + 工具过程，再补最终回复）
