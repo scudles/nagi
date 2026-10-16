@@ -10,12 +10,12 @@
 //      于是首响 = 首句合成时间，而不是整段合成时间。
 //   ② **口型用真实时间轴**：拿到音频时长后用 core/voice/lip.js 按音节算包络，
 //      驱动 Live2D 的嘴部参数（比「随机张嘴」更贴合她实际说的话）。
-//   ③ **不碰 agent.js / chat.js**：直接订阅 EVT.AGENT 的 DONE 拿整段回复文本。
-//      「什么时候该说话」是表现层的事，就该由表现层决定，主进程不必知道。
+//   ③ **流式首句**：订阅 Agent 的正文增量，句子成形后立刻送去合成；
+//      后续句顺序排队，按下麦克风时同时停止当前会话和未朗读队列。
 
 import { EVT, AGENT_EVENT } from '../../shared/protocol.js'
 import { VOICE_EVT, mergeVoiceSettings } from '../../shared/voice-protocol.js'
-import { createLipTrack, encodeWav, resample, trimSilence, peak, ASR_SAMPLE_RATE } from '../../core/voice/index.js'
+import { createLipTrack, createSegmenter, toSpeechText, encodeWav, resample, trimSilence, peak, ASR_SAMPLE_RATE } from '../../core/voice/index.js'
 import * as l2d from './live2d.js'
 import * as ui from './ui.js'
 import { sendText } from './chat.js'
@@ -33,6 +33,87 @@ let mode = 'pet'
 
 /** 当前朗读会话：{ sessionId, total, index, sentences, audio, urls, cancelled, preloaded } */
 let speech = null
+let speechGeneration = 0
+let reply = null
+let voiceTrace = null
+let muteReplyUntilDone = false
+let agentActive = false
+
+function markTrace(key) {
+  if (voiceTrace && voiceTrace[key] == null) voiceTrace[key] = performance.now()
+}
+
+function cancelReply() {
+  if (reply) {
+    reply.cancelled = true
+    reply.queue.length = 0
+    reply = null
+  }
+}
+
+function beginReply() {
+  cancelReply()
+  stopSpeechOnly()
+  reply = { segmenter: createSegmenter(), queue: [], running: false, cancelled: false,
+    sawDelta: false, done: false, rawText: '', emittedText: '', deferred: false }
+}
+
+async function pumpReply() {
+  const state = reply
+  if (!state || state.running || !state.queue.length) return
+  state.running = true
+  try {
+    while (reply === state && !state.cancelled && state.queue.length) {
+      const sentence = state.queue.shift()
+      const result = await startSpeak(sentence, { mood })
+      if (result.ok) await result.finished
+    }
+  } catch (err) {
+    console.warn('[voice] 流式朗读失败：', err?.message)
+  } finally {
+    state.running = false
+    if (reply === state && state.done && !state.queue.length) reply = null
+  }
+}
+
+function addReplyDelta(text) {
+  if (!text || muteReplyUntilDone) return
+  agentActive = true
+  if (!reply) beginReply()
+  reply.sawDelta = true
+  reply.rawText += text
+  // 围栏代码、行内代码和链接可能横跨多段 token；一旦出现，余下文本等完整回复
+  // 到手后再清洗，避免把代码或 URL 的半截念出来。
+  if (/[`\[]|https?:\/\//i.test(reply.rawText)) reply.deferred = true
+  if (reply.deferred) return
+  for (const sentence of reply.segmenter.push(text)) {
+    reply.emittedText += sentence
+    const clean = toSpeechText(sentence)
+    if (clean) reply.queue.push(clean)
+  }
+  pumpReply()
+}
+
+function finishReply(text) {
+  agentActive = false
+  if (muteReplyUntilDone) { muteReplyUntilDone = false; return }
+  if (!reply) beginReply()
+  if (reply.deferred) {
+    const clean = toSpeechText(text || reply.rawText)
+    const prefix = toSpeechText(reply.emittedText)
+    const remaining = prefix && clean.startsWith(prefix) ? clean.slice(prefix.length).trim() : clean
+    if (remaining) reply.queue.push(remaining)
+  } else {
+    if (!reply.sawDelta && text) reply.queue.push(...reply.segmenter.push(text).map(toSpeechText).filter(Boolean))
+    const tail = reply.segmenter.flush()
+    if (tail) {
+      const clean = toSpeechText(tail)
+      if (clean) reply.queue.push(clean)
+    }
+  }
+  reply.done = true
+  pumpReply()
+}
 
 function cfg() {
   return mergeVoiceSettings(getSettings()?.voice)
@@ -130,6 +211,7 @@ async function playNext() {
     const durationMs = raw >= 200 ? raw : Math.max(600, sentenceText.length * 220)
     l2d.setLipTrack(createLipTrack({ text: sentenceText, durationMs, seed: seedOf(sentenceText) }), () => audio.currentTime * 1000)
   }
+  audio.onplaying = () => markTrace('firstAudioAt')
   audio.onloadedmetadata = audio.onplay
   audio.onended = () => {
     l2d.clearLipTrack()
@@ -155,6 +237,7 @@ function finishSpeech(st) {
   st.playing = false
   l2d.clearLipTrack()
   if (speech === st) speech = null
+  st.resolveFinished?.()
   try {
     window.nagi.voice.stop(st.sessionId)
   } catch {
@@ -168,13 +251,14 @@ function finishSpeech(st) {
  * @param {{mood?:string, engine?:string, reason?:string}} [opts]
  * @returns {Promise<{ok:boolean, reason?:string, error?:string}>}
  */
-export async function speak(text, opts = {}) {
+async function startSpeak(text, opts = {}) {
   const c = cfg()
   if (!text || !String(text).trim()) return { ok: false, reason: '空文本' }
-  // 她正在说的时候说了新的话：打断旧的（用户重发/新回复优先）
-  stopSpeaking()
+  stopSpeechOnly()
+  const ticket = speechGeneration
 
   if (!c.ttsEnabled) return { ok: false, reason: '语音已关闭' }
+  markTrace('ttsRequestedAt')
   let started
   try {
     started = await window.nagi.voice.speak({
@@ -191,6 +275,10 @@ export async function speak(text, opts = {}) {
     console.warn('[voice] 合成未开始：', started && started.error)
     return { ok: false, error: started?.error || '语音合成失败' }
   }
+  if (ticket !== speechGeneration) {
+    window.nagi.voice.stop(started.sessionId)
+    return { ok: false, reason: '已打断' }
+  }
 
   const st = {
     sessionId: started.sessionId,
@@ -203,13 +291,23 @@ export async function speak(text, opts = {}) {
     cancelled: false,
     playing: false
   }
+  st.finished = new Promise((resolve) => { st.resolveFinished = resolve })
   speech = st
   playNext()
-  return { ok: true, total: st.total, engine: started.engine }
+  return { ok: true, total: st.total, engine: started.engine, finished: st.finished }
 }
 
-/** 打断朗读（松手打断 / 用户又开口 / 切换窗口都会用到） */
-export function stopSpeaking() {
+/** 对外朗读：会覆盖尚未念完的流式回复。 */
+export async function speak(text, opts = {}) {
+  cancelReply()
+  if (agentActive) muteReplyUntilDone = true
+  const result = await startSpeak(text, opts)
+  const { finished: _finished, ...publicResult } = result
+  return publicResult
+}
+
+function stopSpeechOnly() {
+  speechGeneration++
   const st = speech
   speech = null
   if (!st) return false
@@ -222,12 +320,22 @@ export function stopSpeaking() {
   }
   releaseUrls(st)
   l2d.clearLipTrack()
+  st.resolveFinished?.()
   try {
     window.nagi.voice.stop(st.sessionId)
   } catch {
     /* ignore */
   }
   return true
+}
+
+/** 打断朗读（含还在创建中的会话和后续待念的句子）。 */
+export function stopSpeaking() {
+  cancelReply()
+  if (agentActive) muteReplyUntilDone = true
+  const stopped = stopSpeechOnly()
+  markTrace('interruptedAt')
+  return stopped
 }
 
 export function isSpeaking() {
@@ -238,6 +346,7 @@ export function isSpeaking() {
 
 /** 当前录音：{ stream, recorder, chunks, startedAt, peak, timer } */
 let rec = null
+let recordingPending = null
 
 function hint(text, cls = '') {
   // 桌宠窗与工作台窗各有一份提示节点（两个形态都可能有语音交互）
@@ -256,7 +365,10 @@ function setMicState(on) {
 
 /** 开始录音（按住说话按下时调用） */
 export async function startRecording() {
-  if (rec) return { ok: false, reason: '已在录音' }
+  const pressedAt = performance.now()
+  if (rec || recordingPending) return { ok: false, reason: '已在录音' }
+  const request = { cancelled: false }
+  recordingPending = request
   stopSpeaking() // 别让她一边说一边听自己
   const c = cfg()
 
@@ -266,10 +378,23 @@ export async function startRecording() {
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
     })
   } catch (err) {
+    if (recordingPending === request) recordingPending = null
     const msg = err && err.name === 'NotAllowedError' ? '麦克风被拒绝了（系统设置里允许一下）' : '拿不到麦克风：' + (err?.message || err)
-    notice(msg)
+    if (!request.cancelled) notice(msg)
     return { ok: false, error: msg }
   }
+  if (request.cancelled) {
+    stream.getTracks().forEach((track) => track.stop())
+    if (recordingPending === request) recordingPending = null
+    return { ok: false, reason: '已松开麦克风' }
+  }
+  try { await window.nagi.chat.abort() } catch { /* 旧模型没在生成也可继续录音 */ }
+  if (request.cancelled) {
+    stream.getTracks().forEach((track) => track.stop())
+    if (recordingPending === request) recordingPending = null
+    return { ok: false, reason: '已松开麦克风' }
+  }
+  voiceTrace = { pressedAt }
 
   const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'].find(
     (m) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(m)
@@ -279,6 +404,7 @@ export async function startRecording() {
     recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
   } catch (err) {
     stream.getTracks().forEach((t) => t.stop())
+    if (recordingPending === request) recordingPending = null
     notice('这台机器的浏览器不支持录音')
     return { ok: false, error: String(err) }
   }
@@ -293,6 +419,7 @@ export async function startRecording() {
     analyser: null,
     raf: null
   }
+  if (recordingPending === request) recordingPending = null
 
   recorder.ondataavailable = (e) => {
     if (e.data && e.data.size) rec && rec.chunks.push(e.data)
@@ -339,7 +466,14 @@ export async function startRecording() {
  */
 export async function stopRecording(opts = {}) {
   const cur = rec
-  if (!cur) return { ok: false, reason: '没在录音' }
+  if (!cur) {
+    if (recordingPending) {
+      recordingPending.cancelled = true
+      return { ok: false, reason: '麦克风尚未就绪，已取消' }
+    }
+    return { ok: false, reason: '没在录音' }
+  }
+  markTrace('releasedAt')
   rec = null
   setMicState(false)
   hint('')
@@ -391,6 +525,7 @@ export async function stopRecording(opts = {}) {
     notice('没听到你说话')
     return { ok: false, reason: '没听到声音' }
   }
+  markTrace('wavReadyAt')
 
   if (mode === 'pet') ui.showBubble('…（在听）', { autoHide: 0 })
   else ui.setStatus('thinking')
@@ -403,6 +538,7 @@ export async function stopRecording(opts = {}) {
     if (mode === 'pet') ui.hideBubble()
     else ui.setStatus('idle')
   }
+  markTrace('asrReadyAt')
 
   if (!r || !r.ok || !String(r.text || '').trim()) {
     notice('没听清，再说一次？')
@@ -412,7 +548,11 @@ export async function stopRecording(opts = {}) {
   const text = String(r.text).trim()
   if (opts.send === false) return { ok: true, text, engine: r.engine }
   // 认到的话直接送进对话——这就是「按住说话」的意义
-  sendText(text)
+  if (!sendText(text)) {
+    notice('上一句话还没处理完，请再说一次')
+    return { ok: false, error: '上一轮对话尚未结束', text }
+  }
+  markTrace('chatSubmittedAt')
   return { ok: true, text, engine: r.engine }
 }
 
@@ -435,7 +575,7 @@ async function blobToWav(blob) {
 
 /** 点一下切换（键盘/无鼠标时也能用）：按一下开始，再按一下结束 */
 export async function toggleRecording() {
-  if (rec) return stopRecording()
+  if (rec || recordingPending) return stopRecording()
   return startRecording()
 }
 
@@ -455,7 +595,7 @@ function bindMicButton(id) {
     startRecording()
   })
   const release = (e) => {
-    if (!rec) return
+    if (!rec && !recordingPending) return
     if (e) {
       e.preventDefault()
       e.stopPropagation()
@@ -495,13 +635,36 @@ export function initVoice(opts = {}) {
     if (snap && snap.mood) mood = snap.mood
   })
 
-  // 她回复完 → 自动念出来（直接从 AGENT DONE 拿整段文本，不必改 chat.js）
+  // 首句一成形就合成，后续句按序播放；敏感场景由 Agent 先审后显，流式层不会提前收到违规文本。
   window.nagi.on(EVT.AGENT, (evt) => {
-    if (!evt || evt.type !== AGENT_EVENT.DONE) return
+    if (!evt) return
+    if (evt.type === AGENT_EVENT.STATUS && evt.state === 'thinking' && !agentActive) {
+      if (!voiceTrace || voiceTrace.modelDoneAt != null || voiceTrace.interruptedAt != null) {
+        voiceTrace = { chatSubmittedAt: performance.now() }
+      }
+      agentActive = true
+      muteReplyUntilDone = false
+      if (cfg().ttsEnabled && cfg().speakOnReply) beginReply()
+      return
+    }
+    if (evt.type === AGENT_EVENT.ERROR) {
+      agentActive = false
+      muteReplyUntilDone = false
+      cancelReply()
+      stopSpeechOnly()
+      return
+    }
     const c = cfg()
-    if (!c.ttsEnabled || !c.speakOnReply) return
-    if (!evt.text || !String(evt.text).trim()) return
-    speak(evt.text, { mood })
+    if (evt.type === AGENT_EVENT.TEXT_DELTA) {
+      markTrace('firstModelTokenAt')
+      if (c.ttsEnabled && c.speakOnReply) addReplyDelta(evt.text)
+      return
+    }
+    if (evt.type === AGENT_EVENT.DONE) {
+      markTrace('modelDoneAt')
+      if (c.ttsEnabled && c.speakOnReply && evt.text) finishReply(evt.text)
+      else { agentActive = false; muteReplyUntilDone = false; cancelReply() }
+    }
   })
 
   // 主动搭话 / 日程提醒 → 也念出来
@@ -526,6 +689,7 @@ export function initVoice(opts = {}) {
   // 切窗口/关窗时闭嘴并停录，免得她对着空房间说话
   window.addEventListener('beforeunload', () => {
     stopSpeaking()
+    if (recordingPending) recordingPending.cancelled = true
     if (rec) {
       try {
         rec.recorder.stop()
@@ -546,6 +710,7 @@ export function initVoice(opts = {}) {
     toggleRecording,
     isSpeaking,
     isRecording: () => !!rec,
+    latencyTrace: () => voiceTrace ? { ...voiceTrace } : null,
     /** 口型是否已被真实语音接管（live2d.setLipTrack 生效中） */
     lipActive: () => l2d.isTalking(),
     state: () => {

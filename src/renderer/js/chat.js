@@ -111,6 +111,8 @@ async function handleConfirm(evt) {
 
 /** 从桌宠/工作台外部触发一次发送（备用） */
 export function sendText(text) {
+  if (busy) return false
   ui.els.input.value = text
   send()
+  return true
 }
