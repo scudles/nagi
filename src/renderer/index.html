@@ -454,6 +454,22 @@
         </div>
         <div id="notes-status" class="dim" aria-live="polite"></div>
 
+        <h3>陪伴 · 可选表达（不完美机制）</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          让她偶尔「没接上那句可说可不说的话」——比如你回来时她偶尔没开口。<strong>默认关闭</strong>；
+          <strong>提醒、日程、有截止时间或涉及文件/设备/钱/健康安全的事一律不会被延迟</strong>，
+          概率只作用在归来开口这类可选表达上，且每天最多延迟 1 次、同一个候选只判一次。
+          延迟只是「这次没说」，她不会谎称忘了，也不会忘记任何重要的事。
+        </p>
+        <label class="check"><input id="set-imperf-enabled" type="checkbox" /> 开启可选表达延迟</label>
+        <label>延迟概率（0–10%；0 = 从不延迟） <input id="set-imperf-prob" type="number" min="0" max="10" step="1" /></label>
+        <label class="check"><input id="set-imperf-low" type="checkbox" /> 允许低气压（每天最多一次，10–30 分钟自然恢复；不是困倦）</label>
+        <label class="check"><input id="set-imperf-repair" type="checkbox" /> 说过头时给一句简短修复（每天最多一次；不会辩解或求原谅）</label>
+        <div class="sp-row">
+          <button id="btn-save-imperf">保存可选表达设置</button>
+        </div>
+        <div id="imperf-status" class="dim" aria-live="polite"></div>
+
         <h3>主动陪伴</h3>
         <label class="check"><input id="set-only-presence" type="checkbox" /> 只陪着（不监测活动、不主动开口；手动聊天仍可用）</label>
         <label>每天最多主动搭话 <input id="set-companion-max" type="number" min="0" max="10" step="1" /></label>

@@ -25,6 +25,8 @@
     "verify:pose": "node scripts/verify-pose.mjs",
     "verify:rhythm": "node scripts/verify-rhythm.mjs",
     "verify:notes": "node scripts/verify-notes.mjs",
+    "verify:imperfection": "node scripts/verify-imperfection.mjs",
+    "verify:imperfection:ui": "node scripts/verify-imperfection-live.mjs",
     "verify:rag": "node scripts/verify-rag.mjs",
     "verify:local-llm": "node scripts/verify-local-llm.mjs"
   },

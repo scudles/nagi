@@ -1674,6 +1674,13 @@ function refreshPresenceSection() {
   set('set-notes-enabled', cfg.notesEnabled)
   set('set-traces-enabled', cfg.tracesEnabled)
   set('set-anchors-enabled', cfg.anchorsEnabled)
+  // 「陪伴 · 可选表达」（BLUE-4）：默认全关，概率默认 0
+  const imp = cfg.imperfection || {}
+  set('set-imperf-enabled', imp.enabled === true)
+  set('set-imperf-low', imp.lowPressureEnabled === true)
+  set('set-imperf-repair', imp.repairEnabled === true)
+  const prob = document.getElementById('set-imperf-prob')
+  if (prob) prob.value = String(Math.max(0, Math.min(10, Math.round((Number(imp.forgetProbability) || 0) * 100))))
 
   const num = (id, minutes) => {
     const el = document.getElementById(id)
@@ -1816,6 +1823,38 @@ function wirePresenceSettings(on) {
   on('btn-open-notes-from-settings', () => {
     closeSettings()
     toggleNotesPanel()
+  })
+
+  // 「陪伴 · 可选表达」（BLUE-4）：概率按 0–10% 存成 0–0.1
+  on('btn-save-imperf', async () => {
+    const status = document.getElementById('imperf-status')
+    const raw = Number(document.getElementById('set-imperf-prob').value)
+    const pct = Number.isFinite(raw) ? Math.max(0, Math.min(10, Math.round(raw))) : 0
+    const enabled = document.getElementById('set-imperf-enabled').checked
+    try {
+      await window.nagi.settings.set({
+        presence: {
+          imperfection: {
+            enabled,
+            // 总开关关着时概率归零：不会出现「关了还偶尔延迟」的错觉
+            forgetProbability: enabled ? pct / 100 : 0,
+            lowPressureEnabled: document.getElementById('set-imperf-low').checked,
+            repairEnabled: document.getElementById('set-imperf-repair').checked
+          }
+        }
+      })
+      settings = await window.nagi.settings.get()
+    } catch (err) {
+      if (status) status.textContent = '保存失败：' + err.message
+      return
+    }
+    refreshPresenceSection()
+    if (status) {
+      status.textContent = enabled
+        ? `已保存：可选表达延迟概率 ${pct}%，每天最多 1 次；重要事项不受影响。`
+        : '已关闭：所有可选表达照常说，重要事项本来就不受影响。'
+    }
+    ui.addToolLog('可选表达设置已保存')
   })
 }
 

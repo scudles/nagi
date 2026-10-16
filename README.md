@@ -10,9 +10,9 @@
 | 开发启动 | `npm run dev` |
 | 构建后启动 | 先 `npm run build`，再 `npm start` |
 | 测试 | `npm test`（须用 Node ≥24，本机默认 node 22 会令 7 个 electron mock 测试假失败） |
-| 真机验证 | `npm run verify:presence` / `verify:s4` / `verify:m4` / `verify:frame` / `verify:pose` / `verify:rhythm` / `verify:notes` / `verify:rag` / `verify:local-llm`；`node scripts/verify-stage8-voice.mjs`、`verify-signals.mjs`、`verify-stage10-lifecycle.mjs` |
+| 真机验证 | `npm run verify:presence` / `verify:s4` / `verify:m4` / `verify:frame` / `verify:pose` / `verify:rhythm` / `verify:notes` / `verify:imperfection:ui` / `verify:rag` / `verify:local-llm`；`node scripts/verify-stage8-voice.mjs`、`verify-signals.mjs`、`verify-stage10-lifecycle.mjs` |
 
-当前验证环境：Windows、Node.js **24.19.0**、npm **11.6.4**。2026-10-17 BLUE-3 收口测试退出码 **0**：共 **489** 项，**488 通过、0 失败、1 跳过**；跳过的是当前权限下无法创建链接的安全边界测试，不等于这些场景已验收。完整记录见 [HANDOFF](docs/HANDOFF.md)。
+当前验证环境：Windows、Node.js **24.19.0**、npm **11.6.4**。2026-10-17 BLUE-4 收口测试退出码 **0**：共 **512** 项，**511 通过、0 失败、1 跳过**；跳过的是当前权限下无法创建链接的安全边界测试，不等于这些场景已验收。完整记录见 [HANDOFF](docs/HANDOFF.md)。
 
 > 受限/虚拟化环境里 Electron 的 GPU 进程可能崩溃（0xC0000005）：主进程已默认强制软件渲染；若仍崩溃，设 `NAGI_RENDERER_SANDBOX=0` 启动（会关闭渲染沙箱，仅限本机可信场景）。
 
@@ -59,6 +59,8 @@ npm run dev        # 开发模式启动
 | `npm run verify:pose` | 实机验证立绘行为（黑脸移除 / 鼠标不跟随 / 对话状态驱动姿态） |
 | `npm run verify:rhythm` | 实机验证实感时段表现（昼夜参数叠加、平滑切换、关开关收回、设置页时段表/保存/非法拦截） |
 | `npm run verify:notes` | 实机验证她留下的东西（默认关闭不落盘、聊天→工具→留痕全链路、查看器、回忆物、关闭即删文件） |
+| `npm run verify:imperfection` | 120 天固定种子的虚拟模拟：重要事项零漏送（720/720）、可选表达延迟率不超配置、每日配额生效 |
+| `npm run verify:imperfection:ui` | 实机冒烟：可选表达机制默认全关、设置页开关与概率写入、关开关概率归零、扩展装配无失败 |
 | `npm run verify:local-llm` | 隔离数据下验收本机 Ollama 对话、工具、记忆及提供商切换；需先启动 Ollama 并安装 qwen2.5 |
 | `node scripts/verify-stage8-voice.mjs` | 真实 Electron 与 SAPI 的流式语音、模拟麦克风录制、识别和打断验收 |
 | `node scripts/verify-signals.mjs` | 真实 Electron + 模拟 Home Assistant 的独立授权与撤销验收 |

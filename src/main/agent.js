@@ -65,6 +65,7 @@ import { getLedger } from './ledger.js'
 import { runRecordedTool } from './promises.js'
 import { upcomingCalendarContext } from './signals/calendar.js'
 import { currentMusicContext } from './signals/music.js'
+import { deferOptionalExpression } from './extensions/imperfection.js'
 import {
   startReminderEngine,
   stopReminderEngine,
@@ -444,6 +445,12 @@ async function handleReunion(event) {
   const controller = new AbortController()
   reunionController = controller
   const timeout = setTimeout(()=>controller.abort(),15000)
+  // BLUE-4（契约 §5）：归来开口属「可选表达」，概率门只在这一层；概率默认 0 → 恒不延迟。
+  // 延迟只意味着「这次选择不说」，绝不是遗忘：决策记录保留、10 分钟内可恢复，且不说谎。
+  try {
+    const gate = deferOptionalExpression(`reunion:${event.id}`, { kind: 'optional-chat', domain: 'chat', text: '归来开口' })
+    if (gate.defer) return false
+  } catch { /* 门禁异常不能让她闭嘴：按不延迟处理 */ }
   const snapshot = presence.snapshot(), epoch = snapshot.epoch
   const context = buildContextBlock({mood:mood.current(),relation:relationSummary(),rhythm:snapshot.rhythm,
     activities:snapshot.activities.filter(a=>event.activityIds.includes(a.id)),recentReplies:recentAssistantReplies(history,4)})
