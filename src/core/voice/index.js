@@ -64,3 +64,13 @@ export {
   VOICE_PROFILE,
   resolveVoiceProfile
 } from './voice-profile.js'
+
+export {
+  BACKCHANNEL_LIMITS,
+  BACKCHANNEL_LIBRARY,
+  emptyBackchannelState,
+  normalizeBackchannelState,
+  resetBackchannelState,
+  tickBackchannelState,
+  decideBackchannel
+} from './backchannel.js'

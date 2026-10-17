@@ -79,7 +79,23 @@ export const DEFAULT_VOICE_SETTINGS = {
   /** 识别语言/区域（本机 SAPI 用） */
   asrCulture: 'zh-CN',
   /** 单次录音上限（毫秒），到点自动结束并送去识别 */
-  maxRecordMs: 60000
+  maxRecordMs: 60000,
+  /**
+   * 非语言语气音（回合首尾的「嗯。」/「唉……」等，无语义）。
+   * **默认关闭**：enabled=false 且 probability=0 —— 不改这两项就一个字都不多念。
+   * 用现有 TTS 念极短文本实现，不引入新引擎、不引入音频素材。
+   * probability 上限由 core/voice/backchannel.js 夹住（0.3），配再高也不会变口头禅。
+   */
+  backchannel: {
+    enabled: false,
+    probability: 0,
+    /** 每天最多几次（0 = 不限次数，但仍受概率与间隔约束） */
+    perDayMax: 4,
+    /** 两次之间最小间隔（毫秒） */
+    minIntervalMs: 3 * 60 * 1000,
+    /** 深夜是否仍允许（默认不允许） */
+    allowAtNight: false
+  }
 }
 
 /** 取一份合并后的语音设置（缺项自动补默认） */
