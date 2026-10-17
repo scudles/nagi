@@ -256,11 +256,14 @@
           <input id="set-pet-size" type="range" min="240" max="760" step="10" />
         </label>
         <label class="check"><input id="set-idle-boost" type="checkbox" /> 待机时放大一点、换个姿势（更醒目）</label>
+        <label class="check"><input id="set-depth-motion" type="checkbox" /> 前后方向的纵深感（前倾凑近、探头看你、后仰，转身时带前后）</label>
+        <label>纵深感幅度 <span id="set-depth-amount-val" class="dim">1.0</span>
+          <input id="set-depth-amount" type="range" min="0" max="2" step="0.1" />
+        </label>
         <div class="sp-row">
           <button id="btn-refresh-models">刷新模型列表</button>
           <button id="btn-save-l2d">保存 Live2D 设置</button>
         </div>
-
         <h3>装束</h3>
         <p class="dim" style="margin:0 0 8px;line-height:1.7">
           换一身打扮（发型、眼镜、兽耳、蝴蝶结、披肩、尾巴）。点一下当场就换，

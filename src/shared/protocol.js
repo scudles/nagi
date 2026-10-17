@@ -186,6 +186,8 @@ export const DEFAULT_SETTINGS = {
     petWidth: 400, // 桌宠窗口尺寸（可用右下角手柄/Ctrl+滚轮自由调）
     petHeight: 600,
     idleBoost: true, // 待机加成：一段时间无互动时放大一点、换个姿势
+    // 前后（Z 轴）动作：前倾凑近 / 探头看你 / 后仰松弛 + 常态纵深摆动
+    depthMotion: { enabled: true, amount: 1 },
     // 当前装束（nagi-outfit.json 里的 look id；桌宠重启后还是这一身）
     outfit: 'daily'
   },

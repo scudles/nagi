@@ -446,6 +446,8 @@ async function boot() {
       showNotesEntry(durationMs)
       // 你离开了一阵又回来 → 转身迎接（幅度最大的一种转向）
       if (l2dReady) l2d.playTurn('return', { holdMs: 2400 })
+      // 同时探头凑近看你一眼（Z 轴；与转身叠加 = 左右 + 前后的复合动作）
+      if (l2dReady) l2d.triggerDepth('peek')
     }
   })
 
@@ -505,6 +507,8 @@ async function boot() {
       if (state === 'thinking') ui.showBubble('……', { autoHide: 0 })
       // 非 idle（思考/执行/等待）都算"生成回复期间"
       if (l2dReady) l2d.setPose(state === 'idle' ? null : 'thinking')
+      // 你开了口 → 她前倾凑近听（Z 轴；与思考姿态是两层，互不遮挡）
+      if (l2dReady && state === 'thinking') l2d.triggerDepth('leanIn')
     },
     // 说话口型：文本在流，嘴就动
     onTextDelta: () => {
@@ -515,6 +519,8 @@ async function boot() {
       if (l2dReady) {
         l2d.stopTalking()
         l2d.setPose(null) // 思考姿态平滑收回，交还呼吸/待机
+        // 说完了 → 身体后仰靠回去（Z 轴；紧接着下面按情绪翻脸）
+        l2d.triggerDepth('leanBack')
         // 回答内容的情绪与语气 → 表情 + 轻微动作；无法判断 → 中立
         l2d.setEmotion(chatEmotion || 'calm', { motion: !!chatEmotion })
       }
@@ -1061,11 +1067,15 @@ async function tryLoadLive2D(canvas, placeholder) {
       // 取景：默认「胸像」（只显示上半身）。模型目录 nagi-emotion.json 里的 frame 优先级更高
       frame: cfg.frame || undefined,
       eyeBlink: cfg.eyeBlink !== false,
+      // 前后（Z 轴）动作配置（设置页 live2d.depthMotion）
+      depth: cfg.depthMotion,
       // 上次穿的还是这一身（settings.live2d.outfit，可能是 look id 也可能是槽位表）
       outfit: cfg.outfit || undefined
     })
     l2dReady = true
     placeholder?.classList.add('hidden')
+    // 纵深感（Z 轴）动作：配置灌给状态机（开关/幅度走设置页 live2d.depthMotion）
+    l2d.configureDepth(cfg.depthMotion)
     // 模型就位后立刻同步当前情绪（初始拉取发生在模型加载前）
     if (currentMood) l2d.setEmotion(currentMood.expr, { motion: false })
     // 时段表现：模型就绪前收到的 rhythm 快照在这里补上（深夜安静/午后慵懒）
@@ -1361,6 +1371,17 @@ function fillSettingsForm() {
   }
   const boost = document.getElementById('set-idle-boost')
   if (boost) boost.checked = settings?.live2d?.idleBoost !== false
+
+  // 纵深感（Z 轴）动作
+  const depth = settings?.live2d?.depthMotion || {}
+  const depthOn = document.getElementById('set-depth-motion')
+  if (depthOn) depthOn.checked = depth.enabled !== false
+  const depthAmt = document.getElementById('set-depth-amount')
+  if (depthAmt) {
+    depthAmt.value = String(Number(depth.amount) > 0 ? Number(depth.amount) : 1)
+    const depthAmtVal = document.getElementById('set-depth-amount-val')
+    if (depthAmtVal) depthAmtVal.textContent = Number(depthAmt.value).toFixed(1)
+  }
 
   // 活动监测
   const privacy = settings?.privacy || {}
@@ -2627,17 +2648,34 @@ function wireSettingsPage() {
     settings = await window.nagi.settings.get()
   })
 
+  // 纵深感幅度滑杆：拖动即时生效（不必先保存），标签同步
+  const depthAmtEl = document.getElementById('set-depth-amount')
+  depthAmtEl?.addEventListener('input', () => {
+    const v = Number(depthAmtEl.value)
+    const label = document.getElementById('set-depth-amount-val')
+    if (label) label.textContent = v.toFixed(1)
+    if (l2dReady) l2d.setDepthAmount(v)
+  })
+
   on('btn-refresh-models', refreshModels)
   on('btn-save-l2d', async () => {
+    const depthAmt = Number(document.getElementById('set-depth-amount')?.value) || 1
     await window.nagi.settings.set({
       live2d: {
         modelPath: document.getElementById('set-model-path').value,
         scale: Number(document.getElementById('set-l2d-scale').value) || 1,
-        idleBoost: document.getElementById('set-idle-boost')?.checked !== false
+        idleBoost: document.getElementById('set-idle-boost')?.checked !== false,
+        depthMotion: {
+          enabled: document.getElementById('set-depth-motion')?.checked !== false,
+          amount: depthAmt
+        }
       }
     })
     settings = await window.nagi.settings.get()
-    if (l2dReady) l2d.setScale(settings?.live2d?.scale || 1)
+    if (l2dReady) {
+      l2d.setScale(settings?.live2d?.scale || 1)
+      l2d.configureDepth(settings?.live2d?.depthMotion)
+    }
     ui.addToolLog('Live2D 设置已保存')
   })
 
@@ -3114,6 +3152,10 @@ window.__nagiArtBox = () => l2d.measureArtBox()
 // 调试：对话状态驱动的姿态（'thinking' 思考 / null 收回中立）
 window.__nagiSetPose = (n) => l2d.setPose(n)
 window.__nagiGetPose = () => l2d.getPose()
+// 调试：前后（Z 轴）动作——触发 / 状态 / 真正写入的值（验收读 __depthLast）
+window.__nagiDepth = (name) => l2d.triggerDepth(name)
+window.__nagiDepthState = () => l2d.depthState()
+window.__nagiDepthConfig = (cfg) => l2d.configureDepth(cfg)
 // 调试：昼夜时段表现（BLUE-2）：'neutral' | 'night' | 'afternoon' | '…→neutral'（收回中）
 window.__nagiApplyRhythmPose = (r) => l2d.applyRhythmPose(r)
 window.__nagiGetRhythmPose = () => l2d.getRhythmPose()

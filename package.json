@@ -31,6 +31,7 @@
     "viewer": "node tools/live2d-viewer/server.mjs",
     "postinstall": "node scripts/setup-core.mjs",
     "verify:pose": "node scripts/verify-pose.mjs",
+    "verify:depth": "node scripts/verify-depth.mjs",
     "verify:rhythm": "node scripts/verify-rhythm.mjs",
     "verify:notes": "node scripts/verify-notes.mjs",
     "verify:imperfection": "node scripts/verify-imperfection.mjs",

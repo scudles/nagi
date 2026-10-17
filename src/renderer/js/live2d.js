@@ -28,6 +28,7 @@ import {
   slotsParams
 } from '../../core/outfit.js'
 import { microEnvelope, parseMicroExpr } from '../../core/microexpr.js'
+import { DEFAULT_DEPTH_CONFIG, createDepthMotion } from '../../core/presence/depth-motion.js'
 import { TURN_KIND, createTurnController, directionFrom, describeTurn } from '../../core/face/turn.js'
 import { createBlinkScheduler } from '../../core/face/blink.js'
 import { createEyeWander } from '../../core/face/eye.js'
@@ -81,6 +82,13 @@ let mouthShape = null
 let mouthShapeAt = 0
 let mouthLastViseme = null
 let mouthValue = 0
+// 前后（Z 轴）动作：模型外面套一层容器（zContainer），只动它的 scale/x/y；
+// 参数层由 depthMotion 状态机算增量，hook 里 add 写入。详见该节注释。
+let zContainer = null
+let depthMotion = null
+let depthHook = null
+let depthSeq = 0
+let depthCfg = { ...DEFAULT_DEPTH_CONFIG }
 /**
  * 模型的稳定基准尺寸（模型单位）。
  *
@@ -435,7 +443,8 @@ function overrideEntry(emotion) {
  * 加载模型
  * @param {HTMLCanvasElement} canvas
  * @param {string} url 形如 nagi-local://models/Lisette/Lisette.model3.json
- * @param {{scale?:number, mirror?:boolean, eyeBlink?:boolean}} opts
+ * @param {{scale?:number, mirror?:boolean, eyeBlink?:boolean, depth?:object, outfit?:any}} opts
+ *   depth: 前后（Z 轴）动作配置 { enabled, amount }（设置页 live2d.depthMotion）
  */
 export async function load(canvas, url, opts = {}) {
   if (!coreAvailable()) {
@@ -470,7 +479,12 @@ export async function load(canvas, url, opts = {}) {
   outfit = await loadOutfitConfig(url)
   microCfg = await loadMicroExprConfig(url)
   faceCfg = await loadFaceConfig(url)
-  app.stage.addChild(m)
+  // 前后（Z 轴）动作的载体：模型外面套一层容器。只动这一层的 scale/x/y
+  // （绕模型锚点——即取景带底边/肚脐线——缩放与位移），layout() 给模型本人的
+  // 定位原样不动，于是取景、镜像、安全边距全不受影响，画面也不会被拉变形。
+  zContainer = new PIXI.Container()
+  zContainer.addChild(m)
+  app.stage.addChild(zContainer)
 
   // 自动眨眼（若模型自带 EyeBlink 组）
   if (opts.eyeBlink !== false && m.internalModel?.eyeBlink) {
@@ -520,6 +534,11 @@ export async function load(canvas, url, opts = {}) {
     }
   }
 
+  // 配置随 load 灌入（设置页之后的改动走 configureDepth 热更新），
+  // 免得"先按默认起跑、再被纠正"出现一帧的幅度跳变。
+  // hook 本身的注册在下面 ensureEarHook() 之后——原因见那里。
+  if (opts.depth) depthCfg = { ...DEFAULT_DEPTH_CONFIG, ...opts.depth }
+
   // 目光/身体跟随鼠标：已取消（2026-10-15 需求，立绘动作改由对话状态驱动）。
   // 光撤监听不够 —— focusController 每帧都会把它内部的目标值写进
   // ParamAngle*/ParamEyeBall*，而 focus() 不调用时它停在"鼠标最后停留的位置"，
@@ -568,6 +587,17 @@ export async function load(canvas, url, opts = {}) {
   ensureAutoBlinkHook()
   ensureEyeWanderHook()
   ensureEarHook()
+  // 前后（Z 轴）动作的 hook 必须注册在**这一串的最后**：
+  // beforeModelUpdate 的监听器按**注册顺序**执行（pixi-live2d-display 用
+  // eventemitter3，FIFO——2026-10-17 实测纠正：早前注释写的"后注册先执行"是错的，
+  // probeRedOnce/probePoseOnce"注册在后就已生效"与 freezeIdleMotion 能按住待机，
+  // 两条都只在 FIFO 下成立）。而转向层 turnHook 对 ParamAngle*/ParamBodyAngle*
+  // 是 set 绝对值：depth 若排在它前面，add 的角度增量会被整个盖掉——归来时
+  // playTurn('return') 与 triggerDepth('peek') 正好叠加，探头的抬头就丢了。
+  // 放最后，depth 的增量才叠在每一层之上：turn 的绝对值当底，待机摆头/思考姿态/
+  // 时段表现/呼吸都是 add 照常相加，容器层（scale/dx/dy）则谁都不碰、天然独占。
+  // redGuard 只写 ParamRed*，与 depth 无交集，谁先谁后都行。
+  ensureDepthHook()
   if (faceCfg?.emotions) console.log('[live2d] 面部表达：', faceCfg.tremor.channels.length, '路微动 /', faceCfg.visemeOrder.length, '个元音')
   return m
 }
@@ -1732,6 +1762,103 @@ export function setIdleHeadScale(k) {
   return n
 }
 
+/* ---------------- 前后（Z 轴）动作（2026-10-17 用户拍板） ----------------
+ *
+ * 之前的动作只有左右方向的平移与摆动，缺纵深。这里补三类触发动作
+ * （前倾凑近 leanIn / 探头看你 peek / 后仰松弛 leanBack）+ 一路常态复合摆动
+ * （左右转身时带轻微前后）。纯逻辑在 core/presence/depth-motion.js（可单测），
+ * 本文件只负责把它的输出落到两层：
+ *   ① transform（scale/dx/dy）→ zContainer：绕模型锚点缩放/位移。
+ *      pivot 每帧重取 model.x/model.y，所以 layout() 重排（改窗口/镜像/缩放）
+ *      之后锚点自动跟着走，不会错位。
+ *   ② params（角度增量）→ addParameterValueById：与 pose/rhythm/待机摆头同款
+ *      的 add 层（每帧末框架 loadParameters() 复位，增量只在当帧有效）。
+ *
+ * 角度正负号是实测约定（probe-angle-sign.mjs 逐档截图）：负 = 靠近屏幕
+ * （抬头/前倾），正 = 远离（低头/后仰）。
+ */
+function ensureDepthHook() {
+  if (depthHook || !model?.internalModel) return
+  if (!depthMotion) {
+    depthMotion = createDepthMotion({
+      rng: Math.random,
+      enabled: depthCfg.enabled !== false,
+      amount: Number(depthCfg.amount) > 0 ? Number(depthCfg.amount) : DEFAULT_DEPTH_CONFIG.amount
+    })
+  }
+  depthHook = () => {
+    const core = model?.internalModel?.coreModel
+    if (!core || !zContainer) return
+    const out = depthMotion.update(performance.now())
+    // 参数层：增量写入（模型缺参数就跳过，与其它层一致）
+    for (const [id, v] of Object.entries(out.params)) {
+      if (Math.abs(v) < 1e-4) continue
+      try {
+        core.addParameterValueById(id, v)
+      } catch {
+        /* 模型没这个参数 */
+      }
+    }
+    // 容器层：绝对定位（不是增量），绕模型锚点做缩放/位移
+    const px = model.x
+    const py = model.y
+    zContainer.pivot.set(px, py)
+    zContainer.position.set(px + out.transform.dx, py + out.transform.dy)
+    zContainer.scale.set(out.transform.scale)
+    // 验收用：真正写进去的值。判"Z 动作有没有生效"要读这个，不能拿画面差分
+    // （头发物理余震会把"已经收回"算成"还在动"，2026-10-17 verify:turns 踩过）
+    window.__depthLast = {
+      seq: ++depthSeq,
+      mode: out.mode,
+      env: out.env,
+      ambientEnv: out.ambientEnv,
+      transform: out.transform,
+      params: out.params,
+      container: { x: zContainer.x, y: zContainer.y, scaleX: zContainer.scale.x, scaleY: zContainer.scale.y }
+    }
+  }
+  model.internalModel.on('beforeModelUpdate', depthHook)
+}
+
+/** 纵深感配置（设置页 live2d.depthMotion 驱动；加载时由调用方灌入） */
+
+/** 加载时灌入配置（main.js 读 settings.live2d.depthMotion 后调用） */
+export function configureDepth(cfg) {
+  depthCfg = { ...DEFAULT_DEPTH_CONFIG, ...(cfg || {}) }
+  if (depthMotion) {
+    depthMotion.setEnabled(depthCfg.enabled !== false)
+    depthMotion.setAmount(Number(depthCfg.amount) > 0 ? Number(depthCfg.amount) : DEFAULT_DEPTH_CONFIG.amount)
+    depthMotion.setAmbient(depthCfg.ambient !== false)
+    depthMotion.setAuto(depthCfg.auto !== false)
+  }
+  return depthState()
+}
+
+/** 触发一个 Z 轴动作：'leanIn' | 'peek' | 'leanBack' */
+export function triggerDepth(name) {
+  if (!depthMotion) return false
+  return depthMotion.trigger(name, performance.now())
+}
+
+/** 纵深感开关（设置页） */
+export function setDepthEnabled(on) {
+  if (!depthMotion) return false
+  depthMotion.setEnabled(!!on, performance.now())
+  return true
+}
+
+/** 纵深感幅度（设置页滑杆 0~2，1 = 设计基准） */
+export function setDepthAmount(v) {
+  if (!depthMotion) return false
+  depthMotion.setAmount(v)
+  return true
+}
+
+/** 当前纵深感状态（调试/验收用） */
+export function depthState() {
+  return depthMotion ? depthMotion.state() : { mode: 'idle', phase: 'idle', env: 0, ...depthCfg }
+}
+
 /* ---------------- 微注视（待机行为，2026-10-17） ----------------
  *
  * 2026-10-15 曾彻底取消"跟随鼠标"：鼠标停哪儿她盯哪儿很诡异。这里加回来的
@@ -2199,7 +2326,15 @@ export function destroy() {
     if (model) {
       if (mouthHook) model.internalModel?.off?.('afterMotionUpdate', mouthHook)
       if (redGuard) model.internalModel?.off?.('beforeModelUpdate', redGuard)
-      app?.stage.removeChild(model)
+      if (depthHook) model.internalModel?.off?.('beforeModelUpdate', depthHook)
+      // 先摘容器再毁模型：容器是 model 的父级，反了会让 pixi 拖着半棵子树
+      if (zContainer) {
+        zContainer.removeChild(model)
+        app?.stage.removeChild(zContainer)
+        zContainer.destroy()
+      } else {
+        app?.stage.removeChild(model)
+      }
       model.destroy()
     }
     app?.destroy(true, { children: true })
@@ -2208,6 +2343,10 @@ export function destroy() {
   }
   model = null
   app = null
+  zContainer = null
+  depthMotion = null
+  depthHook = null
+  depthSeq = 0
   mouthHook = null
   redGuard = null
   redIds = []
