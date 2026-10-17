@@ -63,7 +63,7 @@
 
 | ID | 状态与范围 | 完成标准 / 证据 |
 |---|---|---|
-| B01 持久化中断窗口 | 待修 | `main/persist.js` 临时写入后先删原文件再重命名存在中断窗口；flush 失败未可靠上传结果；`ledger-actions.js` 可能继续报成功。注入写失败/中断/重启，证明账本、RAG、年鉴不再召回旧内容 |
+| B01 持久化中断窗口 | ✅ 已完成（2026-10-17） | 三处病灶全修：① `core/persist-io.js` 新纯函数模块（写 tmp→rename 直接替换，失败路径绝不碰原文件）；② `persist.js` 的 `writeJsonSoon`/`flushPersist` 改走原子写，flush 返回 `{ok,written,failed}` 逐文件结果，失败落 `persist-warnings.json` 供下次启动如实提示（`index.js` whenReady 消费）；③ `ledger-actions.js` 的 scrub/correct 检查 flush 结果，失败即抛错、账本状态不动、返回 ok:false。顺带修两个 latent bug：flush 前未 load 会把用户数据覆盖成空（启动即退出即清空）、`agent.js` 退出刷盘静默 ignore。`rag/store-io.js` 的 atomicWrite 同款"先删后 rename"一并换共享实现。测试：`persist-io` 8/8（假 fs 证失败不删原文件）、`persist` 6/6（真临时目录 + 目录占用注入两种写失败）、`ledger-actions-flush` 3/3（mock persist 桩证伪报成功已堵）；相关既有 `ledger`/`ledger-actions` 22/22 无破坏；`npm run build` 退出 0 |
 | B02 提醒/承诺恢复补验 | 待补验 | 双文件存储与启动对账已有实现；补中断点测试、失败/取消/完成证据与重启恢复；恢复不得自动重放已执行的外部操作 |
 
 ## D. 验收项（需真机/环境/用户）

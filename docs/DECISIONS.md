@@ -351,3 +351,18 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
 - **替代**：无。
 
 仅在做出新决策或明确替代旧决策时追加：日期、任务 ID、决定、依据、影响、替代哪条。不要把计划写成成果，也不要在这里记录凭证、私密对话或模型推测的共同经历。普通整理由 WorkBuddy 维护；涉及架构、安全和 Agent 契约的决定属于红区。
+
+## D47（2026-10-17）B01 持久化中断窗口修复：原子替换 + 失败不可静默
+
+- **任务**：B01（安全债/数据一致性）。
+- **决定**：
+  1. 新增 `src/core/persist-io.js` 纯函数模块：`atomicWriteSync` / `atomicWriteJsonSync`（fs 注入可单测）。写盘序列恒为「写 tmp → rename 直接替换」，**任何失败路径都不碰原文件**——失败的结果是"停留在上一版"而不是空。POSIX rename(2) 与 Windows MoveFileExW(MOVEFILE_REPLACE_EXISTING) 本就是单次原子操作，旧实现的"先 unlink 原文件再 rename"纯属自找窗口。
+  2. `persist.js` 的 `writeJsonSoon` 与 `flushPersist` 全部改走该原子写；`flushPersist()` 返回 `{ok, written, failed}` 逐文件结果，**调用方必须检查**（ledger-actions / disposeAgent）。
+  3. 写盘失败落 `userData/persist-warnings.json`（保留最近 20 次），`index.js` whenReady 调 `consumePersistWarnings()` 如实打到日志（一次一提示，读完即清）。沉默的写失败比写失败本身更糟——用户会以为"她已经记住了"。
+  4. `ledger-actions.js` 的 scrub/correct 在 flush 失败时抛错：六个下游清完了却没落盘，绝不能放行 ledger.forget/correct。失败时账本状态保持原样，用户可重试。这堵上 TASKS 里"伪报成功"的口子。
+  5. `rag/store-io.js` 的 atomicWrite 同款"先删后 rename"一并换共享实现（保持"失败抛错"的原语义，调用方依赖异常传播）。
+- **顺带修的两个 latent bug**：① flush 前未 load 就把 `memories || []` 写出去——从未读过 memory 的进程（启动即退出）会把用户的记忆文件覆盖成空；现在 flush 前强制 load 四类状态。② `agent.js` 退出刷盘原来是 try/catch 静默 ignore，改为记录逐文件失败。
+- **依据**：`test/persist-io.test.js` 8/8（假 fs：rename 失败时原文件不被删、tmp 清理、序列无 unlink）；`test/persist.test.js` 6/6（真临时目录 + 把目标/tmp 占成目录的纯 fs 技巧注入两种写失败：原文件一字未动、部分失败不影响其它文件、warnings 生命周期）；`test/ledger-actions-flush.test.js` 3/3（mock persist 桩：flush 失败→ok:false 且账本状态不动；flush 成功→照常放行）；相关既有 `ledger`/`ledger-actions` 22/22 无破坏；`npm run build` 退出 0；全量 **727 项 726 过 / 0 败 / 1 skip**（skip 为无符号链接权限环境项）。
+- **未验证**：真机中断场景（掉电/强杀进程时的 rename 原子性由 OS 保证，未实机演练）；warnings 的用户可见性目前只到 console.error，未做 UI 提示。
+- **影响**：默认行为不变（写盘成功时无任何差异）；失败时的可见性与可恢复性质变。
+- **替代**：无（B01 首次实现）。

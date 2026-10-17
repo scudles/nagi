@@ -47,7 +47,12 @@ function scrub(entry) {
     (entry.source.type.startsWith('memory') && item.id === entry.source.ref))
   for (const item of memory) removeMemory({ id: item.id }, { updateLedger: false })
   loadHistory()
-  flushPersist()
+  // B01：刷盘失败绝不放行——六个下游清完了却没落盘，用户会以为"已忘记"，
+  // 重启后旧内容复活。失败时抛错，账本状态保持原样（forget/correct 还没执行），可重试。
+  const flushed = flushPersist()
+  if (!flushed.ok) {
+    throw new Error(`旧内容未完全落盘（${flushed.failed.map((f) => f.file).join('、')}），请重试；本次清理未生效`)
+  }
   return dropped
 }
 
@@ -99,7 +104,11 @@ export function correctExperience(id, text) {
     getYearbook().pruneSource(id)
     const rag = getRag().ingestFact({ text: body, source: 'user-correction' })
     addMemory(body, { recordLedgerEntry: false })
-    flushPersist()
+    // B01：新记忆没落盘就不许改账本——否则 UI 说"已更正"，重启后纠正内容消失
+    const flushed = flushPersist()
+    if (!flushed.ok) {
+      throw new Error(`新内容未完全落盘（${flushed.failed.map((f) => f.file).join('、')}），请重试；本次更正未生效`)
+    }
     const corrected = ledger.correct(id, body, Date.now(), rag.id ? [rag.id] : [])
     if (!corrected) throw new Error('更正未写入')
     return { ok: true, entry: corrected, indexed: rag.ok }

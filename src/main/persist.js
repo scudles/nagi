@@ -5,12 +5,15 @@
 // 为什么要落盘：之前 history 只活在内存里，重启即清零 —— 每次开机凪都是陌生人，
 // 只能说泛泛的话。记忆同样落盘，跨会话累积，才谈得上"认识你"。
 // 情绪与关系同理：不落盘她就没有连续性（见 core/relation/）。
-// 写入用防抖 + 先写临时文件再改名，避免频繁 IO 与半截文件。
+// 写入用防抖 + 原子替换（写 tmp → rename，B01 修复：旧的"先删原文件再 rename"
+// 在两步之间崩溃会丢光旧数据）。flush 的逐文件结果如实返回，失败绝不静默。
 
 import { app } from 'electron'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs'
+import * as fsApi from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { mergeMemoryEntries } from '../core/memory.js'
+import { atomicWriteJsonSync } from '../core/persist-io.js'
 import { recordLedger, deleteLedgerSource } from './ledger.js'
 
 const usersFile = (name) => join(app.getPath('userData'), name)
@@ -29,7 +32,7 @@ function readJson(file, fallback) {
 
 const pending = new Map() // file -> timeout
 
-/** 防抖落盘（同一文件 400ms 内的多次写合并为一次） */
+/** 防抖落盘（同一文件 400ms 内的多次写合并为一次；原子替换，B01） */
 function writeJsonSoon(file, data, delay = 400) {
   const t = pending.get(file)
   if (t) clearTimeout(t)
@@ -39,14 +42,12 @@ function writeJsonSoon(file, data, delay = 400) {
       pending.delete(file)
       try {
         mkdirSync(app.getPath('userData'), { recursive: true })
-        const tmp = file + '.tmp'
-        writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8')
-        try {
-          if (existsSync(file)) unlinkSync(file)
-        } catch {
-          /* 目标被占用时直接覆盖 */
+        const r = atomicWriteJsonSync(fsApi, file, data)
+        if (!r.ok) {
+          // 不重试入队：数据还在内存里，下次同文件写入会自然再试；
+          // 退出时 flushPersist() 用当前内存兜底。此处如实记录，不装没发生。
+          console.error('[persist] 防抖写入失败', file, r.error)
         }
-        renameSync(tmp, file)
       } catch (err) {
         console.error('[persist] 写入失败', file, err.message)
       }
@@ -54,20 +55,82 @@ function writeJsonSoon(file, data, delay = 400) {
   )
 }
 
-/** 进程退出前强制刷盘（will-quit 调用） */
+/* ---------------- 退出刷盘与失败可见性（B01） ---------------- */
+
+const PERSIST_FILES = ['memory.json', 'history.json', 'mood.json', 'relation.json']
+const WARNINGS_FILE = 'persist-warnings.json'
+const WARNINGS_KEEP = 20
+
+/**
+ * 进程退出前/关键操作后强制刷盘。
+ *
+ * 与旧版的三处差别（B01）：
+ * 1. 走原子替换（写 tmp → rename），不再"先删原文件"——中断窗口关闭；
+ * 2. 刷盘前先 load* 保证内存与磁盘一致——旧版直接写 `memories || []`，
+ *    从未读过 memory 的进程（启动即退出）会把用户的记忆文件覆盖成空；
+ * 3. 返回逐文件结果，失败绝不静默——调用方（ledger-actions / disposeAgent）必须检查。
+ *
+ * @returns {{ok:boolean, written:string[], failed:{file:string,error:string}[]}}
+ */
 export function flushPersist() {
+  const written = []
+  const failed = []
   for (const [, t] of pending) clearTimeout(t)
   pending.clear()
+  // 保证"没读过的文件"不会被当成空写出去（旧版 latent bug：启动即退出即清空）
+  loadMemories()
+  loadHistory()
+  loadMoodState()
+  loadRelationStats()
   try {
     mkdirSync(app.getPath('userData'), { recursive: true })
-    writeFileSync(usersFile('memory.json'), JSON.stringify({ version: 1, entries: memories || [] }, null, 2), 'utf8')
-    writeFileSync(usersFile('history.json'), JSON.stringify({ version: 1, messages: history || [], lastAt }, null, 2), 'utf8')
-    // S4：情绪与关系也必须刷——重启后她要认得自己刚才的心情、记得和你多熟
-    if (moodState) writeFileSync(usersFile('mood.json'), JSON.stringify(moodState, null, 2), 'utf8')
-    if (relationStats) writeFileSync(usersFile('relation.json'), JSON.stringify(relationStats, null, 2), 'utf8')
+    const snapshots = {
+      'memory.json': { version: 1, entries: memories || [] },
+      'history.json': { version: 1, messages: history || [], lastAt },
+      'mood.json': moodState,
+      'relation.json': relationStats
+    }
+    for (const name of PERSIST_FILES) {
+      const data = snapshots[name]
+      if (data == null) continue // mood/relation 从未有过状态：不创建空文件
+      const r = atomicWriteJsonSync(fsApi, usersFile(name), data)
+      if (r.ok) written.push(name)
+      else failed.push({ file: name, error: r.error })
+    }
   } catch (err) {
-    console.error('[persist] 退出刷盘失败', err.message)
+    failed.push({ file: '(目录)', error: err?.message || String(err) })
   }
+  if (failed.length) {
+    console.error('[persist] 刷盘未完全成功', JSON.stringify(failed))
+    writeFlushWarnings(failed)
+  }
+  return { ok: failed.length === 0, written, failed }
+}
+
+/** 把本次写失败落一份"小报告"，下次启动时如实告诉用户（best-effort，写失败只 log） */
+function writeFlushWarnings(failed) {
+  try {
+    const prev = readJson(usersFile(WARNINGS_FILE), { events: [] })
+    const events = Array.isArray(prev?.events) ? prev.events : []
+    events.push({ at: Date.now(), failed })
+    writeFileSync(usersFile(WARNINGS_FILE), JSON.stringify({ events: events.slice(-WARNINGS_KEEP) }), 'utf8')
+  } catch (err) {
+    console.error('[persist] 失败报告落盘失败', err.message)
+  }
+}
+
+/** 启动时取回上次的写失败记录并清空（一次一提示，不复读；没有则返回 []） */
+export function consumePersistWarnings() {
+  const file = usersFile(WARNINGS_FILE)
+  const prev = readJson(file, null)
+  const events = Array.isArray(prev?.events) ? prev.events : []
+  if (!events.length) return []
+  try {
+    if (existsSync(file)) unlinkSync(file)
+  } catch {
+    /* best-effort：清不掉下回还会提示 */
+  }
+  return events
 }
 
 /* ---------------- 长期记忆 ---------------- */

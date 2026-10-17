@@ -5,34 +5,32 @@
 //
 // 刻意不引 electron——目录由调用方注入，这样单测（node --test）和演示脚本
 // 都能拿真实文件系统跑全链路。单例在 index.js 里用 app.getPath('userData') 拼。
-// 原子写照抄 persist.js 的「临时文件 + rename」：半截文件不会被当成有效数据。
+// 原子写走 core/persist-io.js（B01：旧的"先 unlink 原文件再 rename"在两步之间
+// 崩溃会丢光旧数据，已改为直接 rename 替换）。
 
+import * as fsApi from 'node:fs'
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
   appendFileSync,
-  renameSync,
   unlinkSync,
   statSync
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { VectorStore } from '../../core/rag/vector-store.js'
+import { atomicWriteSync } from '../../core/persist-io.js'
 
 const META_VERSION = 1
 
-/** 原子写：临时文件 + rename */
+/** 原子写：临时文件 + rename（失败不碰原文件；纯逻辑见 core/persist-io.js）。
+ *  保持"失败抛错"的原有语义——调用方（load 对齐修复 / writeMeta 等）依赖异常传播。 */
 function atomicWrite(file, buf) {
   mkdirSync(dirname(file), { recursive: true })
-  const tmp = file + '.tmp'
-  writeFileSync(tmp, buf)
-  try {
-    if (existsSync(file)) unlinkSync(file)
-  } catch {
-    /* 目标被占用时直接覆盖 */
-  }
-  renameSync(tmp, file)
+  const r = atomicWriteSync(fsApi, file, buf)
+  if (!r.ok) throw new Error(r.error)
+  return r
 }
 
 function readText(file) {

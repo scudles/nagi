@@ -1065,9 +1065,11 @@ export async function disposeAgent() {
   }
   stopHaSignals()
   try {
-    flushPersist() // 把防抖中的记忆/历史立刻刷盘
-  } catch {
-    /* ignore */
+    // B01：退出刷盘的逐文件结果如实记录——失败绝不静默（warnings 会留给下次启动）
+    const flushed = flushPersist() // 把防抖中的记忆/历史立刻刷盘
+    if (!flushed.ok) console.error('[dispose] 退出刷盘未完全成功', JSON.stringify(flushed.failed))
+  } catch (err) {
+    console.error('[dispose] 退出刷盘异常', err?.message || err)
   }
   flushJournal() // 把防抖中的事件流水立刻刷盘
   try {

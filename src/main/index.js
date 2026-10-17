@@ -31,6 +31,7 @@ import { startGeoMonitor, stopGeoMonitor } from './signals/geo.js'
 import { refreshHaSignals } from './signals/ha.js'
 import { initRag } from './rag/index.js'
 import { migrateLegacyLedger } from './ledger.js'
+import { consumePersistWarnings } from './persist.js'
 import { loadSettings, saveSettings } from './settings-store.js'
 import { disposeAgent, startMoodEngine, startActivityMonitor, startReactionEngine, startReminders, restoreState } from './agent.js'
 import { prewarmVoice, disposeVoice } from './voice/index.js'
@@ -88,6 +89,12 @@ if (!gotLock) {
   app.whenReady().then(() => {
     // 启动标记：先落盘，后面任何一步出问题都还能判断跑的是哪个构建
     writeBootStamp()
+
+    // B01：上次退出时有文件没写成功的话，如实说出来（一次一提示，读完即清）。
+    // 沉默的写失败比写失败本身更糟——用户会以为"她已经记住了"。
+    for (const ev of consumePersistWarnings()) {
+      console.error('[persist] 上次退出时写入未完全成功', JSON.stringify(ev.failed))
+    }
 
     // 协议处理器
     registerHandler(modelsDir)
