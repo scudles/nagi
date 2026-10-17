@@ -34,6 +34,39 @@ test('六情绪方向性：joy 加快上扬、pout 放慢、worry 放慢低沉',
   assert.ok(puzzled.pitch > calm.pitch, 'puzzled 音高应上扬（疑问感）')
 })
 
+// OBS-1 的教训：情绪表曾「方向对但幅度小」，满强度 joy 只比 calm 快 8，
+// 到 0.5 强度只剩 4，真机听上去就是同一张脸。方向性断言抓不到这种退化，
+// 所以这里把「差异下限」也钉住——以后谁再调平，这条会红。
+test('情绪差异下限：任意两情绪至少一轴拉开 ≥5，两极 ≥25，半强度仍听得出', () => {
+  const es = VOICE_PROFILE.emotions
+  const names = Object.keys(es)
+  const axes = ['rate', 'pitch', 'volume']
+  const gap = (a, b) => Math.max(...axes.map((k) => Math.abs((Number(es[a][k]) || 0) - (Number(es[b][k]) || 0))))
+  let minGap = Infinity
+  let worst = ''
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      const g = gap(names[i], names[j])
+      if (g < minGap) { minGap = g; worst = `${names[i]}<->${names[j]}` }
+    }
+  }
+  assert.ok(minGap >= 5, `任意两情绪至少一轴差 >=5，最接近的一对 ${worst} = ${minGap}`)
+
+  // 两极起伏：joy ↔ pout 语速要拉得开（「整体过于含蓄」的定量兜底）
+  const span = Math.abs(es.joy.rate - es.pout.rate)
+  assert.ok(span >= 25, `两极语速差应 >=25，实得 ${span}`)
+
+  // 序关系：高兴往上走、闹别扭往下走，中间不许错位
+  assert.ok(es.joy.rate > es.smile.rate && es.smile.rate > es.calm.rate, 'joy > smile > calm（语速）')
+  assert.ok(es.pout.rate < es.worry.rate && es.worry.rate < es.calm.rate, 'pout < worry < calm（语速）')
+
+  // 半强度仍要听得出：取整后不能塌成 0（这是旧表最致命的一点）
+  const halfJoy = call({ emotion: 'joy', intensity: 0.5, engine: 'edge' })
+  assert.ok(halfJoy.rate - edgeBase.rate > 4, `半强度 joy 语速差应 >4，实得 ${halfJoy.rate - edgeBase.rate}`)
+  const halfWorry = call({ emotion: 'worry', intensity: 0.5, engine: 'edge' })
+  assert.ok(edgeBase.rate - halfWorry.rate > 4, `半强度 worry 语速差应 >4，实得 ${edgeBase.rate - halfWorry.rate}`)
+})
+
 test('强度调制：幅度随 intensity 单调放大，0 强度等于基准', () => {
   const base = call({ emotion: 'calm', intensity: 0, engine: 'edge' })
   assert.deepEqual(base, { voice: '', ...edgeBase })
@@ -166,13 +199,13 @@ test('扩展：install 注册 provider，折叠用户设置，可注销', () => 
   const stop = ext.install(api)
   assert.equal(typeof api.registered, 'function')
   const r = api.registered({ emotion: 'joy', intensity: 1, rhythm: null, toneTag: null, engine: 'edge' })
-  // edge 基准 -10 + 用户 5 + joy 8 = 3；pitch -2 + 4 = 2；音量 60 + 2 = 62
-  assert.deepEqual(r, { voice: '', rate: 3, pitch: 2, volume: 62 })
+  // edge 基准 -10 + 用户 5 + joy 16 = 11；pitch -2 + 10 = 8；音量 60 + 3 = 63
+  assert.deepEqual(r, { voice: '', rate: 11, pitch: 8, volume: 63 })
   // 设置切换即时生效（下一次调用即读新值）
   extSettings = { voice: { rate: -5, volume: 100 } }
   const r2 = api.registered({ emotion: 'joy', intensity: 1, rhythm: null, toneTag: null, engine: 'edge' })
-  // rate：-10 - 5 + 8 = -7；pitch：-2 + 4 = 2；音量：100 + 2 触顶夹回 100
-  assert.deepEqual(r2, { voice: '', rate: -7, pitch: 2, volume: 100 })
+  // rate：-10 - 5 + 16 = 1；pitch：-2 + 10 = 8；音量：100 + 3 触顶夹回 100
+  assert.deepEqual(r2, { voice: '', rate: 1, pitch: 8, volume: 100 })
   // 未知引擎 → null，编排层安全回退
   assert.equal(api.registered({ emotion: 'joy', intensity: 1, engine: 'nope' }), null)
   stop()
