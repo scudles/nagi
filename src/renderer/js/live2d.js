@@ -28,7 +28,7 @@ import {
   slotsParams
 } from '../../core/outfit.js'
 import { microEnvelope, parseMicroExpr } from '../../core/microexpr.js'
-import { DEFAULT_DEPTH_CONFIG, createDepthMotion } from '../../core/presence/depth-motion.js'
+import { DEFAULT_DEPTH_CONFIG, DEPTH_PIVOT_FY, createDepthMotion } from '../../core/presence/depth-motion.js'
 import { TURN_KIND, createTurnController, directionFrom, describeTurn } from '../../core/face/turn.js'
 import { createBlinkScheduler } from '../../core/face/blink.js'
 import { createEyeWander } from '../../core/face/eye.js'
@@ -48,6 +48,8 @@ import {
 let app = null
 let model = null
 let baseScale = 1
+/** 当前取景带（layout 时写入）：Z 轴缩放支点要按它算，bust / full 的带底不同 */
+let curBand = null
 let userScale = 1
 let mirrorOn = false
 let disposed = false
@@ -665,6 +667,7 @@ export function layout(scale = userScale, mirror = mirrorOn, frame = frameMode) 
   const fit = fitBand({ band, boxW: width, boxH: height, scale: userScale, pad: readPads(), standard: standardBoxFor(frameMode) })
 
   baseScale = fit.scale
+  curBand = band // Z 轴支点要按当前取景带算（bust / full 的带底不同）
   model.anchor.set(0.5, fit.anchorY)
   model.x = fit.x
   model.y = fit.y
@@ -1799,14 +1802,22 @@ function ensureDepthHook() {
         /* 模型没这个参数 */
       }
     }
-    // 容器层：绝对定位（不是增量），绕模型锚点做缩放/位移
+    // 容器层：绝对定位（不是增量），绕**颈肩支点**做缩放/位移。
+    // 支点 = 模型锚点（取景带底边）上方 (band.bottom − DEPTH_PIVOT_FY) 的位置：
+    // 缩放时肩膀几乎不动、头往前长 —— 读作"探头"；绕锚点（肚脐）缩放则是整片均匀
+    // 放大往上飘，读作"整体前后移动"（2026-10-17 用户指出后改掉）。
     const px = model.x
     const py = model.y
-    zContainer.pivot.set(px, py)
+    // ⚠ 取景带对象只有 anchorY（= 带的下边界 fy），**没有 bottom**——写成 bottom 会得到
+    // undefined → 支点变 NaN → 模型整片消失（2026-10-17 实测：快照全空才发现的）。
+    const bandBottom = curBand ? Number(curBand.anchorY) : NaN
+    const off = Number.isFinite(bandBottom) ? (bandBottom - DEPTH_PIVOT_FY) * baseH * baseScale : 0
+    zContainer.pivot.set(px, py - off)
     zContainer.position.set(px + out.transform.dx, py + out.transform.dy)
     zContainer.scale.set(out.transform.scale)
     // 验收用：真正写进去的值。判"Z 动作有没有生效"要读这个，不能拿画面差分
     // （头发物理余震会把"已经收回"算成"还在动"，2026-10-17 verify:turns 踩过）
+    const bandPx = curBand ? curBand.h * baseScale : 0
     window.__depthLast = {
       seq: ++depthSeq,
       mode: out.mode,
@@ -1814,7 +1825,16 @@ function ensureDepthHook() {
       ambientEnv: out.ambientEnv,
       transform: out.transform,
       params: out.params,
-      container: { x: zContainer.x, y: zContainer.y, scaleX: zContainer.scale.x, scaleY: zContainer.scale.y }
+      container: {
+        x: zContainer.x, y: zContainer.y, scaleX: zContainer.scale.x, scaleY: zContainer.scale.y,
+        pivotY: py - off,
+        anchorY: py,
+        bandPx,
+        // 支点在取景带里的相对高度（0 = 带底/肚脐线，1 = 带顶）。bust 取景下应 ≈0.54
+        // （颈肩线 fy 0.23、带底 0.48、带高 0.465 → (0.48−0.23)/0.465）。
+        // 旧实现是 0（支点在肚脐）→ 整体缩放，读作"整体前后移动"。
+        pivotFracUp: bandPx > 0 ? off / bandPx : null
+      }
     }
   }
   model.internalModel.on('beforeModelUpdate', depthHook)

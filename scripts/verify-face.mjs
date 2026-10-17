@@ -181,6 +181,13 @@ try {
   // 冻住情绪广播：主进程 15 秒一次的心跳会把下面注入的强度覆盖回"真实情绪"，
   // 表现就是同样的用例一次过、一次不过（踩过）
   await page.evaluate(() => window.__nagiFreezeMood?.(true))
+  // 画面差分类的判据（B/C/E）要先按住两层"与脸无关、但每帧都在动"的东西，
+  // 否则基线随相位随机漂移，同一个用例两次跑结论不一样（2026-10-17 踩过两次）：
+  //   ① Z 轴常驻摆动（B 组新增：±2.5% 缩放 + 上下 3px + 身体微摆）——整只模型都在动；
+  //   ② 五官微动 tremor——它是"脸"的一部分，但量的是"强度层次"，不该被它糊住
+  //      （D 项会单独把 tremor 打开来量它自己）。
+  await page.evaluate(() => window.__nagiDepthConfig?.({ ambient: false }))
+  await page.evaluate(() => window.__nagiSetTremor?.(0))
   await sleep(800)
 
   /* --- B. 强度连续：三档强度必须是三张脸 --- */
@@ -191,11 +198,13 @@ try {
     ['high', 0.85]
   ]) {
     await page.evaluate((v) => window.__nagiEmotionIntensity('joy', v), i)
-    // 轮询到缓动真的到位（Joy 的笑眼目标 = 0.95 × intensity），比死等 1.1 秒准
-    const want = 0.95 * i
+    // 轮询到缓动真的到位。目标值**从配置读**（D40：期望值与配置同源的必须实读）——
+    // 写死 0.95×i 会在 C 组把 joy 笑眼调到 1.0 之后永不收敛（踩过）。
+    // ⚠ emotionTarget 已经是 scaleMuscles(vec, intensity) 的结果，**不要再乘 intensity**。
     for (let k = 0; k < 30; k++) {
+      const w = await page.evaluate(() => window.__nagiFaceState()?.emotionTarget?.ParamEyeLSmile ?? 0)
       const cur = await page.evaluate(() => window.__nagiFaceState()?.emotionCurrent?.ParamEyeLSmile ?? 0)
-      if (Math.abs(cur - want) < 0.04) break
+      if (Math.abs(cur - w) < 0.04) break
       await sleep(70)
     }
     faces[tag] = await page.evaluate(() => window.__shotBlocks())
@@ -316,11 +325,17 @@ try {
   const blink = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     const before = window.__nagiBlinkState()?.count ?? 0
+    // 两路证据，缺一不可：
+    //   wroteMin —— 抽样"真正写进模型的眼开系数"（闭合段只有 120ms，40ms 一轮才捞得到）
+    //   statsMin —— 调度器自己记的最小值（blink.js 的 stats().minF，不受采样窗口影响）
     let minF = 1
-    for (let i = 0; i < 70; i++) {
-      await wait(100) // 一共 7 秒，按平均 4 秒一次应当至少眨一下
+    let statsMin = 1
+    for (let i = 0; i < 175; i++) {
+      await wait(40)
       const w = window.__blinkLastWritten
       if (w && w.f < minF) minF = w.f
+      const st = window.__nagiBlinkState()?.minF
+      if (typeof st === 'number' && st < statsMin) statsMin = st
     }
     const after = window.__nagiBlinkState()?.count ?? 0
     // 关掉之后不该再眨（证明开关有效，也排除"别的层在动眼睑"）
@@ -329,13 +344,17 @@ try {
     await wait(2600)
     const offEnd = window.__nagiBlinkState()?.count ?? 0
     window.__nagiSetBlink(1)
-    return { before, after, minF, offAt, offEnd }
+    return { before, after, minF, statsMin, offAt, offEnd }
   })
+  // ★幅度下限（只验方向等于没验，2026-10-17 教训）：
+  //   ① 调度器记的最小值必须真的到 0（配置 minClose=0，不是半闭）；
+  //   ② 抽样也要能捞到"明显闭下去"的一帧（证明这个值是写进模型的，不只是算出来）。
   check(
-    'G. 真的会眨眼（此前因框架跳过而完全不眨）',
-    blink.after > blink.before && blink.minF <= 0.25,
-    `7 秒内眨了 ${blink.after - blink.before} 次，闭到最小时眼开系数 ${blink.minF.toFixed(2)}` +
-      `（1 = 全睁）；关掉后 2.6 秒内 ${blink.offEnd - blink.offAt} 次`
+    'G2. 眨眼幅度下限：闭合最小值必须真的接近 0（闭到底，不是半闭）',
+    blink.after > blink.before && blink.statsMin <= 0.05 && blink.minF <= 0.2,
+    `7 秒内眨了 ${blink.after - blink.before} 次；调度器最小值 ${blink.statsMin.toFixed(3)}` +
+      `（1 = 全睁，配置 minClose=0 → 应 ≈0），抽样捞到的最闭一帧 ${blink.minF.toFixed(3)}` +
+      `；关掉后 2.6 秒内 ${blink.offEnd - blink.offAt} 次`
   )
 
   /* --- H. 眼球能自己移动（不再只跟着头） ---
@@ -389,6 +408,9 @@ try {
   info('情绪 → 表情解析', JSON.stringify(resolved))
 
   /* --- I. 睁眼幅度随情绪变化（不是只有眨眼在动眼睑） --- */
+  // 主进程每 15 秒广播一次真实情绪，会把下面注入的情绪覆盖回 calm。
+  // 只要心跳恰好落在 1.3 秒的等待里，四个值就全读成 1.00（踩过：一次过一次不过）。
+  await page.evaluate(() => window.__nagiFreezeMood?.(true))
   const eyeOpen = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     window.__nagiSetEyeWander?.(0) // 让眼球位置别干扰眼睛大小的读数

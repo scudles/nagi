@@ -4,8 +4,9 @@
 // 验的不是"状态机里算对了"（那是 test/depth-motion.test.js 的职责），而是**渲染层
 // 真的把它落到了模型上**：
 //   ① 三段轨迹（淡入/保持/淡出）时长与包络，峰值位移/缩放命中设计值；
-//   ② 容器层 scaleX === scaleY（等比，不拉伸变形），且位移/缩放绕模型锚点
-//      （取景带底边 = 肚脐线）——像素包围盒增高 ≥5%、底边基本不动；
+//   ② 容器层 scaleX === scaleY（等比，不拉伸变形），且缩放绕**颈肩支点**
+//      （DEPTH_PIVOT_FY = 0.23）——像素包围盒增高 ≥4%、头顶不飞出画面、
+//      躯干下缘被推出取景带（绕颈肩放大的必然结果）；
 //   ③ 角度增量真的写进了模型参数：读**帧末最终值**（probePoseOnce 式注册在最后的
 //      探针），不是读 __depthLast 的意图值——2026-10-17 实测教训：beforeModelUpdate
 //      的监听器按**注册顺序**执行（eventemitter3 FIFO），转向层 turnHook 对
@@ -194,6 +195,7 @@ function peakWithArtBox(page, minEnv = 0.98, timeoutMs = 4500) {
               params: d.params,
               sx: d.container.scaleX,
               sy: d.container.scaleY,
+              container: d.container,
               box
             })
             return
@@ -315,6 +317,7 @@ async function main() {
     if (okTrace) {
       const peakEnv = Math.max(...trace.map((s) => s.env))
       const peakScale = Math.max(...trace.map((s) => s.scale))
+      const maxDy = Math.max(...trace.map((s) => s.dy))
       const minDy = Math.min(...trace.map((s) => s.dy))
       const t95 = trace.find((s) => s.env >= 0.95)?.t ?? null
       const last = trace[trace.length - 1]
@@ -335,14 +338,15 @@ async function main() {
       check('leanIn 淡入约 420ms 到 95%', t95 !== null && t95 >= 200 && t95 <= 620, `t(env≥0.95)=${t95?.toFixed(0)}ms`)
       check('leanIn 保持段env≈1（420ms 与 1000ms 都在高位）', envAt(trace, 400) >= 0.99 && envAt(trace, 1000) >= 0.95, `env@400=${envAt(trace, 400).toFixed(3)} env@1000=${envAt(trace, 1000).toFixed(3)}`)
       check('leanIn 淡出在约 1440ms 内收干净并回到恒等', envAt(trace, 1550) <= 0.1 && last.mode === 'idle' && Math.abs(last.scale - 1) < 1e-9 && last.dy === 0, `env@1550=${envAt(trace, 1550).toFixed(4)} mode=${last.mode} scale=${last.scale}`)
-      check('leanIn 峰值缩放 ≥1.055（设计 1.06，明显可感知）', peakScale >= 1.055 && peakScale <= 1.062, `scalePeak=${peakScale.toFixed(4)}`)
-      check('leanIn 峰值上移 ≤−5.5px（设计 −6）', minDy <= -5.5 && minDy >= -6.5, `dyMin=${minDy.toFixed(2)}`)
+      check('leanIn 峰值缩放 ≥1.04（设计 1.045，明显可感知）', peakScale >= 1.04 && peakScale <= 1.048, `scalePeak=${peakScale.toFixed(4)}`)
+      check('leanIn 峰值下移 ≥6.5px（设计 +7；前倾是往下凑，不是往上飘）', maxDy >= 6.5 && maxDy <= 7.5, `dyMax=${maxDy.toFixed(2)}`)
       check('容器层全程 scaleX === scaleY（等比，不拉伸变形）', equalRatio)
       check('无跳帧：位移/缩放每毫秒变化率有界（无瞬移）', maxScaleRate <= 1e-3 && maxDyRate <= 0.2, `scaleRate≤${maxScaleRate.toExponential(2)}/ms dyRate≤${maxDyRate.toExponential(2)}/ms`)
       check('seq 单调递增且无数值异常', seqMono && noNaN)
     }
 
-    /* ⑤ peek 峰值 + 像素包围盒：绕锚点（肚脐线）放大 → 增高、底边基本不动、比例不变
+    /* ⑤ peek 峰值 + 像素包围盒：绕**颈肩支点**放大 → 头在长大、头顶不飞出画面、
+     * 躯干下缘被推出取景带（正常裁剪）；比例不变（等比，不拉伸）。
      * ⚠ measureArtBox 的 w/h 是**画布**尺寸；盒子尺寸要自己用 (x1-x0)/(y1-y0) 算。 */
     await page.evaluate(() => window.__nagiDepth('peek'))
     const pk = await peakWithArtBox(page, 0.98)
@@ -358,46 +362,53 @@ async function main() {
       const aspectBase = b0.w / b0.h
       const aspectPeak = b1.w / b1.h
       const dBottom = pk.box.y1 - base.y1
+      const dTop = pk.box.y0 - base.y0
       const inside = pk.box.x0 >= -1 && pk.box.y0 >= -1 && pk.box.x1 <= pk.box.w + 1 && pk.box.y1 <= pk.box.h + 1
-      const scaleOk = Math.abs(pk.scale - (1 + 0.1 * pkEnv)) <= 0.002 && 1 + 0.1 * pkEnv >= 1.098
-      const dyOk = Math.abs(pk.dy + 10 * pkEnv) <= 0.2
-      check('peek 峰值包围盒增高 ≥5%（设计放大 10%）', hRatio >= 1.05, `${(hRatio * 100 - 100).toFixed(1)}%（${b0.h}→${b1.h}px）`)
-      check('peek 峰值包围盒等比例增宽（同倍率，不只有纵向）', wRatio >= 1.05, `${(wRatio * 100 - 100).toFixed(1)}%`)
-      // 次要证据：容器层 scaleX===scaleY 已精确证明不拉伸；像素长宽比允许 silhouette
-      // 绕锚点不对称 + dy 位移带来的少量变化（实测约 1.7%）
-      check('peek 峰值长宽比基本不变（不拉伸变形）', Math.abs(aspectPeak / aspectBase - 1) <= 0.03, `${aspectBase.toFixed(4)} → ${aspectPeak.toFixed(4)}`)
-      check('peek 峰值底边（肚脐线）基本不动（|Δ|≤14px，位移只来自 dy）', Math.abs(dBottom) <= 14, `Δbottom=${dBottom.toFixed(1)}px（dy=${pk.dy.toFixed(1)}）`)
+      // 设计公式（2026-10-17 姿态版）：scale = 1 + 0.06·env，dy = +12·env（正 = 下移）
+      const scaleOk = Math.abs(pk.scale - (1 + 0.06 * pkEnv)) <= 0.002 && 1 + 0.06 * pkEnv >= 1.058
+      const dyOk = Math.abs(pk.dy - 12 * pkEnv) <= 0.2
+      // 长宽比/增高/增宽这三条**撤掉**：本验收窗里角色下缘本来就被画布底边裁掉
+      // （基线盒子下边恒为 599 = 画布底），"放大 + 下移"只会让可见部分变小，
+      // 旧版那三条其实是被"上移把头顶顶上去"撑出来的假证据（D40：验收脚本自己会烂）。
+      // 改用两条不受裁剪影响的判据：① 头顶位移 ② 支点位置（几何量）。
+      check('peek 峰值头顶不飞出画面（|Δtop| ≤14px：头是往前探，不是往上顶）', Math.abs(dTop) <= 14, `Δtop=${dTop.toFixed(1)}px`)
+      // ★姿态方案的核心判据：支点必须在颈肩（取景带约 54% 高处），不是肚脐（0）
+      const pf = pk.container?.pivotFracUp
+      check(
+        'peek 缩放支点落在颈肩（取景带 45%~62% 高处；0 = 肚脐＝旧的整体前后移动）',
+        typeof pf === 'number' && pf >= 0.45 && pf <= 0.62,
+        `pivotFracUp=${pf?.toFixed(3)}（pivotY=${pk.container?.pivotY?.toFixed(1)} anchorY=${pk.container?.anchorY?.toFixed(1)} bandPx=${pk.container?.bandPx?.toFixed(1)}）`
+      )
       check('peek 峰值整体仍在画布内（不越界盖 UI）', inside, `art [${pk.box.x0},${pk.box.y0}]~[${pk.box.x1},${pk.box.y1}] / ${pk.box.w}×${pk.box.h}`)
-      check('peek 参数：抬头凑近（ParamAngleX ≤−5.5，负=靠近，实测约定）', (pk.params.ParamAngleX ?? 0) <= -5.5, `ParamAngleX=${pk.params.ParamAngleX}`)
-      check('peek 参数：侧头幅度 |ParamAngleY| ≥3.5（左右复合）', Math.abs(pk.params.ParamAngleY ?? 0) >= 3.5, `ParamAngleY=${pk.params.ParamAngleY}`)
-      check('peek 峰值缩放/上移命中设计公式（1+0.10·env / −10·env）', scaleOk && dyOk, `scale=${pk.scale.toFixed(4)}（期望 ${(1 + 0.1 * pkEnv).toFixed(4)}）dy=${pk.dy.toFixed(2)}（期望 ${(-10 * pkEnv).toFixed(2)}）`)
+      check('peek 参数：躯干压缩前倾（ParamBodyAngleY ≤−2.8，负=压缩+头下探，实测约定）', (pk.params.ParamBodyAngleY ?? 0) <= -2.8, `ParamBodyAngleY=${pk.params.ParamBodyAngleY}`)
+      check('peek 参数：歪头幅度 |ParamAngleZ| ≥2.8（左右复合）', Math.abs(pk.params.ParamAngleZ ?? 0) >= 2.8, `ParamAngleZ=${pk.params.ParamAngleZ}`)
+      check('peek 峰值缩放/下移命中设计公式（1+0.06·env / +12·env）', scaleOk && dyOk, `scale=${pk.scale.toFixed(4)}（期望 ${(1 + 0.06 * pkEnv).toFixed(4)}）dy=${pk.dy.toFixed(2)}（期望 ${(12 * pkEnv).toFixed(2)}）`)
       await saveSnap(page, 'peek-peak')
     }
     await waitIdle(page)
 
-    /* ⑥ leanBack 反向：缩小 + 下沉 + 角度为正（远离屏幕）
+    /* ⑥ leanBack 反向：缩小 + 上移 + 躯干伸展（远离）
      * 同样按采样时的 env 折算设计值（峰值采样常落在 env≈0.98 的上升沿）。 */
     await page.evaluate(() => window.__nagiDepth('leanBack'))
     const lbPeak = await peakOnly(page, 0.98)
     const lbEnv = lbPeak?.env ?? 0
     check(
-      'leanBack 反向：缩小/下沉命中设计公式（1−0.05·env / +10·env），角度为正（远离）',
+      'leanBack 反向：缩小/上移命中设计公式（1−0.035·env / −5·env），躯干伸展为正',
       !!lbPeak &&
         lbEnv >= 0.98 &&
-        Math.abs(lbPeak.scale - (1 - 0.05 * lbEnv)) <= 0.002 &&
-        1 - 0.05 * lbEnv <= 0.951 &&
-        Math.abs(lbPeak.dy - 10 * lbEnv) <= 0.2 &&
-        (lbPeak.params.ParamBodyAngleX ?? 0) > 0 &&
-        (lbPeak.params.ParamAngleX ?? 0) > 0,
+        Math.abs(lbPeak.scale - (1 - 0.035 * lbEnv)) <= 0.002 &&
+        1 - 0.035 * lbEnv <= 0.966 &&
+        Math.abs(lbPeak.dy + 5 * lbEnv) <= 0.2 &&
+        (lbPeak.params.ParamBodyAngleY ?? 0) > 0,
       lbPeak
-        ? `env=${lbEnv.toFixed(3)} scale=${lbPeak.scale.toFixed(4)}（期望 ${(1 - 0.05 * lbEnv).toFixed(4)}）dy=${lbPeak.dy.toFixed(2)}（期望 ${(10 * lbEnv).toFixed(2)}）BodyAngleX=${lbPeak.params.ParamBodyAngleX?.toFixed(2)} AngleX=${lbPeak.params.ParamAngleX?.toFixed(2)}`
+        ? `env=${lbEnv.toFixed(3)} scale=${lbPeak.scale.toFixed(4)}（期望 ${(1 - 0.035 * lbEnv).toFixed(4)}）dy=${lbPeak.dy.toFixed(2)}（期望 ${(-5 * lbEnv).toFixed(2)}）BodyAngleY=${lbPeak.params.ParamBodyAngleY?.toFixed(2)}`
         : 'null'
     )
     const lbIdle = await waitIdle(page)
     const lbLast = await page.evaluate(() => window.__depthLast)
     check('leanBack 收干净后回到恒等', lbIdle.mode === 'idle' && Math.abs(lbLast.transform.scale - 1) < 1e-9 && lbLast.transform.dy === 0, `mode=${lbIdle.mode}`)
 
-    /* ⑦ 幅度滑杆线性：0.5 → 1.03；2 → 1.12（各触发一次取峰值）
+    /* ⑦ 幅度滑杆线性：0.5 → 1.022；2 → 1.09（各触发一次取峰值）
      * 注意 configureDepth 是「缺省项回默认」的合并——只传 amount 会把 ambient/auto
      * 弹回开启，峰值里就混进常态摆动，所以每一条都显式关回去。 */
     const half = await page.evaluate(async () => {
@@ -412,9 +423,9 @@ async function main() {
       return null
     })
     check(
-      'amount=0.5 峰值缩放 ≈1.03（线性减半，按采样 env 折算）',
-      !!half && half.amount === 0.5 && Math.abs(half.scale - (1 + 0.06 * 0.5 * half.env)) <= 0.002 && 1 + 0.06 * 0.5 * half.env >= 1.029,
-      half ? `env=${half.env.toFixed(3)} scale=${half.scale.toFixed(4)}（期望 ${(1 + 0.03 * half.env).toFixed(4)}）amount=${half.amount}` : 'null'
+      'amount=0.5 峰值缩放 ≈1.022（线性减半，按采样 env 折算）',
+      !!half && half.amount === 0.5 && Math.abs(half.scale - (1 + 0.045 * 0.5 * half.env)) <= 0.002 && 1 + 0.045 * 0.5 * half.env >= 1.021,
+      half ? `env=${half.env.toFixed(3)} scale=${half.scale.toFixed(4)}（期望 ${(1 + 0.0225 * half.env).toFixed(4)}）amount=${half.amount}` : 'null'
     )
     await waitIdle(page)
     const dbl = await page.evaluate(async () => {
@@ -429,9 +440,9 @@ async function main() {
       return null
     })
     check(
-      'amount=2 峰值缩放 ≈1.12（线性翻倍，仍 ≤10% 动作 + 上限内）',
-      !!dbl && dbl.amount === 2 && Math.abs(dbl.scale - (1 + 0.06 * 2 * dbl.env)) <= 0.002 && 1 + 0.06 * 2 * dbl.env >= 1.117,
-      dbl ? `env=${dbl.env.toFixed(3)} scale=${dbl.scale.toFixed(4)}（期望 ${(1 + 0.12 * dbl.env).toFixed(4)}）amount=${dbl.amount}` : 'null'
+      'amount=2 峰值缩放 ≈1.09（线性翻倍，仍 ≤6% 动作 + 上限内）',
+      !!dbl && dbl.amount === 2 && Math.abs(dbl.scale - (1 + 0.045 * 2 * dbl.env)) <= 0.002 && 1 + 0.045 * 2 * dbl.env >= 1.088,
+      dbl ? `env=${dbl.env.toFixed(3)} scale=${dbl.scale.toFixed(4)}（期望 ${(1 + 0.09 * dbl.env).toFixed(4)}）amount=${dbl.amount}` : 'null'
     )
     await page.evaluate(() => window.__nagiDepthConfig({ amount: 1, ambient: false, auto: false }))
     await waitIdle(page)
@@ -466,7 +477,7 @@ async function main() {
     const offLast = off.samples[off.samples.length - 1]
     check(
       '关开关后平滑收回：确实从峰值下手、约 420ms 内归零、最终恒等、无跳变',
-      off.atPeak >= 1.05 && off.state.enabled === false && offLast.env <= 0.05 && Math.abs(offLast.scale - 1) < 1e-9 && offLast.dy === 0 && maxRateOff <= 1e-3,
+      off.atPeak >= 1.04 && off.state.enabled === false && offLast.env <= 0.05 && Math.abs(offLast.scale - 1) < 1e-9 && offLast.dy === 0 && maxRateOff <= 1e-3,
       `atPeak=${off.atPeak?.toFixed(4)} endScale=${offLast.scale.toFixed(6)} endEnv=${offLast.env.toFixed(4)} rate≤${maxRateOff.toExponential(2)}/ms`
     )
     await page.evaluate(() => window.__nagiDepthConfig({ enabled: true, ambient: false, auto: false }))
@@ -483,7 +494,7 @@ async function main() {
           const d = window.__depthLast
           if (d && d.seq !== lastSeq) {
             lastSeq = d.seq
-            out.push({ t: performance.now() - t0, yaw: d.params.ParamBodyAngleY ?? 0, roll: d.params.ParamAngleZ ?? 0, scale: d.transform.scale, dy: d.transform.dy })
+            out.push({ t: performance.now() - t0, yaw: d.params.ParamBodyAngleX ?? 0, roll: d.params.ParamAngleZ ?? 0, scale: d.transform.scale, dy: d.transform.dy })
           }
           if (performance.now() - t0 < 3000) requestAnimationFrame(tick)
           else resolve()
@@ -497,11 +508,16 @@ async function main() {
     const depthPeak = Math.max(...amb.map((s) => Math.abs(s.scale - 1)))
     const tYaw = amb.reduce((a, b) => (Math.abs(b.yaw) > Math.abs(a.yaw) ? b : a)).t
     const tDepth = amb.reduce((a, b) => (Math.abs(b.scale - 1) > Math.abs(a.scale - 1) ? b : a)).t
+    // ⚠ 取样窗口（3s）跨了 1.25 个周期，"全局最大"可能挑到隔一个周期的那个峰
+    // （实测得到 1801ms = 2400−600）。相位差要按周期取模：1/4 周期偏移在 |Δt| 上
+    // 表现为 600 或 1800，取 min(|Δ|, 周期−|Δ|) 两者都归一到 600。
     const phaseGap = Math.abs(tYaw - tDepth)
-    check('常态摆动：身体左右转幅度到位（|ParamBodyAngleY| ≥6，设计 7）', yawPeak >= 6, `yawPeak=${yawPeak.toFixed(2)}°`)
+    const phaseGapMod = Math.min(phaseGap, 2400 - phaseGap)
+    // 左右摆改用 ParamBodyAngleX（实测它才是横移的那个；旧代码用 Y，等于没转身）
+    check('常态摆动：身体左右摆幅度到位（|ParamBodyAngleX| ≥4.5，设计 5）', yawPeak >= 4.5, `yawPeak=${yawPeak.toFixed(2)}°`)
     check('常态摆动：歪头幅度到位（|ParamAngleZ| ≥2.5，设计 3）', rollPeak >= 2.5, `rollPeak=${rollPeak.toFixed(2)}°`)
-    check('常态摆动：前后分量到位（|scale−1| ≥0.025，设计 0.03）', depthPeak >= 0.025, `depthPeak=${(depthPeak * 100).toFixed(2)}%`)
-    check('常态摆动是**复合**的：yaw 极值与前后极值相位差 ≈1/4 周期（600ms）', phaseGap >= 350 && phaseGap <= 850, `Δt=${phaseGap.toFixed(0)}ms（周期 2400ms）`)
+    check('常态摆动：前后分量到位（|scale−1| ≥0.02，设计 0.025）', depthPeak >= 0.02, `depthPeak=${(depthPeak * 100).toFixed(2)}%`)
+    check('常态摆动是**复合**的：yaw 极值与前后极值相位差 ≈1/4 周期（600ms）', phaseGapMod >= 350 && phaseGapMod <= 850, `Δt=${phaseGapMod.toFixed(0)}ms（原始 ${phaseGap.toFixed(0)}ms，周期 2400ms）`)
     await page.evaluate(() => window.__nagiDepthConfig({ ambient: false, auto: false }))
 
     /* ⑩ 回归：转向层 set 绝对值不许盖掉 depth 的角度增量（2026-10-17 实测踩过）
@@ -524,24 +540,20 @@ async function main() {
         const d = window.__depthLast
         const tw = window.__turnLastWritten
         if (d && d.env >= 0.9 && tw && tw.w >= 0.3) {
-          const real = await window.__nagiPoseParams(['ParamAngleX', 'ParamBodyAngleX'])
+          const real = await window.__nagiPoseParams(['ParamBodyAngleY', 'ParamAngleZ'])
           return { depthOk, turnOk: turn?.ok === true, real, tw, env: d.env, depthParams: d.params }
         }
         await new Promise((r) => requestAnimationFrame(r))
       }
       return { depthOk, turnOk: turn?.ok === true, real: null, tw: window.__turnLastWritten || null }
     })
-    const dAngle = reg.real && reg.tw ? reg.real.ParamAngleX - reg.tw.x : null
-    const dBody = reg.real && reg.tw ? reg.real.ParamBodyAngleX - reg.tw.body : null
+    // turn 写 ParamBodyAngleY = body × 0.6（见 live2d.js 1493 行），净贡献 = 帧末 − 那个值
+    const dBodyY = reg.real && reg.tw ? reg.real.ParamBodyAngleY - reg.tw.body * 0.6 : null
+    const wantBodyY = (reg.depthParams?.ParamBodyAngleY ?? 0) * (reg.env ?? 0)
     check(
-      '回归：转向进行中 peek 的抬头增量仍在帧末值里（净贡献 ≈−6°，修复前被 set 盖成 0）',
-      reg.depthOk === true && reg.turnOk === true && dAngle !== null && dAngle <= -4 && dAngle >= -8,
-      `ΔAngleX=${dAngle?.toFixed(2)}°（turn 写 ${reg.tw?.x?.toFixed(2)}°，帧末 ${reg.real?.ParamAngleX?.toFixed(2)}°，peek 意图 ${reg.depthParams?.ParamAngleX}）`
-    )
-    check(
-      '回归：转向进行中 peek 的身体前倾增量仍在（净贡献 ≈−1.5°）',
-      dBody !== null && dBody <= -0.8 && dBody >= -3,
-      `ΔBodyAngleX=${dBody?.toFixed(2)}°（turn 写 ${reg.tw?.body?.toFixed(2)}°，帧末 ${reg.real?.ParamBodyAngleX?.toFixed(2)}°）`
+      '回归：转向进行中 peek 的躯干压缩增量仍在帧末值里（净贡献 ≈−3°，修复前被 set 盖成 0）',
+      reg.depthOk === true && reg.turnOk === true && dBodyY !== null && dBodyY <= -2.2 && dBodyY >= -4,
+      `ΔBodyAngleY=${dBodyY?.toFixed(2)}°（turn 写 ${(reg.tw?.body * 0.6)?.toFixed(2)}°，帧末 ${reg.real?.ParamBodyAngleY?.toFixed(2)}°，peek 意图 ${wantBodyY?.toFixed(2)}°）`
     )
     await page.evaluate(() => window.__nagiSetIdleHead(1)) // 恢复摆头
     await waitIdle(page)

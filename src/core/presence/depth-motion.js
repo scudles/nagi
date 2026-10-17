@@ -7,15 +7,34 @@
 // 于是"位移/缩放/旋转的取值范围、过渡时长、有无跳帧"全部可以单测钉死。
 // 渲染层（live2d.js）每帧调 update(now)，拿到两样东西分别落到两层：
 //   · transform { scale, dx, dy } —— 套在模型外面的那一层容器（pixi Container）。
-//     缩放/位移都绕**模型锚点**（取景带底边 = 肚脐线）进行，所以"探头"是头部长大靠近，
-//     不是整张图乱飘；容器层绝不设 rotation（旋转走模型参数，画面不歪）。
-//   · params { ParamAngleX: … } —— 模型参数增量，由渲染层 addParameterValueById 写入
+//     缩放绕**颈肩支点**（DEPTH_PIVOT_FY）进行：支点在颈肩之间，所以放大时
+//     "头长大往前探、肩膀基本不动"，而不是整张图一起胀。容器层绝不设 rotation
+//     （旋转走模型参数，画面不歪）。
+//   · params { ParamBodyAngleY: … } —— 模型参数增量，由渲染层 addParameterValueById 写入
 //     （与 pose/rhythm 同款：只在当帧有效，不累积、不覆盖别的层）。
 //
-// 角度正负号是**实测**出来的（scripts/probe-angle-sign.mjs，2026-10-17，逐档截图比对）：
-// 该模型的 ParamAngleX / ParamBodyAngleX **负 = 靠近屏幕（抬头/前倾），正 = 远离（低头/后仰）**
-// ——与数学右手系相反，一切以像素为准。ParamAngleY = 左右转头、ParamAngleZ = 歪头，
-// 侧头两侧对称用，不依赖正负号约定。
+// ── 参数语义（2026-10-17 顶点级实测，scripts/probe-body-vertex2.mjs / probe-depth-params.mjs）
+// ⚠ 旧注释把 X/Y 说反了，以下以实测为准（数值＝归一化模型单位，全身高约 1.2）：
+//   ParamAngleX  ±8  → 只有头横移 0.014，纵移 0        ＝ **左右转头**
+//   ParamAngleY  ±30 → 只有头纵移 0.005（很弱）        ＝ **上下点头**，效果太小，本模块不用
+//   ParamAngleZ  ±8  → 头横移为主                      ＝ **歪头**
+//   ParamBodyAngleX ±10 → 头/躯干**横移** 0.033        ＝ 身体左右摆
+//   ParamBodyAngleY ±10 → 头纵移 +0.024 / −0.032、脚几乎不动、整体高矮 ±2%
+//                                                       ＝ **身体纵向伸展/蜷缩** ★本模块主力
+//   ParamBodyAngleZ ±10 → 头横移 0.046、躯干几乎不动   ＝ 身体倾斜
+//   Param84「身体距离」/ Param82·83「身体x」→ 0/547 个部件有位移 ＝ **死参数，美术没绑**
+//
+// ── 为什么用 ParamBodyAngleY 承担"前倾/后仰"
+// Cubism 是 2D 变形系统，**没有骨骼、没有深度轴**：要"真·弯腰前倾"只能靠美术在 moc 里
+// 绑变形器，本模型没有（六个标准角度参数里没有一个是前后向的）。但 2D 投影里"身体前倾"
+// 的物理特征恰恰是——躯干透视**缩短**、头往**下**探；"后仰"是躯干**伸展**、头往**上**抬。
+// ParamBodyAngleY 正好就是这个形变（负=压缩+头下移，正=伸展+头上移），且是**真实几何形变**，
+// 不是容器变换。所以用它作主体，容器缩放只做小幅"靠近/远离"的透视加成。
+//
+// ── 参数预算（值域写死在 moc：ParamBodyAngle* ∈ [−10, 10]，不靠核心静默裁切兜底）
+//   ParamBodyAngleY：turn(set) ±6 + idle(add) ±4 + 本模块 ±3 → 最坏 13，仍会饱和。
+//   实际 turn 与 idle 互斥（turn 激活时 idle 让位），本模块触发时 ambient 也让位到 20%，
+//   常态最坏 = turn 6 + idle 0.8 + 3 = 9.8 ≤ 10 ✓；无 turn 时 = 4 + 3 = 7 ✓。
 
 /** 缓动：Trigger 动作用（导出供单测断言曲线形状） */
 export function easeOutCubic(t) {
@@ -32,58 +51,72 @@ const EASES = { outCubic: easeOutCubic, inOutSine: easeInOutSine }
 
 /**
  * 触发式动作参数表。单位：
- *   scale —— 容器缩放增量（1.06 = 放大 6%）；dy —— 容器纵向位移（CSS 像素，负 = 向上）；
+ *   scale —— 容器缩放增量（1.06 = 放大 6%）；dy —— 容器纵向位移（CSS 像素，**正 = 向下**）；
  *   rise/hold/fall —— 过渡时长（ms）：淡入 / 保持 / 淡出；
  *   params —— 模型参数目标值（角度，度）。
- * 取值范围的原则：明显可感知（≥6% 缩放 / ≥4px 位移 / ≥6° 角度）但不夸张
- * （缩放 ≤10%、位移 ≤10px、头部角度 ≤6°、身体角度 ≤2°）。身体角度刻意压低：
- * 待机摆头（动作期 ±5°）+ 时段表现（−1°）+ 思考姿态（−2°）都写同一族参数，
- * 全部叠起来也必须留在 ±10 的值域里，不靠核心静默裁切兜底。
+ *
+ * 2026-10-17 重设计（用户要求：要"向前探头/弯腰"的姿态感，而不是整体前后平移）：
+ *   · 姿态主体交给 **ParamBodyAngleY**（真实几何形变：躯干压缩/伸展 + 头上下），
+ *     不再把它当"左右转身"用（那是 ParamBodyAngleX 的活，见下方实测注释）。
+ *   · 容器缩放从原来的 10% 降到 4.5~6%，并且绕**颈肩支点**缩放（DEPTH_PIVOT_FY），
+ *     放大时肩膀几乎不动、只有头在长大 —— 这才是"探头"，原来绕肚脐缩放到 10%
+ *     是整个人均匀变大往上飘，读起来就是整体前后移动。
+ *   · dy 方向随之反转：前倾**下**移（凑近）、后仰**上**移（退开）。
+ *   取值范围：缩放 ≤6%、位移 ≤12px、身体角度 ≤3°（预算见文件头）。
  */
 export const DEPTH_ACTIONS = {
-  /** 身体前倾：轻微放大 + 上移，抬头关注（对话开始） */
+  /** 身体前倾：躯干略压缩 + 头下探 + 微微放大（对话开始） */
   leanIn: {
     label: '前倾凑近',
-    scale: 1.06,
-    dy: -6,
+    scale: 1.045,
+    dy: 7,
     riseMs: 420,
     holdMs: 600,
     fallMs: 420,
     ease: 'outCubic',
-    params: { ParamBodyAngleX: -2, ParamAngleX: -1.5 }
+    params: { ParamBodyAngleY: -2 }
   },
-  /** 探头看你：放大最多、上移最多、明显抬头，侧头方向每次随机（归来） */
+  /** 探头看你：压缩最多、头探得最低、放大最多，侧头方向每次随机（归来） */
   peek: {
     label: '探头看你',
-    scale: 1.10,
-    dy: -10,
+    scale: 1.06,
+    dy: 12,
     riseMs: 520,
     holdMs: 900,
     fallMs: 500,
     ease: 'outCubic',
-    params: { ParamBodyAngleX: -1.5, ParamAngleX: -6, ParamAngleY: 4 }
+    params: { ParamBodyAngleY: -3, ParamAngleZ: 3 }
   },
-  /** 身体后仰：轻微缩小 + 下沉，松弛（说完一句靠回去） */
+  /** 身体后仰：躯干伸展 + 头上抬 + 略缩小（说完一句靠回去） */
   leanBack: {
     label: '后仰松弛',
-    scale: 0.95,
-    dy: 10,
+    scale: 0.965,
+    dy: -5,
     riseMs: 460,
     holdMs: 700,
     fallMs: 460,
     ease: 'inOutSine',
-    params: { ParamBodyAngleX: 3, ParamAngleX: 6 }
+    params: { ParamBodyAngleY: 2.5 }
   }
 }
+
+/**
+ * 容器缩放的**支点**（模型归一化纵向坐标 fy，0 = 画布顶、1 = 画布底）。
+ * 实测（scripts/probe-framing-landmarks.mjs，按取景带渲染后逐行量剪影）：
+ * 头顶 fy≈0.005、脸/下颌 0.17~0.21、**颈肩过渡 0.21~0.24**、肩 0.24~0.30、取景带底（肚脐）0.48。
+ * 取 0.23 = 颈肩之间：放大时头往上长（离支点最远）、肩膀几乎不动 —— 读作"探头"；
+ * 若取带底 0.48（旧行为）则是整片均匀放大，读作"整体前后移动"，已改掉。
+ */
+export const DEPTH_PIVOT_FY = 0.23
 
 /** 常态复合摆动（左右 + 前后）：永续循环，无人触发时也有"活着"的纵深呼吸 */
 export const DEPTH_AMBIENT = {
   label: '常态纵深摆动',
   periodMs: 2400, // 一个完整来回
-  yaw: 7, // ParamBodyAngleY 幅度（身体左右转）
+  yaw: 5, // ParamBodyAngleX 幅度（身体左右摆；实测它才是横移的那个，见文件头）
   roll: 3, // ParamAngleZ 幅度（头歪）
-  scale: 0.03, // 容器缩放幅度（转身时略微远近）
-  dy: 4 // 容器纵向位移幅度（px）
+  scale: 0.025, // 容器缩放幅度（转身时略微远近）
+  dy: 3 // 容器纵向位移幅度（px）
 }
 
 /** 自动触发：常态摆动之外，没人管她时她自己偶尔前倾/探头/后仰 */
@@ -284,14 +317,16 @@ export function createDepthMotion(opts = {}) {
       params[id] = (params[id] || 0) + v
     }
     // 常态（角度参数同样受 amount 与 duck 控制）
-    push('ParamBodyAngleY', DEPTH_AMBIENT.yaw * aYaw * ambientEnv * amount)
+    // 左右摆用 ParamBodyAngleX —— 实测它才是横移的那个（±10 → 头/躯干横移 0.033），
+    // 旧代码写成 ParamBodyAngleY，而 Y 是纵向，等于"左右转身"根本没转身。
+    push('ParamBodyAngleX', DEPTH_AMBIENT.yaw * aYaw * ambientEnv * amount)
     push('ParamAngleZ', DEPTH_AMBIENT.roll * aRoll * ambientEnv * amount)
     // 触发动作
     if (mode !== 'idle' && env > 0) {
       const spec = DEPTH_ACTIONS[mode]
       for (const [id, v] of Object.entries(spec.params)) {
-        // peek 的侧头方向每次随机（±4°），其余参数两侧对称
-        push(id, (id === 'ParamAngleY' ? v * side : v) * env * amount)
+        // peek 的歪头方向每次随机（±3°），其余参数两侧对称
+        push(id, (id === 'ParamAngleZ' ? v * side : v) * env * amount)
       }
     }
 

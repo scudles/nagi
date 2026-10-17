@@ -24,6 +24,8 @@ import {
 
 const MODEL_DIR = join(process.cwd(), 'models', 'Maine')
 const cfg = parseFaceConfig(JSON.parse(readFileSync(join(MODEL_DIR, 'nagi-face.json'), 'utf8')))
+// 眨眼段不归 parseFaceConfig 解析（归 blink.js），单独读原始 JSON
+const rawFace = JSON.parse(readFileSync(join(MODEL_DIR, 'nagi-face.json'), 'utf8'))
 const emotionCfg = JSON.parse(readFileSync(join(MODEL_DIR, 'nagi-emotion.json'), 'utf8'))
 const exprNames = (() => {
   const m = JSON.parse(readFileSync(join(MODEL_DIR, 'Maine.model3.json'), 'utf8'))
@@ -77,8 +79,71 @@ test('原先只有特效符号的两个情绪现在真的动了五官', () => {
   assert.ok(smileFace.length >= 3, `smile 的五官参数太少：${smileFace.join(',')}`)
   assert.ok(worryFace.length >= 3, `worry 的五官参数太少：${worryFace.join(',')}`)
   // 特效符号仍然保留（脸红 / 紧张汗），只是现在会随强度渐显
-  assert.equal(cfg.emotions.nagi_smile.Param19, 0.55)
+  // C 组（2026-10-17 加大表情幅度）：脸红 0.55 → 0.70，这里写下限而不是等值，
+  // 免得以后再调大就要改测试（models/ 不入库，等值断言在别人机器上还会误报）
+  assert.ok(cfg.emotions.nagi_smile.Param19 >= 0.65, `smile 脸红应 ≥0.65，实际 ${cfg.emotions.nagi_smile.Param19}`)
   assert.equal(cfg.emotions.紧张汗.Param15, 1)
+})
+
+test('C 组：六种情绪的幅度下限（加大表情幅度后不许退回小脸）', () => {
+  const E = cfg.emotions
+  // 欢乐：笑眼要真的弯到顶、腮与嘴形都明显
+  assert.ok(E.nagi_joy.ParamEyeLSmile >= 0.95, `joy 笑眼 ≥0.95，实际 ${E.nagi_joy.ParamEyeLSmile}`)
+  assert.ok(E.nagi_joy.ParamCheek >= 0.9, `joy 腮红 ≥0.9，实际 ${E.nagi_joy.ParamCheek}`)
+  assert.ok(E.nagi_joy.ParamMouthForm >= 0.65, `joy 嘴形 ≥0.65，实际 ${E.nagi_joy.ParamMouthForm}`)
+  assert.ok(E.nagi_joy.ParamMouthOpenY >= 0.38, `joy 张嘴 ≥0.38，实际 ${E.nagi_joy.ParamMouthOpenY}`)
+  // 微笑：比 joy 弱一档，但也要看得出
+  assert.ok(E.nagi_smile.ParamEyeLSmile >= 0.45, `smile 笑眼 ≥0.45，实际 ${E.nagi_smile.ParamEyeLSmile}`)
+  assert.ok(E.nagi_smile.ParamCheek >= 0.55, `smile 腮红 ≥0.55，实际 ${E.nagi_smile.ParamCheek}`)
+  // 困惑 / 紧张 / 嘟嘴：负向参数看绝对值
+  assert.ok(Math.abs(E.nagi_puzzled.ParamMouthForm) >= 0.18, `puzzled 嘴形 |·| ≥0.18，实际 ${E.nagi_puzzled.ParamMouthForm}`)
+  assert.ok(E.nagi_puzzled.ParamBrowLY >= 0.7, `puzzled 左眉抬起 ≥0.7，实际 ${E.nagi_puzzled.ParamBrowLY}`)
+  assert.ok(Math.abs(E.紧张汗.ParamBrowLForm) >= 0.85, `紧张汗 眉形 |·| ≥0.85，实际 ${E.紧张汗.ParamBrowLForm}`)
+  assert.ok(Math.abs(E.紧张汗.ParamMouthForm) >= 0.45, `紧张汗 嘴形 |·| ≥0.45，实际 ${E.紧张汗.ParamMouthForm}`)
+  assert.ok(Math.abs(E.nagi_pout.ParamMouthForm) >= 0.45, `pout 嘴形 |·| ≥0.45，实际 ${E.nagi_pout.ParamMouthForm}`)
+  assert.ok(E.nagi_pout.Param29 >= 0.95, `pout 嘟嘴 ≥0.95，实际 ${E.nagi_pout.Param29}`)
+  // 全部落在 moc 值域内（不靠核心裁切兜底）
+  for (const [name, vec] of Object.entries(E)) {
+    for (const [k, v] of Object.entries(vec)) {
+      assert.ok(v >= -1 && v <= 1, `${name}.${k} = ${v} 超出 [-1,1]`)
+    }
+  }
+})
+
+test('C 组：元音口型幅度下限 + 眨眼闭到底 + 微动放大', () => {
+  const V = cfg.visemes
+  assert.ok(V.a.Param24 >= 0.9, `a 的张口 ≥0.9，实际 ${V.a.Param24}`)
+  assert.ok(V.i.ParamMouthForm >= 0.55, `i 的咧嘴 ≥0.55，实际 ${V.i.ParamMouthForm}`)
+  assert.ok(V.u.Param30999 >= 0.6, `u 的噘嘴 ≥0.6，实际 ${V.u.Param30999}`)
+  assert.ok(V.o.Param24 >= 0.6 && V.e.Param24 >= 0.6, 'e / o 的张口 ≥0.6')
+  for (const [name, vec] of Object.entries(V)) {
+    if (name === 'note') continue
+    for (const [k, v] of Object.entries(vec)) assert.ok(v >= -1 && v <= 1, `${name}.${k} = ${v} 超出 [-1,1]`)
+  }
+  // 眨眼要真的闭到底（C 组实证：ParamEyeLOpen=0 时睫毛线仍在，不会"眼线消失"）
+  // 眨眼配置不在 parseFaceConfig 的返回里（归 blink.js 消费），直接读原始 JSON
+  assert.equal(rawFace.blink.minClose, 0, `眨眼最低闭合应为 0，实际 ${rawFace.blink.minClose}`)
+  // 微动整体放大（amplitude 1 → 1.3）
+  assert.ok(cfg.tremor.amplitude >= 1.2, `微动 amplitude 应 ≥1.2，实际 ${cfg.tremor.amplitude}`)
+})
+
+/* --- 睁眼幅度的情绪次序：笑眼半闭 < 疑惑微眯 < 紧张睁大 --- */
+// 2026-10-17：C 组放大情绪时把「紧张」的 ParamEyeLOpen 写成了 0.95（比平静还窄一点），
+// 真机验收 I 项立刻红——方向类的断言（"不同情绪不一样"）挡不住这种"方向对了但语义反了"。
+// 这里把语义次序钉死：紧张必须是睁大的（≥平静），笑眼必须是半闭的。
+test('睁眼幅度的情绪次序：笑眼半闭 < 疑惑微眯 < 紧张睁大（平静 = 中性 1）', () => {
+  const E = cfg.emotions
+  const open = (name) => {
+    const v = E[name].ParamEyeLOpen
+    return v === undefined ? 1 : v // 没写 = 中性全睁
+  }
+  const joy = open('nagi_joy')
+  const puzzled = open('nagi_puzzled')
+  const worry = open('紧张汗')
+  assert.ok(joy <= 0.8, `joy 笑眼应半闭（≤0.8），实际 ${joy}`)
+  assert.ok(puzzled > joy + 0.08, `puzzled 应比 joy 睁得开（差 >0.08），实际 ${joy} → ${puzzled}`)
+  assert.ok(worry >= 0.98, `紧张必须是睁大的（≥0.98，即不小于平静），实际 ${worry}`)
+  assert.ok(worry > puzzled + 0.08, `紧张应比疑惑更睁（差 >0.08），实际 ${puzzled} → ${worry}`)
 })
 
 /* ---------------- ② 参数必须真实存在 ---------------- */
@@ -127,13 +192,15 @@ test('强度 1 = 原值，0.5 = 一半（线性）', () => {
   const joy = musclesFor(cfg, 'nagi_joy')
   const full = scaleMuscles(joy, 1)
   const half = scaleMuscles(joy, 0.5)
-  assert.equal(full.ParamEyeLSmile, 0.95)
-  assert.equal(half.ParamEyeLSmile, 0.475)
+  // 期望值从配置读（models/ 不入库，写死 0.95 会在别人机器上误报）
+  assert.ok(full.ParamEyeLSmile >= 0.95, `joy 笑眼应 ≥0.95，实际 ${full.ParamEyeLSmile}`)
+  assert.ok(Math.abs(half.ParamEyeLSmile - full.ParamEyeLSmile / 2) < 1e-9, `一半应为 ${full.ParamEyeLSmile / 2}，实际 ${half.ParamEyeLSmile}`)
 })
 
 test('强度越界被夹到 [0,1]', () => {
   const joy = musclesFor(cfg, 'nagi_joy')
-  assert.equal(scaleMuscles(joy, 5).ParamEyeLSmile, 0.95)
+  const full = scaleMuscles(joy, 1)
+  assert.equal(scaleMuscles(joy, 5).ParamEyeLSmile, full.ParamEyeLSmile)
   assert.deepEqual(scaleMuscles(joy, -2), {})
 })
 
@@ -153,8 +220,12 @@ test('混合：t=0 取前者、t=1 取后者、t=0.5 各半', () => {
 test('混合：从 joy 到 calm 会把笑眼一路松回 0（不是突跳）', () => {
   const joy = musclesFor(cfg, 'nagi_joy')
   const calm = musclesFor(cfg, 'nagi_neutral')
+  const full = scaleMuscles(joy, 1)
   const mid = blendMuscles(joy, calm, 0.5)
-  assert.ok(mid.ParamEyeLSmile > 0 && mid.ParamEyeLSmile < 0.95, `中途值应在 0~0.95 之间，实际 ${mid.ParamEyeLSmile}`)
+  assert.ok(mid.ParamEyeLSmile > 0 && mid.ParamEyeLSmile < full.ParamEyeLSmile, `中途值应在 0~${full.ParamEyeLSmile} 之间，实际 ${mid.ParamEyeLSmile}`)
+  // ★幅度下限（只验方向等于没验）：joy 与 calm 的差必须大到看得出来
+  const d = Math.abs(full.ParamEyeLSmile - (scaleMuscles(calm, 1).ParamEyeLSmile ?? 0))
+  assert.ok(d >= 0.8, `joy 与平静的笑眼差应 ≥0.8，实际 ${d.toFixed(3)}`)
 })
 
 test('没有定义肌肉的表情返回 null（调用方据此退回 exp3）', () => {

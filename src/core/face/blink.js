@@ -26,7 +26,12 @@ export const DEFAULT_BLINK = {
   openMs: 155, // 睁开
   doubleChance: 0.12, // 双眨概率
   doubleGapMs: [170, 320], // 双眨里两次之间的间隔
-  minClose: 0.02 // 闭到底时留一点缝（全 0 会让眼线消失，看着像坏了）
+  // 闭到底时留的那条缝。**别想当然地认为"必须 > 0"**：这里曾写着
+  // "全 0 会让眼线消失，看着像坏了"，2026-10-17 拿缅因实测截图证伪——
+  // ParamEyeLOpen=0 时睫毛线照旧在（与 0.02 视觉几乎无差）。
+  // 仍然保留 0.02 作代码默认，是因为换模型（尤其描线淡的）可能真的不剩线；
+  // 想闭到底的模型在自己的配置里显式写 0（nagi-face.json 的 blink.minClose）。
+  minClose: 0.02
 }
 
 const easeInOut = (p) => {
@@ -50,6 +55,10 @@ export function createBlinkScheduler(cfg = {}, deps = {}) {
   let nextAt = phaseAt + gap()
   let count = 0
   let lastBlinkAt = -Infinity
+  // 见过的最小眼开系数（reset 归零）。验收「真的闭到底了吗」不能靠采样碰运气：
+  // 闭合段只有 closeMs(85)+holdMs(35)=120ms，100ms 一轮的采样很可能整段错过，
+  // 于是"闭到 0.17"和"闭到 0"读起来一样。让调度器自己记住最小值。
+  let minF = 1
 
   const enter = (p, t) => {
     phase = p
@@ -74,21 +83,29 @@ export function createBlinkScheduler(cfg = {}, deps = {}) {
       count++
       // 双眨：睁眼后隔很短再来一次；否则按概率排一次
       nextAt = t + (rng() < c.doubleChance ? c.doubleGapMs[0] + rng() * (c.doubleGapMs[1] - c.doubleGapMs[0]) : gap())
+      minF = Math.min(minF, 1)
       return 1
     }
 
     if (phase === 'closing') {
-      return 1 - (1 - c.minClose) * easeInOut((t - phaseAt) / Math.max(1, c.closeMs))
+      const f = 1 - (1 - c.minClose) * easeInOut((t - phaseAt) / Math.max(1, c.closeMs))
+      minF = Math.min(minF, f)
+      return f
     }
-    if (phase === 'closed') return c.minClose
+    if (phase === 'closed') {
+      minF = Math.min(minF, c.minClose)
+      return c.minClose
+    }
     if (phase === 'opening') {
-      return c.minClose + (1 - c.minClose) * easeInOut((t - phaseAt) / Math.max(1, c.openMs))
+      const f = c.minClose + (1 - c.minClose) * easeInOut((t - phaseAt) / Math.max(1, c.openMs))
+      minF = Math.min(minF, f)
+      return f
     }
     return 1
   }
 
   function stats() {
-    return { phase, count, lastBlinkAt, nextAt, config: c }
+    return { phase, count, lastBlinkAt, nextAt, config: c, minF }
   }
 
   function reset(t = now()) {
@@ -96,6 +113,7 @@ export function createBlinkScheduler(cfg = {}, deps = {}) {
     nextAt = t + gap()
     count = 0
     lastBlinkAt = -Infinity
+    minF = 1
   }
 
   return { tick, stats, reset }
