@@ -139,6 +139,77 @@ function notesDayText(day) {
   return y === new Date().getFullYear() ? `${m}月${d}日` : `${y}年${m}月${d}日`
 }
 
+/**
+ * 「把便签写成文件」的控制条。默认关闭；目录只能由系统选择器选（不接受手填）；
+ * 每写一张都会弹一次确认框。这些限制不是摆设，界面上也要说清楚。
+ */
+function externalNotesControl(body, data) {
+  const ext = data.external || {}
+  const wrap = document.createElement('div')
+  wrap.className = 'np-ext'
+
+  const lab = document.createElement('label')
+  lab.className = 'check'
+  const box = document.createElement('input')
+  box.type = 'checkbox'
+  box.checked = ext.enabled === true
+  box.addEventListener('change', async () => {
+    box.disabled = true
+    try {
+      await window.nagi.settings.set({ presence: { externalNotesEnabled: box.checked } })
+      await refreshNotesPanel(body)
+    } catch {
+      box.disabled = false
+    }
+  })
+  lab.append(box, document.createTextNode(' 允许把便签写成文件（默认关闭）'))
+  wrap.appendChild(lab)
+
+  const row = document.createElement('div')
+  row.className = 'np-ext-row'
+  const where = document.createElement('span')
+  where.className = 'dim'
+  where.textContent = ext.dir ? ext.dir : '还没选文件夹'
+  row.appendChild(where)
+
+  const pick = document.createElement('button')
+  pick.textContent = ext.dir ? '换一个文件夹' : '选一个文件夹'
+  pick.addEventListener('click', async () => {
+    pick.disabled = true
+    try {
+      await window.nagi.notes.pickExternalDir()
+      await refreshNotesPanel(body)
+    } catch {
+      pick.disabled = false
+    }
+  })
+  row.appendChild(pick)
+
+  if (ext.dir) {
+    const revoke = document.createElement('button')
+    revoke.textContent = '撤销'
+    revoke.addEventListener('click', async () => {
+      revoke.disabled = true
+      try {
+        await window.nagi.notes.revokeExternalDir()
+        await refreshNotesPanel(body)
+      } catch {
+        revoke.disabled = false
+      }
+    })
+    row.appendChild(revoke)
+  }
+  wrap.appendChild(row)
+
+  const note = document.createElement('div')
+  note.className = 'dim np-ext-note'
+  note.textContent = ext.available
+    ? '只写你选的这个文件夹；每写一张都会先问你一次，不会偷偷写。'
+    : '打开开关并选一个文件夹后，每张便签下面会出现「写到文件夹里」。'
+  wrap.appendChild(note)
+  return wrap
+}
+
 /** 渲染查看器内容（数据来自主进程只读列表；写不写、存不存都由设置开关决定） */
 function renderNotesPanel(body, data) {
   body.textContent = ''
@@ -168,8 +239,10 @@ function renderNotesPanel(body, data) {
     for (const it of items) body.appendChild(it)
   }
 
-  // 便签
+  // 便签（外加"写成文件"入口：默认关闭、要选目录、每次都问）
   if (enabled.notes) {
+    const ext = data.external || {}
+    const savedMap = new Map((ext.saved || []).map((s) => [s.id, s.path]))
     const items = (data.notes || []).slice().reverse().map((n) => {
       const el = document.createElement('div')
       el.className = 'np-item'
@@ -180,9 +253,42 @@ function renderNotesPanel(body, data) {
       text.className = 'np-text'
       text.textContent = n.text
       el.append(meta, text)
+      if (data.externalWriteAvailable) {
+        const savedTo = savedMap.get(n.id)
+        if (savedTo) {
+          const done = document.createElement('div')
+          done.className = 'np-saved'
+          done.textContent = `已保存到 ${savedTo}`
+          el.appendChild(done)
+        } else if (ext.available) {
+          const btn = document.createElement('button')
+          btn.className = 'np-save-btn'
+          btn.textContent = '写到文件夹里'
+          btn.addEventListener('click', async () => {
+            btn.disabled = true
+            btn.textContent = '等确认…'
+            try {
+              const r = await window.nagi.notes.writeExternal(n.id)
+              if (r?.ok) await refreshNotesPanel(body)
+              else if (!r?.canceled) {
+                btn.textContent = r?.error || '没写成'
+                setTimeout(() => { btn.disabled = false; btn.textContent = '写到文件夹里' }, 2600)
+                return
+              } else {
+                await refreshNotesPanel(body)
+              }
+            } catch (err) {
+              btn.textContent = '没写成'
+              setTimeout(() => { btn.disabled = false; btn.textContent = '写到文件夹里' }, 2600)
+            }
+          })
+          el.appendChild(btn)
+        }
+      }
       return el
     })
     section('便签', '还没有便签。她需要一点独处的时间。', items)
+    if (data.externalWriteAvailable) body.appendChild(externalNotesControl(body, data))
   }
 
   // 行动留痕

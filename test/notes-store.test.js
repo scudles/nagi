@@ -14,8 +14,15 @@ let preset = {
   privacy: { doNotDisturb: false, onlyPresence: false }
 }
 
-mock.module('electron', { exports: { app: { getPath: () => dir } } })
-mock.module('../src/main/settings-store.js', { exports: { getSettings: () => preset } })
+// presence-notes.js 会牵出 notes-file.js（B23 外部写入桥接），它要 dialog；
+// 这里只是让它能在纯 node 下被 import，本文件不测写入。
+mock.module('electron', {
+  exports: {
+    app: { getPath: () => dir },
+    dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showMessageBox: async () => ({ response: 1 }) }
+  }
+})
+mock.module('../src/main/settings-store.js', { exports: { getSettings: () => preset, saveSettings: (p) => ({ ...preset, ...p }) } })
 mock.module('../src/main/persist.js', {
   exports: {
     listMemories: () => [{ id: 'mem-1', text: '他让我叫他阿凪', provenance: 'user-stated', at: T0 }],
@@ -45,7 +52,11 @@ test('默认关闭：不读盘、不建文件、记录为空', () => {
   setFlags({})
   const view = store.listNotes(T0)
   assert.deepEqual(view.enabled, { notes: false, traces: false, anchors: false })
-  assert.equal(view.externalWriteAvailable, false, '外部写入未实现，必须如实说明')
+  // B23 之后安全桥接已存在，但「能不能写」要看开关 + 有没有授权目录，
+  // 两者不是一回事：前者是能力，后者是这次的许可。
+  assert.equal(view.externalWriteAvailable, true, '安全桥接已实现（B23），界面不用再假装没这回事')
+  assert.equal(view.external.available, false, '没选目录就不许写')
+  assert.deepEqual(view.external.saved, [], '一条都没写过')
   assert.deepEqual(view.notes, [])
   assert.deepEqual(view.traces, [])
   store.recordPresenceEvent(activity('a0'), T0)

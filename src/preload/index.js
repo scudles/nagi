@@ -36,7 +36,11 @@ const api = {
   /** 她留下的东西（BLUE-3）：只读列表 + 清除；开关走 settings */
   notes: {
     list: () => ipcRenderer.invoke(NOTES_IPC.LIST),
-    clear: () => ipcRenderer.invoke(NOTES_IPC.CLEAR)
+    clear: () => ipcRenderer.invoke(NOTES_IPC.CLEAR),
+    /** 外部便签写入：选目录 / 撤销 / 写一张（每次都会弹确认框） */
+    pickExternalDir: () => ipcRenderer.invoke(NOTES_IPC.EXTERNAL_PICK),
+    revokeExternalDir: () => ipcRenderer.invoke(NOTES_IPC.EXTERNAL_REVOKE),
+    writeExternal: (noteId) => ipcRenderer.invoke(NOTES_IPC.EXTERNAL_WRITE, { noteId })
   },
   llm: {
     localStatus: (payload) => ipcRenderer.invoke(LLM_IPC.LOCAL_STATUS, payload || {})

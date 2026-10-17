@@ -12,6 +12,8 @@ export const PRESENCE_DEFAULTS = {
   weekdaySchedule: [[0,420,'night'],[420,720,'morning'],[720,780,'noon'],[780,1020,'afternoon'],[1020,1380,'evening'],[1380,1440,'night']],
   weekendSchedule: [[0,480,'night'],[480,720,'morning'],[720,780,'noon'],[780,1020,'afternoon'],[1020,1380,'evening'],[1380,1440,'night']],
   notesEnabled: false, externalNotesEnabled: false, tracesEnabled: false, anchorsEnabled: false,
+  /** 外部便签目录：**必须由用户亲自用系统目录选择器选出来**，不接受手填路径 */
+  notesExternalDir: '',
   haRules: { enabled: false, rules: [] },
   imperfection: { enabled: false, forgetProbability: 0, lowPressureEnabled: false, repairEnabled: false }
 }

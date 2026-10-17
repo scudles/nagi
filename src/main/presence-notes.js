@@ -23,6 +23,7 @@ import { considerNote, normalizeNoteState, emptyNoteState } from '../core/presen
 import { normalizeActionTrace, appendTrace, normalizeTraceList, TRACE_LIMITS } from '../core/presence/traces.js'
 import { listAnchors, normalizeAnchorState, emptyAnchorState, ANCHOR_LIMITS } from '../core/presence/anchors.js'
 import { familiarityScore, familiarityLevel } from '../core/relation/familiarity.js'
+import { externalNotesView } from './notes-file.js'
 
 /** 存储上限（契约只写「有上限」，这里取保守值） */
 export const NOTES_STORE_LIMITS = {
@@ -196,7 +197,9 @@ export function listNotes(now = Date.now()) {
   const anchorView = listAnchorCandidates(now)
   return {
     enabled: { notes: p.notesEnabled === true, traces: p.tracesEnabled === true, anchors: p.anchorsEnabled === true },
-    externalWriteAvailable: false, // 外部便签文件的安全桥接未实现：界面如实显示
+    // 安全桥接已实现（B23）：默认关闭 + 授权目录 + 逐次确认。界面按这个如实显示。
+    externalWriteAvailable: true,
+    external: externalNotesView(),
     notes: state.notes.map((n) => ({ ...n })),
     traces: state.traces.map((t) => ({ id: t.id, at: t.at, tool: t.tool, status: t.status, summary: t.result?.summary || '' })),
     anchors: anchorView.anchors.map((a) => ({ ...a })),
