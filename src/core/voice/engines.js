@@ -8,6 +8,8 @@
 //
 // 纯逻辑，无 Electron / Node 依赖，可 node --test。
 
+import { MOOD_KEYS, MOOD_OFFSETS } from './mood-table.js'
+
 /* ---------------- TTS ---------------- */
 
 /**
@@ -122,17 +124,18 @@ export const NAGI_VOICE = {
 }
 
 /**
- * 情绪 → 语音微调（在基准参数上叠加）。
- * 这是「语音情绪」那一层：表层不是没起伏，是起伏很小、且有规律。
+ * 情绪 → 语音微调（在基准参数上叠加）。这是「语音情绪」那一层：表层不是没起伏，
+ * 是起伏有规律。
+ *
+ * 数值与 `VOICE_PROFILE.emotions` **同源**（都取自 `mood-table.js`，D50）：
+ * 2026-10-17 之前这里是另一份小一截的表（joy 只 +8、worry 还是"略快"），
+ * 于是关掉「语音情绪映射」开关 = 把她换成一个更木的人。现在切开关只影响
+ * 「有没有时段/强度/语气这些维度」，不影响她的性格本身。
+ * 注意这里只取 rate/pitch：旧路径从不因情绪改音量（音量恒取基准）。
  */
-export const MOOD_SPEECH = {
-  calm: { rate: 0, pitch: 0 },
-  smile: { rate: 4, pitch: 2 },
-  joy: { rate: 8, pitch: 4 },
-  puzzled: { rate: -2, pitch: 3 },
-  worry: { rate: 6, pitch: -2 },
-  pout: { rate: -8, pitch: -4 }
-}
+export const MOOD_SPEECH = Object.fromEntries(
+  MOOD_KEYS.map((k) => [k, { rate: MOOD_OFFSETS[k].rate, pitch: MOOD_OFFSETS[k].pitch }])
+)
 
 /**
  * 把「基准声线 + 情绪微调」合成最终参数。

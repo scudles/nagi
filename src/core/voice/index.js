@@ -61,6 +61,12 @@ export {
 } from './engines.js'
 
 export {
+  MOOD_OFFSETS,
+  MOOD_KEYS,
+  cloneMoodOffsets
+} from './mood-table.js'
+
+export {
   VOICE_PROFILE,
   resolveVoiceProfile
 } from './voice-profile.js'

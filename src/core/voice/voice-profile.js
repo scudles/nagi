@@ -9,14 +9,16 @@
 // 时钟：本模块不自行读时钟——时段维度由入参 rhythm 注入（circadian 用可注入时钟算好），
 //       测试直接传 rhythm 对象即完全确定，无隐藏时间依赖。
 //
-// 与 MOOD_SPEECH 的关系：MOOD_SPEECH 是 profile 关闭时的旧情绪表；本表是 profile 开启时
-//       的听感表，按任务书卡 B 的语义独立迭代（worry 放慢低沉与旧表的「略快」有意不同），
-//       两条路径互不影响，切开关不会让某一方坏掉。
+// 与 MOOD_SPEECH 的关系：**同源**（D50）。两表原来各自演进，旧表幅度只有新表一半、
+//       worry 方向还相反，用户切一下开关就像换了个人；现在六情绪的偏移只存在于
+//       `mood-table.js` 一份，两表都从它取。差别只剩维度：新表多强度缩放 / 昼夜时段 /
+//       语气标记，旧表只有情绪本身。切开关改变的是"她今天的状态细不细"，不是她是谁。
 //
 // 参数语义（与 engines.js 一致）：rate/pitch 为百分比，各引擎自行折算（SAPI 的 Rate 是 -10~10，
 //       编排层按 /10 折算）；volume 0~100。所有输出都收敛到 hooks 校验域内。
 
 import { NAGI_VOICE } from './engines.js'
+import { cloneMoodOffsets } from './mood-table.js'
 
 /**
  * 可调常量表：所有数值集中在这里，听完真机反馈只改这张表，不动逻辑。
@@ -26,21 +28,15 @@ export const VOICE_PROFILE = {
   /**
    * 情绪 → 偏移（intensity 缩放后叠加）。任务书卡 B：joy 加快上扬、pout 放慢、worry 放慢低沉。
    *
+   * 数值取自 `mood-table.js`（D50：六情绪唯一出处，与旧表 MOOD_SPEECH 同源）。
    * 2026-10-17 整体加大幅度（OBS-1：用户真机初听反馈「情绪起伏偏弱、整体过于含蓄」）：
    * 原来满强度下 joy 只比 calm 快 8 个百分点，降到 0.5 强度只剩 4，听感上和 calm 是同一张脸。
    * 现在把两极拉开到 31（joy +16 ↔ pout -15），并让相邻情绪在「语速 / 音高 / 音量」三个轴上
-   * 至少有一轴拉开 5 以上——听感分得出来，但不至于夸张到出怪声（真机复听后仍只改这张表）。
+   * 至少有一轴拉开 5 以上——听感分得出来，但不至于夸张到出怪声（真机复听后仍只改那张表）。
    * 注意：基准音量已是 100（满），所以正向 volume 偏移在默认音量下会被夹掉，
    * 「更明亮」主要靠 rate/pitch 兑现，负向 volume 才真的变小声。
    */
-  emotions: {
-    calm:    { rate:   0, pitch:   0, volume:  0 },
-    smile:   { rate:   6, pitch:   4, volume:  1 },
-    joy:     { rate:  16, pitch:  10, volume:  3 },
-    puzzled: { rate:  -3, pitch:   7, volume:  0 },
-    worry:   { rate: -10, pitch:  -6, volume: -6 },
-    pout:    { rate: -15, pitch: -11, volume: -3 }
-  },
+  emotions: cloneMoodOffsets(),
   /** 昼夜时段 → 偏移（rhythm.enabled !== true 时不施加；夜晚降音量放慢、午后犯困拉长） */
   periods: {
     // 2026-10-17 同上：夜晚从 -28 压到 -34（她怕吵到你的意图要听得出来），午后犯困拉长加深

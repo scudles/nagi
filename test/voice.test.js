@@ -40,6 +40,8 @@ import {
   pickEngine,
   noEngineAvailable
 } from '../src/core/voice/engines.js'
+import { VOICE_PROFILE } from '../src/core/voice/voice-profile.js'
+import { MOOD_KEYS } from '../src/core/voice/mood-table.js'
 
 /* ---------------- 分句 ---------------- */
 
@@ -201,14 +203,53 @@ test('情绪 → 语音微调：六种情绪齐备，叠加后钳制在 ±50%', 
   for (const m of ['calm', 'smile', 'joy', 'puzzled', 'worry', 'pout']) {
     assert.ok(MOOD_SPEECH[m], `情绪 ${m} 缺语音微调`)
   }
+  // joy 在 edge 基准（-10, -2）之上：-10 + 16 = 6；-2 + 10 = 8
   assert.deepEqual(mergeVoiceParams({ rate: -10, pitch: -2, volume: 100 }, 'joy'), {
-    rate: -2,
-    pitch: 2,
+    rate: 6,
+    pitch: 8,
     volume: 100
   })
   assert.equal(mergeVoiceParams({ rate: 48, pitch: 0 }, 'joy').rate, 50, '应钳到 +50')
   assert.equal(mergeVoiceParams({ rate: -48, pitch: 0 }, 'pout').rate, -50, '应钳到 -50')
   assert.equal(mergeVoiceParams({ rate: 0, pitch: 0 }, 'calm').rate, 0)
+  // 旧路径从不因情绪改音量（音量恒取基准）——这是它和新表唯一的维度差别
+  assert.equal(mergeVoiceParams({ rate: 0, pitch: 0, volume: 60 }, 'joy').volume, 60)
+})
+
+// D41 的教训：只验「joy 比 calm 快」等于没验——方向对而幅度被调小，它照样全绿。
+test('旧表幅度下限：任意两情绪至少一轴差 ≥5，两极语速差 ≥25，序关系不塌', () => {
+  const es = MOOD_SPEECH
+  // 「至少一轴拉开」取 max（与新表同款规则）；取 min 会把"语速差 3 但音高差 7"误判成没拉开
+  const gap = (a, b) => Math.max(
+    Math.abs((Number(es[a].rate) || 0) - (Number(es[b].rate) || 0)),
+    Math.abs((Number(es[a].pitch) || 0) - (Number(es[b].pitch) || 0))
+  )
+  const keys = Object.keys(es)
+  let minPair = Infinity
+  for (let i = 0; i < keys.length; i++) {
+    for (let j = i + 1; j < keys.length; j++) minPair = Math.min(minPair, gap(keys[i], keys[j]))
+  }
+  assert.ok(minPair >= 5, `有任意两情绪在所有轴上都拉不开：最小差 ${minPair}`)
+  assert.ok(gap('joy', 'pout') >= 25, `两极语速差只有 ${gap('joy', 'pout')}`)
+  // 序关系：越开心越快越高，越别扭越慢越低（worry 也曾是"略快"，那条反向的已按 D50 拉齐）
+  assert.ok(es.joy.rate > es.smile.rate && es.smile.rate > es.calm.rate, '开心方向不单调')
+  assert.ok(es.pout.rate < es.worry.rate && es.worry.rate < es.calm.rate, '别扭方向不单调')
+  assert.ok(es.pout.pitch < es.worry.pitch && es.worry.pitch < es.calm.pitch, '别扭方向（音高）不单调')
+})
+
+// D50：两份表的六情绪偏移必须同源——否则切「语音情绪映射」开关就像换了个人。
+test('新旧两表同源：满强度下 rate/pitch 完全一致（切开关只换维度，不换性格）', () => {
+  for (const m of MOOD_KEYS) {
+    assert.deepEqual(
+      { rate: MOOD_SPEECH[m].rate, pitch: MOOD_SPEECH[m].pitch },
+      { rate: VOICE_PROFILE.emotions[m].rate, pitch: VOICE_PROFILE.emotions[m].pitch },
+      `情绪 ${m} 两表不一致`
+    )
+  }
+  // 维度差别如实存在：新表有音量与时段，旧表没有（不是漏，是设计）
+  assert.equal(typeof VOICE_PROFILE.emotions.joy.volume, 'number')
+  assert.equal(MOOD_SPEECH.joy.volume, undefined)
+  assert.equal(typeof VOICE_PROFILE.periods.night.volume, 'number')
 })
 
 /* ---------------- WAV 编解码 ---------------- */
