@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { normalizeMediaObservation, musicContext, pickActiveSession, selfSessionIds, filterSelfSessions } from '../src/core/signals/music.js'
 import { buildFallbackObservation, mergeMediaObservations, DEFAULT_PLAYER_PROCESSES } from '../src/core/signals/players.js'
+import { foregroundContext } from '../src/core/signals/foreground.js'
 
 const execFileAsync = promisify(execFile)
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -73,6 +74,27 @@ const lines = musicContext(obs, Date.now())
 if (!lines.length) console.log('  （空 —— 她不知道你在听什么）')
 for (const line of lines) console.log('  → ' + line)
 
+console.log('\n=== 5. 前台窗口（2026-10-18 新增，回答「在看什么视频」的唯一来源）===')
+let fg = []
+try {
+  // 真实跑一次采样脚本，只取第一行（脚本是持续采样的）
+  const out = join(tmpdir(), 'nagi-verify-fg-' + Math.random().toString(36).slice(2) + '.txt')
+  const script = join(root, 'resources', 'monitor-sampler.ps1')
+  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Interval', '1'], { timeout: 4000 }).catch((e) => ({ stdout: e.stdout || '' }))
+  // 单次采样已经够：拿脚本直出的那一行
+  const line = String(stdout || '').split('\n').find((l) => l.includes('\t')) || ''
+  const parts = line.split('\t')
+  const sample = parts.length >= 4 ? { ts: Number(parts[0]), pid: Number(parts[1]), app: parts[2], title: parts.slice(3).join('\t').trim() } : null
+  console.log('  原始样本：' + (sample ? JSON.stringify(sample) : '（采样脚本无输出）'))
+  if (sample) {
+    fg = foregroundContext(sample, Date.now())
+    for (const l of fg) console.log('  → ' + l)
+  }
+  await rm(out, { force: true })
+} catch (err) {
+  console.log('  前台采样不可用：' + err.message)
+}
+
 console.log('\n=== 判定 ===')
 check('两层探针至少一层可读', Boolean(smtc || fallback.available))
 if (!obs.available) {
@@ -83,7 +105,16 @@ if (!obs.available) {
   check('能说出具体曲目/标题', Boolean(obs.title), '标题为空')
   check('注入上下文非空', lines.length > 0)
   check('播放状态诚实（unknown 时注明来源）',
-    obs.playbackStatus !== 'playing' ? !obs.source || /播放状态未知|已暂停|已停止/.test(lines[0]) : true)
+    obs.playbackStatus !== 'playing' ? !obs.source || /无法判断是正在播放还是已暂停|已暂停|已停止/.test(lines[0]) : true)
+}
+check('前台窗口可感知', fg.length > 0, '采集脚本没给出可用窗口（监视是否被关闭？）')
+if (fg.length) {
+  // 「不能证明视频正在播放还是已暂停」本身就含「正在播放」四个字，
+  // 所以判据不是"没提到"，而是"没有断言式说法"（不得出现「正在播放：」「还开着呢」这类陈述）
+  check('前台那条不断言播放状态',
+    !/正在播放「|还开着|确实在播/.test(fg[0]),
+    '窗口标题不得冒充播放状态')
+  check('前台那条明确说明不确定性', /不能证明|无法判断|不能据此/.test(fg[0]))
 }
 
 console.log(`\n结果：${pass} 过 / ${fail} 败`)

@@ -18,6 +18,7 @@ import { getSettings } from '../settings-store.js'
 import { runPowerShell, serialize } from '../voice/ps.js'
 import { pickActiveSession, filterSelfSessions, selfSessionIds } from '../../core/signals/music.js'
 import { DEFAULT_PLAYER_PROCESSES, buildFallbackObservation, mergeMediaObservations } from '../../core/signals/players.js'
+import { foregroundContext } from '../../core/signals/foreground.js'
 import { MusicSignal } from '../../core/signals/music-store.js'
 
 /** SMTC 全会话读取成功 → { ok: true, raw }；失败 → { ok: false, error } */
@@ -149,7 +150,32 @@ export function revokeMusic() {
  */
 const CONTEXT_BUDGET_MS = 1500
 
+/**
+ * 媒体上下文（2026-10-18 扩展）：媒体会话 + 前台窗口两条来源。
+ *
+ * 为什么必须加前台窗口：SMTC 只认识「注册了媒体会话」的播放器。
+ * 用户的实际场景是「Edge 看视频 + 网易云听歌」——SMTC 里可能只有 Edge（还常因切标签报 Paused），
+ * 而网易云的歌名只在窗口标题里。前台窗口是唯一同时覆盖两者的信号，
+ * 也只有它才能回答「在看什么视频」（媒体会话给的是网页标题）。
+ *
+ * 顺序：媒体状态在前（她最常被问的），前台在后（"他在干什么"的兜底）。
+ * 前台拿不到（监测没开/勿扰/黑名单命中）就静默跳过，绝不影响媒体那条。
+ */
 export async function currentMusicContext(now = Date.now()) {
+  const media = await mediaContext(now)
+  let fg = []
+  try {
+    const { foregroundSample } = await import('../monitor/index.js')
+    const sample = await foregroundSample()
+    fg = sample ? foregroundContext(sample, Date.now()) : []
+  } catch (err) {
+    // 前台感知是加分项，任何异常都不能让媒体那条一起消失
+    console.warn('[music] 前台窗口上下文不可用：', err?.message || err)
+  }
+  return [...media, ...fg]
+}
+
+async function mediaContext(now = Date.now()) {
   const signal = getMusicSignal()
   // 未授权 / 勿扰：沿用原语义，静默返回空（不探测、不留痕）
   if (!signal.authorized() || signal.doNotDisturb()) return []

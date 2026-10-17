@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { resourcesDir } from '../paths.js'
 import { createSampler } from './sampler.js'
 import { createMonitorEngine } from '../../core/monitor/engine.js'
-import { collectionAllowed } from '../../core/monitor/privacy.js'
+import { collectionAllowed, isBlocked } from '../../core/monitor/privacy.js'
 import { NagiPersona } from '../../core/persona.js'
 import { getSettings } from '../settings-store.js'
 
@@ -124,4 +124,30 @@ export function refreshMonitorPrivacy() {
 
 export function monitorSnapshot() {
   return engine ? engine.snapshot() : null
+}
+
+/**
+ * 当前前台窗口样本（供「此刻」上下文使用，2026-10-18）。
+ *
+ * 为什么从这里借：monitor-sampler.ps1 本来就在每 5 秒采一次前台窗口，
+ * 数据现成；媒体会话（SMTC）只覆盖注册了会话的播放器，
+ * 浏览器里的视频页面只有这条路看得见。
+ *
+ * 返回 null 表示「不该给」——监测没起来 / 已停 / 隐私闸门关闭（勿扰、只陪着、总开关）。
+ * **隐私闸门在这里再判一次**：调用方（agent 每轮对话）不知道用户何时切了勿扰。
+ */
+export async function foregroundSample() {
+  if (!sampler) return null
+  const privacy = getSettings().privacy || {}
+  if (!collectionAllowed(privacy)) return null
+  let s = null
+  try {
+    s = await sampler.sample()
+  } catch {
+    return null
+  }
+  if (!s) return null
+  // 黑名单（密码/银行/支付/无痕…）：命中即整条丢弃，标题绝不外传
+  if (isBlocked(s, privacy.blacklist)) return null
+  return s
 }

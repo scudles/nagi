@@ -747,7 +747,9 @@ async function buildMessages(userText, supportsNative) {
     recalled: await recalledPieces(userText),
     recentReplies: recentAssistantReplies(history, 4),
     // 她替你记着的提醒：让她知道「有这几件事等着」，别把答应过的事忘了
-    extra: [...upcomingReminderLines(), ...upcomingCalendarContext(), ...currentMusicContext(), ...currentGeoContext(), ...haContext()]
+    // 媒体状态是 async（2026-10-18）：缓存过期时当场探一次（带 1.5 秒预算），
+    // 否则她永远不知道自己现在在用哪个播放器听什么，只能去开网页猜。
+    extra: [...upcomingReminderLines(), ...upcomingCalendarContext(), ...(await currentMusicContext()), ...currentGeoContext(), ...haContext()]
   })
   return [
     { role: 'system', content: buildSystemPrompt({ nativeTools: supportsNative, context }) },

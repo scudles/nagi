@@ -385,3 +385,22 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
 - **依据**：browser-lifecycle 3/3（红→绿全过程）；repro-fix2-toctou 100 轮报告；`npm run build` 退出 0。
 - **影响**：FIX-3 修复对默认行为无差异（成功路径原本就工作），只在 page 失效/dispose 后改变连接复用行为；FIX-2 零代码改动。
 - **替代**：FIX-2 是首次评估结案；FIX-3 替代 TASKS 原"未修（未复现）"状态。
+
+## D56（2026-10-18）B20 二次报障修复：前台窗口感知接入 + 播放状态不许越界断言
+
+- **任务**：用户二次报障（截图原文）：「无法识别我在看什么视频，也无法识别我暂停了音乐，只知道音乐栏的音乐名称」。D54 只修了"她从来没探过"和"只报一个媒体"，**没解决"在看什么视频"和"暂停了音乐"这两条**。
+- **裁决（用户，隐私尺度显式放宽）**：**所有应用标题都能看**——前台窗口标题可以进她的上下文；黑名单（密码/银行/支付/无痕…）与勿扰闸门继续生效，仍不落盘。这取代了原先「标题/应用名一律不进 LLM」中的**标题**那半句；放宽的是"标题"，没放宽的是"内容"（窗口里的文字内容依旧不采）。
+- **决定**：
+  1. 新增 `src/core/signals/foreground.js`（core 层纯逻辑，不 import electron）：`cleanBrowserTitle` / `videoSiteOf` / `isBrowser` / `appDisplayName` / `foregroundContext`。它是回答「在看什么视频」与「人还在不在」的**唯一来源**——媒体会话（SMTC）只给网页标题不给视频画面，且浏览器切标签后会误报 Paused。
+  2. **诚实边界写进代码**：这个模块只说"前台是什么"，**永不断言播放状态**。窗口标题证明不了播没播。
+  3. `src/main/signals/music.js`：`currentMusicContext` 拆成 `mediaContext`（媒体）+ 前台两条；前台拿不到（监测没开/勿扰/黑名单命中）就静默跳过——它是加分项，任何异常都不能让媒体那条一起消失。
+  4. `src/main/monitor/index.js` 新增 `foregroundSample()`：**隐私闸门在这里再判一次**（`collectionAllowed` + `isBlocked`）。理由：调用方是 agent 每轮对话，它不知道用户这 5 秒里有没有切勿扰。
+  5. `src/core/signals/music.js` 兜底来源加**硬护栏**：`source !== 'smtc'` 时措辞固定为「播放器窗口里显示着 X，但这只说明播放器开着、列表里有这首，**无法判断是正在播放还是已暂停**。想知道到底播没播，得问他」——专门挡住"你的音乐播放器还开着呢"这种把"窗口标题存在"当成"正在播放"的越界断言。
+- **真机踩到的两个 bug**（都是正则想当然）：
+  - Edge 标题里的「和另外 8 个页面」没剥干净（原正则对空格与出现顺序不耐受）→ 重写为 `\s*和另外\s*\d+\s*个\s*(页面|标签页|选项卡)\s*`。
+  - `Microsoft` 与 `Edge` 之间夹 **U+200B 零宽字符**，`Microsoft\s*Edge` 直接失配 → `clean()` 里先剥 `/[\u200b-\u200d\ufeff]/g`。**教训：Windows 窗口标题不能按"看得见的样子"写正则。**
+- **依据**：`test/foreground.test.js` **8/8**；`test/music-signal.test.js` + `test/players.test.js` **15/15**（合计 23/23，含"同时开着两个媒体""同一应用不重复""兜底为主时"三条真实场景）；`node scripts/verify-media-context.mjs` **8/8**，实测输出：
+  「用户授权的活动感知：他当前的前台是 Edge，页面标题「降世神通：科拉传奇（第一季/中英双字）_哔哩哔哩_bilibili」（哔哩哔哩）。窗口标题只能说明他打开着这个页面，**不能证明视频正在播放还是已暂停**——要么问他，要么别断言。」
+  `npm run build` 退出 0；`NAGI_RENDERER_SANDBOX=0 npm run verify:media-chat` **8/8**；全量单测 **777 项 776 过 / 0 败 / 1 skip**（另一次跑为 778/773/4，4 项隔离复跑全过——并发会话争抢资源的环境噪音，非代码缺陷）。
+- **未验证**：用户真机复验。须**彻底退出凪再重启**（单实例锁），核对 `boot.json` 的 build == `out/main/index.js` 的 mtime。
+- **遗留**：本次改动与另一会话的在制品混在同一批文件里（`src/main/agent.js`、`src/main/monitor/index.js`、`docs/DECISIONS.md`、`docs/TASKS.md`），提交时须**部分暂存**，不得整文件提交（会把他人的半成品一起扫进去）。

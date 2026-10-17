@@ -94,15 +94,18 @@ test('上下文四态：播放中带护栏，暂停/停止/没有会话各有诚
   assert.deepEqual(musicContext(paused, now + 130000), [])
 })
 
-test('窗口标题兜底来源的观测：措辞注明来源与状态未知', () => {
+test('窗口标题兜底来源：必须挡住「正在播放」的越界断言（2026-10-18 她凭它胡说「播放器还开着呢」）', () => {
   const obs = normalizeMediaObservation({ available: true, sessions: [
     { app: '网易云音乐', title: '约定', artist: '王菲', playbackStatus: 'unknown', source: 'window-title' }
   ] }, 1000)
   assert.equal(obs.source, 'window-title')
   const line = musicContext(obs, 1500)[0]
-  assert.match(line, /播放状态未知/)
-  assert.match(line, /播放器窗口标题/)
-  assert.match(line, /不是系统媒体会话/)
+  assert.match(line, /播放器窗口里显示着/)
+  assert.match(line, /无法判断是正在播放还是已暂停/, '不能把「窗口标题存在」当成「正在播放」')
+  assert.match(line, /得问他/, '要引导她去问，而不是自己猜')
+  // 反向断言：绝不能出现断言式措辞
+  assert.doesNotMatch(line, /正在播放「/, '兜底来源不得冒充播放状态')
+  assert.doesNotMatch(line, /还开着呢/, '不得推断播放器仍在播放')
 })
 
 test('缓存新鲜度：fresh() 与 status() 复用阈值一致（60 秒）', async () => {
@@ -143,8 +146,8 @@ test('用户实测场景：SMTC 只有一条 Edge 暂停会话，网易云靠窗
   assert.equal(obs.playbackStatus, 'unknown')
   const line = musicContext(obs, 6000)[0]
   assert.match(line, /fake ur face/, '必须说出歌名，否则她只能去开网页猜')
-  assert.match(line, /播放状态未知/, '标题推断不出播放状态，措辞必须诚实')
-  assert.match(line, /不是系统媒体会话/)
+  assert.match(line, /无法判断是正在播放还是已暂停/, '标题推断不出播放状态，措辞必须挡住「正在播放」这个越界断言')
+  assert.match(line, /得问他/, '要引导她去问，而不是自己猜')
 })
 
 test('自身媒体会话：凪说 TTS 时被 Chromium 注册的会话必须排除（否则会盖住真正在放歌的播放器）', () => {

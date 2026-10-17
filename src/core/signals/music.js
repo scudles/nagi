@@ -171,5 +171,13 @@ export function musicContext(observation, now = Date.now()) {
   if (observation.playbackStatus === 'stopped') {
     return [`用户授权的媒体感知报告：${what}${who}${where} 已停止。${fromTitle}${othersLine}`.trim()]
   }
+  // 窗口标题兜底：**只能证明播放器窗口里显示着什么，证明不了播没播**。
+  // 2026-10-18 用户实测：她凭这条说「你的音乐播放器还开着呢」，而用户其实早暂停了——
+  // 这是把「窗口标题存在」当成「正在播放」的越界断言。措辞必须挡住这个推断。
+  if (observation.source && observation.source !== 'smtc') {
+    return [`用户授权的媒体感知报告：播放器窗口里显示着 ${what}${who}${where}，` +
+      '但这只说明播放器开着、列表里有这首，**无法判断是正在播放还是已暂停**。' +
+      '想知道到底播没播，得问他，或看前台窗口是不是还停在播放器上。' + othersLine]
+  }
   return [`用户授权的媒体感知报告：${what}${who}${where} 播放状态未知，可能仍在播放。${fromTitle}${othersLine}`.trim()]
 }
