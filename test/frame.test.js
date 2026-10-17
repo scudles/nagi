@@ -8,11 +8,13 @@ import test from 'node:test'
 import {
   DEFAULT_FRAME,
   FRAME_PRESETS,
+  STANDARD_BOX,
   fitBand,
   frameBand,
   framePreset,
   isBustFrame,
-  isInsideBox
+  isInsideBox,
+  standardBoxFor
 } from '../src/core/frame.js'
 
 // 真实模型：Lisette 的 moc 画布 2715 × 4465
@@ -144,4 +146,61 @@ test('渲染矩形落在画布内的判定（含容差）', () => {
   assert.equal(isInsideBox({ left: -1, top: 0, width: 100, height: 100 }, 100, 100), false)
   assert.equal(isInsideBox({ left: 0, top: 0, width: 101, height: 100 }, 100, 100), false)
   assert.equal(isInsideBox(null, 100, 100), false)
+})
+
+// ---- 统一缩放（2026-10-17 用户拍板：各界面同一套缩放比例与锚点，切换不跳变）----
+
+test('统一缩放基准：胸像参与，full 不参与', () => {
+  assert.deepEqual(standardBoxFor('bust'), STANDARD_BOX)
+  assert.deepEqual(standardBoxFor(undefined), STANDARD_BOX)
+  assert.equal(standardBoxFor('full'), null)
+})
+
+test('标准区封顶：装得下就锁标准比例，装不下才等比缩小', () => {
+  const band = frameBand('bust', MODEL.w, MODEL.h)
+  const stdFit = STANDARD_BOX.w / band.w
+  // 大窗（桌宠最大 760×1140）：contain 远大于标准 → 锁标准比例
+  const big = fitBand({ band, boxW: 760, boxH: 1140, standard: STANDARD_BOX })
+  assert.ok(Math.abs(big.scale - stdFit) < 1e-9, `大窗应锁标准比例 ${stdFit.toFixed(5)}，实际 ${big.scale.toFixed(5)}`)
+  assert.ok(isInsideBox(big.rendered, 760, 1140), '锁标准后仍然完整落在框内')
+  // 小窗（桌宠最小 240×360）：contain 小于标准 → 按本窗 contain 缩小，不裁切
+  const small = fitBand({ band, boxW: 240, boxH: 360, standard: STANDARD_BOX })
+  const contain = Math.min(240 / band.w, 360 / band.h)
+  assert.ok(Math.abs(small.scale - contain) < 1e-9, '小窗应按本窗 contain 缩小')
+  assert.ok(small.scale < stdFit, '且必须小于标准比例')
+  assert.ok(isInsideBox(small.rendered, 240, 360), '缩小后仍然完整落在框内')
+  // 不传 standard（旧调用方）→ 行为与从前完全一致
+  const legacy = fitBand({ band, boxW: 760, boxH: 1140 })
+  assert.ok(legacy.scale > stdFit, '缺省 standard 时保持纯 contain，不被封顶')
+})
+
+test('缅因妹妹：桌宠与工作台默认舞台落在同一缩放比例与锚点（切换界面不跳变）', () => {
+  const MW = 5000
+  const MH = 7000
+  const band = frameBand('bust', MW, MH, 'Maine')
+  const pet = fitBand({ band, boxW: 400, boxH: 600, pad: { right: 44, bottom: 26 }, standard: STANDARD_BOX })
+  const wb = fitBand({ band, boxW: 300, boxH: 480, standard: STANDARD_BOX })
+  assert.ok(
+    Math.abs(pet.scale - wb.scale) < 1e-9,
+    `两界面应同比例：桌宠 ${pet.scale.toFixed(5)} vs 工作台 ${wb.scale.toFixed(5)}`
+  )
+  assert.equal(pet.anchorY, band.anchorY, '锚点相同（都"站在"肚脐线上）')
+  assert.equal(wb.anchorY, band.anchorY)
+  assert.ok(pet.scale <= STANDARD_BOX.w / band.w + 1e-9, '不超过标准比例')
+  // 锚点相同 + 比例相同 ⇒ 同一套参数；rendered 都居中在各自可用区里
+  assert.ok(isInsideBox(pet.rendered, 400, 600) && isInsideBox(wb.rendered, 300, 480), '两界面都不越界')
+})
+
+test('缅因取景带：下边界是肚脐线，头顶留容位，横向包住美术', () => {
+  const MW = 5000
+  const MH = 7000
+  const band = frameBand('bust', MW, MH, 'Maine')
+  const p = FRAME_PRESETS.Maine
+  // 实测（2026-10-17）：头顶 fy=0.040、肚脐 fy=0.48、横向美术 fx∈[0.273,0.813]
+  assert.equal(band.anchorY, 0.48, '带子底边（锚点）应落在肚脐线')
+  assert.ok(p.top < 0.04 && p.top > 0, `头顶上方要留容位但不能是一片空白：top=${p.top}`)
+  assert.ok(p.left < 0.273 && p.right > 0.813, '横向要包住垂臂美术并留余量')
+  assert.equal(band.y, MH * 0.015, '带子顶边落在画布内 0.015 处（正数，不再越出画布上边界）')
+  assert.ok(band.h < MH * 0.5, '特写带高必须明显小于半身')
+  assert.ok(band.w / band.h < 1, '肚脐以上是竖长特写，带宽高比应小于 1')
 })

@@ -13,7 +13,7 @@
 //
 // 依赖：vendor/live2dcubismcore.min.js（在 index.html 中先加载）+ pixi.js v7 + pixi-live2d-display/cubism4
 import { pickRedParams, shouldRemoveRedGlow } from '../../core/redform.js'
-import { DEFAULT_FRAME, fitBand, frameBand, framePreset, frameProfile } from '../../core/frame.js'
+import { DEFAULT_FRAME, fitBand, frameBand, framePreset, frameProfile, standardBoxFor } from '../../core/frame.js'
 import { POSE_EASE_RATE, easePose, poseSettled, poseTargets } from '../../core/pose.js'
 import { rhythmPoseTargets, RHYTHM_POSE_EASE_RATE } from '../../core/presence/rhythm-pose.js'
 import {
@@ -196,7 +196,7 @@ export function frameInfo() {
   if (!app || !model) return null
   const { width, height } = app.screen
   const band = frameBand(frameMode, baseW, baseH, modelName)
-  const fit = fitBand({ band, boxW: width, boxH: height, scale: userScale, pad: readPads() })
+  const fit = fitBand({ band, boxW: width, boxH: height, scale: userScale, pad: readPads(), standard: standardBoxFor(frameMode) })
   let bounds = null
   try {
     const b = model.getBounds()
@@ -631,7 +631,8 @@ export function layout(scale = userScale, mirror = mirrorOn, frame = frameMode) 
 
   const { width, height } = app.screen
   const band = frameBand(frameMode, baseW, baseH, modelName)
-  const fit = fitBand({ band, boxW: width, boxH: height, scale: userScale, pad: readPads() })
+  // standard：各界面统一缩放比例（桌宠 / 工作台 / 设置同尺寸，大窗锁标准、小窗等比缩小）
+  const fit = fitBand({ band, boxW: width, boxH: height, scale: userScale, pad: readPads(), standard: standardBoxFor(frameMode) })
 
   baseScale = fit.scale
   model.anchor.set(0.5, fit.anchorY)

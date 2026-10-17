@@ -32,12 +32,17 @@
  */
 export const FRAME_PRESETS = {
   bust: { left: 0.11, right: 0.95, top: -0.02, bottom: 0.46 },
-  // 缅因妹妹（models/Maine）：moc 画布 5000×7000，而美术只占 fx∈[0.273,0.81]、fy∈[0.043,0.459]
-  // ——左右各空 1/4 多、上下更是大片空白（原稿是竖长画布 + 角色瘦长）。实测（scripts/probe-art.mjs
-  // 同款像素读回，2026-10-17）：沿用 Lisette 的 0.11~0.95 时人物只占窗口宽度的 40% 左右、
-  // 头顶上方空掉一大半。这里按美术真实范围重新收框（左/右各留 0.02 余量，
-  // 顶 -0.01 给抬手/耳朵留一点，底 0.46 保持"裁到腰"的胸像语义）。
-  Maine: { left: 0.255, right: 0.83, top: -0.01, bottom: 0.46 },
+  // 缅因妹妹（models/Maine）：moc 画布 5000×7000。实测（2026-10-17，scripts/probe-maine-*.mjs
+  // 像素剖面 + 带标尺全身图，逐个 fy 档读回）：
+  //   · 横向美术 fx ∈ [0.273, 0.813]（垂臂站姿；挥手大动作会短暂外溢，由画布裁掉）
+  //   · 头顶 fy = 0.040；**肚脐线 fy = 0.48**（0.47–0.50 为腹正面中央，袜口 0.58，整身到 0.96）
+  // 用户拍板（2026-10-17）：所有界面统一「肚脐以上特写」——带子**下边界就是肚脐线**
+  // （锚点 anchorY = 0.48，她"站在"肚脐线上）；上边界取 0.015，在头顶上方留 0.025
+  // （≈175 模型单位）容位：覆盖 ±10° 摆头时头顶的弧线位移（≈0.017）与耳朵/发饰，
+  // 又不留出一大片空白。横向沿用 0.255~0.83（左右各留约 0.018 余量）。
+  // ⚠ 旧注释里"美术只占 fy∈[0.043,0.459]"是错的（那条范围只量到了腰）：整身美术到 0.96，
+  // 所以底边 0.46 当时把腰以下全裁了。文档与预设必须按实测值走。
+  Maine: { left: 0.255, right: 0.83, top: 0.015, bottom: 0.48 },
   // 全身（保留能力：个别模型若原本就是半身稿，可用 full 原样显示）
   full: { left: 0, right: 1, top: 0, bottom: 1 }
 }
@@ -78,6 +83,26 @@ export function isBustFrame(frame) {
 }
 
 /**
+ * 标准可用区（CSS 像素）：**各界面统一缩放比例**的基准（2026-10-17 用户拍板）。
+ *
+ * 取值 = 工作台「凪面板」的默认舞台（面板宽 300px、舞台高约 480px）——
+ * 两个立绘界面里更紧的那个（桌宠默认 400×600，扣掉安全边距可用 356×574）。
+ *
+ * 规则（fitBand 的 standard 参数，见下）：
+ *   scale = min(本窗 contain, 标准区 contain)
+ *   · 装得下标准区 → **锁定标准比例**：桌宠 / 工作台 / 设置里她是同一个尺寸，
+ *     切换界面不跳变；桌宠窗拖得再大也不再变大（想变大用「尺寸」滑杆——那是用户显式意图）；
+ *   · 装不下（面板被拖窄 / 桌宠被缩到很小）→ 按本窗 contain **等比缩小**，
+ *     绝不裁头、绝不拉伸。
+ */
+export const STANDARD_BOX = { w: 300, h: 480 }
+
+/** 统一缩放基准只对胸像生效；full 是保留能力，按本窗 contain 原样装框 */
+export function standardBoxFor(frame) {
+  return isBustFrame(frame) ? STANDARD_BOX : null
+}
+
+/**
  * 在模型坐标系里框出"取景带"。
  * @param {string} frame 取景模式
  * @param {number} baseW 模型原始宽（模型单位）
@@ -109,11 +134,13 @@ export function frameBand(frame, baseW, baseH, modelName) {
  * 硬约束：scale === 1 时，带子的渲染矩形必须完全落在画布可用区内（>0 的余量），
  * 这样形象永远不可能越界去盖住画布外的 UI。
  *
- * @param {{band:object, boxW:number, boxH:number, scale?:number, pad?:object}} o
+ * @param {{band:object, boxW:number, boxH:number, scale?:number, pad?:object, standard?:object}} o
  *   pad: {top,right,bottom,left} 安全边距（像素），用来避开画布内的 UI
+ *   standard: {w,h} 标准可用区（见 STANDARD_BOX）。给了就再拿它封顶：
+ *     大窗锁标准比例（各界面同尺寸），小窗才按本窗 contain 等比缩小。
  * @returns {{scale:number,x:number,y:number,anchorY:number,bandW:number,bandH:number,rendered:object}}
  */
-export function fitBand({ band, boxW, boxH, scale = 1, pad = {} }) {
+export function fitBand({ band, boxW, boxH, scale = 1, pad = {}, standard = null }) {
   const pl = num(pad.left)
   const pr = num(pad.right)
   const pt = num(pad.top)
@@ -123,7 +150,18 @@ export function fitBand({ band, boxW, boxH, scale = 1, pad = {} }) {
   const availH = Math.max(1, boxH - pt - pb)
 
   // contain：取两个方向里更"紧"的那个 → 带子完整可见，绝不被裁
-  const fit = Math.min(availW / band.w, availH / band.h)
+  let fit = Math.min(availW / band.w, availH / band.h)
+
+  // 统一缩放：再拿「标准可用区」封顶（见 STANDARD_BOX）。
+  // 两个方向都只会把 fit 改小，contain 的硬约束不被破坏；standard 缺省（旧调用方）
+  // 或给 0 时行为与从前完全一致。
+  if (standard) {
+    const sw = num(standard.w)
+    const sh = num(standard.h)
+    if (sw > 0) fit = Math.min(fit, sw / band.w)
+    if (sh > 0) fit = Math.min(fit, sh / band.h)
+  }
+
   const s = fit * scale
 
   // 锚点是带子底边中点。x 的算法：
