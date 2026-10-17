@@ -9,6 +9,8 @@ import {
   familiarityRank,
   isLevelAtLeast,
   listAnchors,
+  sortAnchorsByTime,
+  groupAnchorsByDay,
   decideAnchorReference,
   normalizeAnchorState,
   emptyAnchorState
@@ -185,4 +187,65 @@ test('规范化只留白名单字段：外部覆盖字段与非法实体进不�
 
 test('操作符枚举固定', () => {
   assert.deepEqual(HA_OPS, ['==', '!=', '<', '<=', '>', '>='])
+})
+
+/* ---------------- 时间线视图（D 项，只读） ---------------- */
+
+const T = (n) => Date.UTC(2026, 9, 17) + n * 86400000 // 10-17 起算的第 n 天
+
+test('时间线排序：最近的在前，且不修改入参', () => {
+  const input = [{ id: 'a', occurredAt: T(0) }, { id: 'c', occurredAt: T(2) }, { id: 'b', occurredAt: T(1) }]
+  const frozen = JSON.parse(JSON.stringify(input))
+  const sorted = sortAnchorsByTime(input)
+  assert.deepEqual(sorted.map((x) => x.id), ['c', 'b', 'a'])
+  assert.deepEqual(input, frozen, '不得就地修改入参数组')
+})
+
+test('时间缺失/非法：排最后、保持原相对顺序、不补默认值', () => {
+  const input = [
+    { id: 'no-time' },
+    { id: 'bad', occurredAt: 'yesterday' },
+    { id: 'nan', occurredAt: NaN },
+    { id: 'ok', occurredAt: T(0) },
+    { id: 'no-time-2' }
+  ]
+  const sorted = sortAnchorsByTime(input)
+  assert.equal(sorted.at(-1).id, 'no-time-2')
+  assert.deepEqual(sorted.slice(0, 1).map((x) => x.id), ['ok'])
+  assert.deepEqual(sorted.slice(1).map((x) => x.id), ['no-time', 'bad', 'nan', 'no-time-2'])
+  // 不猜时间：occurredAt 仍是原样，没被填成 now
+  assert.equal(sorted.find((x) => x.id === 'no-time').occurredAt, undefined)
+})
+
+test('按天分组：同一天聚在一起，组内时间倒序', () => {
+  const input = [
+    { id: 'a', occurredAt: T(0) + 3600000 },
+    { id: 'b', occurredAt: T(1) },
+    { id: 'c', occurredAt: T(0) },
+    { id: 'd', occurredAt: T(1) + 7200000 }
+  ]
+  const groups = groupAnchorsByDay(input)
+  assert.equal(groups.length, 2)
+  assert.deepEqual(groups[0].items.map((x) => x.id), ['d', 'b'], '10-19 组内倒序')
+  assert.deepEqual(groups[1].items.map((x) => x.id), ['a', 'c'], '10-18 组内倒序')
+  for (const g of groups) assert.match(g.day, /^\d{4}-\d{2}-\d{2}$/)
+})
+
+test('按天分组：时间不明单独一组，day 为空串', () => {
+  const groups = groupAnchorsByDay([{ id: 'x' }, { id: 'y', occurredAt: T(0) }])
+  assert.equal(groups.length, 2)
+  assert.equal(groups[0].day !== '', true)
+  assert.equal(groups[1].day, '')
+  assert.deepEqual(groups[1].items.map((x) => x.id), ['x'])
+})
+
+test('时间线是只读的：不产生新锚点、不改变任何字段', () => {
+  const input = [{ id: 'a', kind: 'nickname', trust: 'user-stated', occurredAt: T(0), text: '小名' }]
+  const out = sortAnchorsByTime(input)
+  assert.equal(out.length, input.length)
+  assert.deepEqual(out[0], input[0])
+  // 脏输入安全
+  assert.deepEqual(sortAnchorsByTime(null), [])
+  assert.deepEqual(sortAnchorsByTime([null, undefined, 'x']).length, 3)
+  assert.deepEqual(groupAnchorsByDay(undefined), [])
 })

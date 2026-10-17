@@ -86,6 +86,48 @@ export function listAnchors({ now = Date.now(), relationLevel = 'stranger', anch
     }))
 }
 
+/* ---------------- 时间线视图（只读） ---------------- */
+
+/**
+ * 按发生时间**倒序**排（最近的在前）。
+ * 时间缺失或非法的排在最末尾，**并且不猜、不补默认值**（没有时间就是没有时间，
+ * 视图层如实显示「时间不明」）；它们之间保持原有相对顺序。
+ *
+ * 纯函数：不修改入参数组。
+ */
+export function sortAnchorsByTime(list) {
+  const arr = Array.isArray(list) ? list.slice() : []
+  const timeOf = (a) => (a && Number.isFinite(a.occurredAt) ? a.occurredAt : null)
+  // sort 在 ES2019 起保证稳定，时间都缺失时返回 0 即可保持原序
+  return arr.sort((a, b) => {
+    const ta = timeOf(a)
+    const tb = timeOf(b)
+    if (ta === null && tb === null) return 0
+    if (ta === null) return 1
+    if (tb === null) return -1
+    return tb - ta
+  })
+}
+
+/**
+ * 按天分组，供时间线视图画日期小标题。组内仍是时间倒序。
+ * @param {object[]} list
+ * @returns {Array<{day:string, items:object[]}>} day 为 '' 表示时间不明
+ */
+export function groupAnchorsByDay(list) {
+  const out = []
+  let cur = null
+  for (const a of sortAnchorsByTime(list)) {
+    const day = a && Number.isFinite(a.occurredAt) ? dayKeyOf(a.occurredAt) : ''
+    if (!cur || cur.day !== day) {
+      cur = { day, items: [] }
+      out.push(cur)
+    }
+    cur.items.push(a)
+  }
+  return out
+}
+
 /** 全新引用状态 */
 export function emptyAnchorState(now = Date.now()) {
   return { dayKey: dayKeyOf(now), count: 0, lastAt: 0, lastAnchorId: null }
