@@ -116,7 +116,13 @@ async function main() {
       off.notes.length === 0 && off.traces.length === 0 && !existsSync(NOTES_FILE),
     `文件存在=${existsSync(NOTES_FILE)}`
   )
-  check('如实说明外部写入未开放', off.externalWriteAvailable === false)
+  // B23 之后桥接已存在（externalWriteAvailable=能力），但没选目录前**这次**不许写（external.available=许可）。
+  // 两者不是一回事：这条同时钉住"别再假装没实现"和"未授权就是不能写"。
+  check(
+    '外部写入：桥接已实现，但没授权时不许写',
+    off.externalWriteAvailable === true && off.external?.available === false && off.external?.saved?.length === 0,
+    `available=${off.external?.available} dir=${JSON.stringify(off.external?.dir || '')}`
+  )
 
   /* ② 设置页开关：开 */
   const opened = await page.evaluate(async () => {
