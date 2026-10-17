@@ -114,10 +114,34 @@ export const TOOL_SCHEMAS = [
   })
 ]
 
+/**
+ * HA 服务数据里**不允许由 `extra` 覆盖**的键（大小写不敏感）。
+ *
+ * 为什么必须挡：确认框给用户看的是 `args.entity_id`，而 `extra` 是模型自由填的透传对象——
+ * 若 `extra.entity_id` 能覆盖它，就会出现「确认框写着客厅灯、实际对前门锁下达开关」的欺骗
+ * （FIX-1，已复现）。这类"描述与实际不符"是授权体系里最不能留的口子：
+ * 用户点的是他看到的那一行，所以那一行必须是真正会被执行的那个目标。
+ */
+const HA_RESERVED_KEYS = ['entity_id']
+
+/** 清洗 extra：只剔掉保留键，其余照旧透传（不擅自替用户决定哪些参数合法） */
+export function sanitizeHaExtra(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out = {}
+  for (const [k, v] of Object.entries(raw)) {
+    const key = String(k)
+    if (HA_RESERVED_KEYS.includes(key.toLowerCase())) continue
+    out[key] = v
+  }
+  return out
+}
+
 /** 把 home_set 的参数翻译成 HA 服务调用 */
 export function planHomeService(args) {
   const entityId = String(args.entity_id || '')
   const domain = entityId.split('.')[0] || 'switch'
+  // extra 先铺、entity_id 最后写：两道保险（清洗 + 顺序），任何一道单独失效都挡得住
+  const extra = sanitizeHaExtra(args.extra)
   if (domain === 'scene' || domain === 'script') {
     return { domain, service: 'turn_on', data: { entity_id: entityId } }
   }
@@ -128,15 +152,15 @@ export function planHomeService(args) {
     return {
       domain,
       service: 'turn_on',
-      data: { entity_id: entityId, brightness_pct: Math.min(Math.max(Number(args.brightness_pct), 0), 100) }
+      data: { ...extra, brightness_pct: Math.min(Math.max(Number(args.brightness_pct), 0), 100), entity_id: entityId }
     }
   }
   const state = String(args.state || '').toLowerCase()
   if (state === 'on' || state === 'off') {
-    return { domain, service: `turn_${state}`, data: { entity_id: entityId, ...(args.extra || {}) } }
+    return { domain, service: `turn_${state}`, data: { ...extra, entity_id: entityId } }
   }
-  if (args.extra && Object.keys(args.extra).length) {
-    return { domain, service: 'turn_on', data: { entity_id: entityId, ...args.extra } }
+  if (Object.keys(extra).length) {
+    return { domain, service: 'turn_on', data: { ...extra, entity_id: entityId } }
   }
   return { domain, service: 'toggle', data: { entity_id: entityId } }
 }
@@ -209,7 +233,8 @@ export function createToolRunner(deps) {
         if (!deps.ha?.configured) return { ok: false, summary: 'Home Assistant 未配置' }
         const plan = planHomeService(args)
         await deps.ha.callService(plan.domain, plan.service, plan.data)
-        return { ok: true, summary: `已调用 ${plan.domain}.${plan.service}（${args.entity_id}）` }
+        // 摘要读**最终 plan**，不读入参：万一将来又有别处能改写目标，摘要至少不会跟着撒谎
+        return { ok: true, summary: `已调用 ${plan.domain}.${plan.service}（${plan.data.entity_id}）` }
       }
       case 'home_scene': {
         if (!deps.haControlAuthorized?.()) return { ok: false, summary: 'HA 设备控制未单独授权或已暂停' }

@@ -2,7 +2,7 @@
 // 工具注册表与文件边界的纯逻辑单测。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { planHomeService, TOOL_SCHEMAS, createToolRunner } from '../src/core/tools/registry.js'
+import { planHomeService, sanitizeHaExtra, TOOL_SCHEMAS, createToolRunner } from '../src/core/tools/registry.js'
 import { resolveWithin } from '../src/core/tools/files.js'
 import { summarizeHaEvent } from '../src/core/homeassistant/ha.js'
 import { getToolRisk } from '../src/core/safety/policy.js'
@@ -30,6 +30,47 @@ test('home_set：亮度与温度', () => {
 test('home_set：场景与兜底 toggle', () => {
   assert.equal(planHomeService({ entity_id: 'scene.movie' }).domain, 'scene')
   assert.equal(planHomeService({ entity_id: 'fan.x' }).service, 'toggle')
+})
+
+// FIX-1：确认框显示的是 args.entity_id，extra 绝不能把它换掉
+test('HOME extra 不能覆盖目标实体（确认框写什么就动什么）', () => {
+  const attack = { entity_id: 'light.living_room', state: 'off', extra: { entity_id: 'lock.front_door' } }
+  const r = planHomeService(attack)
+  assert.equal(r.data.entity_id, 'light.living_room', '实际执行目标必须是被确认的那个')
+  assert.equal(r.domain, 'light')
+  // 大小写变体同样挡（HA 的键是小写，但入参来自模型，不能赌它守规矩）
+  assert.equal(planHomeService({ entity_id: 'light.a', state: 'on', extra: { Entity_Id: 'lock.b' } }).data.entity_id, 'light.a')
+  assert.equal(planHomeService({ entity_id: 'light.a', state: 'on', extra: { ENTITY_ID: 'lock.b' } }).data.entity_id, 'light.a')
+  // 亮度分支与"只给 extra"分支同样挡
+  assert.equal(planHomeService({ entity_id: 'light.a', brightness_pct: 40, extra: { entity_id: 'lock.b' } }).data.entity_id, 'light.a')
+  assert.equal(planHomeService({ entity_id: 'switch.a', extra: { entity_id: 'lock.b', foo: 1 } }).data.entity_id, 'switch.a')
+})
+
+test('HOME extra 的其它键照旧透传，且清洗函数对脏输入安全', () => {
+  const r = planHomeService({ entity_id: 'light.a', state: 'on', extra: { effect: 'rainbow', foo: 1 } })
+  assert.equal(r.data.effect, 'rainbow')
+  assert.equal(r.data.foo, 1)
+  assert.equal(r.data.entity_id, 'light.a')
+  assert.deepEqual(sanitizeHaExtra(null), {})
+  assert.deepEqual(sanitizeHaExtra('x'), {})
+  assert.deepEqual(sanitizeHaExtra([1]), {})
+  assert.deepEqual(sanitizeHaExtra({ entity_id: 'lock.b' }), {})
+})
+
+test('HOME 结果摘要读最终 plan，不读入参', async () => {
+  const sent = []
+  const run = createToolRunner({
+    haControlAuthorized: () => true,
+    haReadAuthorized: () => true,
+    ha: {
+      configured: true,
+      callService: async (d, s, data) => { sent.push({ d, s, data }); return { ok: true } }
+    }
+  })
+  const r = await run('home_set', { entity_id: 'light.a', state: 'on', extra: { entity_id: 'lock.b' } })
+  assert.equal(r.ok, true)
+  assert.ok(r.summary.includes('light.a'), `摘要必须说真话：${r.summary}`)
+  assert.equal(sent[0].data.entity_id, 'light.a')
 })
 
 test('HA 工具执行时逐次检查只读与控制授权，撤销中的读取不回传结果', async () => {
