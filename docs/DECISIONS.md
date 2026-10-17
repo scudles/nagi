@@ -366,3 +366,11 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
 - **未验证**：真机中断场景（掉电/强杀进程时的 rename 原子性由 OS 保证，未实机演练）；warnings 的用户可见性目前只到 console.error，未做 UI 提示。
 - **影响**：默认行为不变（写盘成功时无任何差异）；失败时的可见性与可恢复性质变。
 - **替代**：无（B01 首次实现）。
+
+## D48（2026-10-17）FIX-3 修复 / FIX-2 评估结案
+
+- **FIX-3（Playwright 生命周期，已修）**：`ensure()` 的 `starting = null` finally 从内层托管 try 提升到包住整个 async IIFE 的最外层——旧版 CDP 成功分支直接 `return`，该 finally 不在执行路径上，`starting` 永远停留已 fulfilled 的旧 Promise，page 崩溃后 `if (starting) return starting` 会把调用方引向死 page。`dispose()` 同步清理 starting（先取走 inflight、await 后关闭，启动中 dispose 不漏连接）。回归 `test/browser-lifecycle.test.js` 3/3：修复前两条以真实 Playwright 错误 "Target page, context or browser has been closed" 精确复现，修复后转绿；托管路径为对照组。
+- **FIX-2（外部进程替换竞态，评估后未修）**：复现脚本 `scripts/repro-fix2-toctou.mjs`（真实子进程、零 mock）三步量化：① 时序注入 100 轮 0 命中——resolveCwd 返回到 execFile 发起之间无 await 让出，且返回值已是 realpath 物理路径；② junction 软链欺骗被 `isPathWithin` 正确拒绝；③ open_app 无"检查→使用"路径对。单用户桌面场景下利用需本地代码执行 + 微秒级时序，威胁模型不成立。按 TASKS 规则（"复现不了降级为已知风险"）结案，**不宣称安全隔离完成**，报告留证 `%TEMP%/nagi-fix2-report.json`。
+- **依据**：browser-lifecycle 3/3（红→绿全过程）；repro-fix2-toctou 100 轮报告；`npm run build` 退出 0。
+- **影响**：FIX-3 修复对默认行为无差异（成功路径原本就工作），只在 page 失效/dispose 后改变连接复用行为；FIX-2 零代码改动。
+- **替代**：FIX-2 是首次评估结案；FIX-3 替代 TASKS 原"未修（未复现）"状态。

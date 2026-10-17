@@ -46,25 +46,25 @@ export function createBrowserTools(cfg = {}) {
     if (starting) return starting
 
     starting = (async () => {
-      if (!pw) pw = await importPlaywright()
-
-      // 1) CDP 接管
-      if (preferCdp) {
-        try {
-          const browser = await pw.chromium.connectOverCDP(`http://localhost:${cdpPort}`, { timeout: 4000 })
-          const ctx = browser.contexts()[0] || (await browser.newContext())
-          conn = browser
-          connKind = 'cdp'
-          page = ctx.pages().at(-1) || (await ctx.newPage())
-          attachPageEvents()
-          return { conn, page }
-        } catch (e) {
-          // 回退托管
-        }
-      }
-
-      // 2) 托管模式
       try {
+        if (!pw) pw = await importPlaywright()
+
+        // 1) CDP 接管
+        if (preferCdp) {
+          try {
+            const browser = await pw.chromium.connectOverCDP(`http://localhost:${cdpPort}`, { timeout: 4000 })
+            const ctx = browser.contexts()[0] || (await browser.newContext())
+            conn = browser
+            connKind = 'cdp'
+            page = ctx.pages().at(-1) || (await ctx.newPage())
+            attachPageEvents()
+            return { conn, page }
+          } catch (e) {
+            // 回退托管
+          }
+        }
+
+        // 2) 托管模式
         const ctx = await pw.chromium.launchPersistentContext(cfg.userDataDir || join(process.cwd(), '.pw-profile'), {
           headless: true,
           viewport: { width: 1280, height: 800 },
@@ -82,6 +82,10 @@ export function createBrowserTools(cfg = {}) {
         }
         throw new Error('浏览器连接失败：' + msg)
       } finally {
+        // FIX-3：finally 必须在最外层——旧版把它挂在内层托管 try 上，
+        // CDP 成功分支直接 return，永远走不到那个 finally，starting 会
+        // 停留一个已 fulfilled 的旧 Promise：page 崩溃后 ensure() 会把
+        // 调用方引向死 page（工具在失效页面上操作）。
         starting = null
       }
     })()
@@ -192,6 +196,18 @@ export function createBrowserTools(cfg = {}) {
 
     /** 退出时清理 */
     async dispose() {
+      // FIX-3：starting 也必须清——旧版 dispose 不碰它，退出后旧 Promise
+      // 仍会被 ensure() 返回（拿到已释放的连接）。若启动正在进行，先等它
+      // 结束再关，否则刚建好的连接会漏掉。
+      const inflight = starting
+      starting = null
+      if (inflight) {
+        try {
+          await inflight
+        } catch {
+          /* 启动失败无需处理 */
+        }
+      }
       try {
         if (connKind === 'cdp' && conn) await conn.close() // 断开连接，不关用户的浏览器
         else if (conn) await conn.close() // 托管浏览器一并关闭
