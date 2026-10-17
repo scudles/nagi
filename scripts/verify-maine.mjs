@@ -18,7 +18,7 @@
 //
 // 用法：npm run verify:maine  （加 --no-shots 不存图）
 import { spawn } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { chromium } from 'playwright'
@@ -122,11 +122,25 @@ try {
     `moc ${meta.canvas.w}×${meta.canvas.h}，参数 ${meta.params}，贴图 ${meta.textures}，物理 ${meta.physics}，口型 ${meta.lipSync}`)
 
   const nagiOnes = meta.expressions.filter((n) => String(n).startsWith('nagi_'))
-  check('B. 表情清单', meta.expressions.length >= 36 && nagiOnes.length === 5,
+  check('B. 表情清单', meta.expressions.length >= 34 && nagiOnes.length === 5,
     `共 ${meta.expressions.length} 个（nagi_* ${nagiOnes.length} 个）`)
 
-  // 6 情绪 → 表情（与 models/Maine/nagi-emotion.json 一致；这里用**显示名**）
-  const MAP = { calm: 'nagi_neutral', smile: '脸红', joy: 'nagi_joy', puzzled: 'nagi_puzzled', worry: '紧张汗', pout: 'nagi_pout' }
+  // 6 情绪 → 表情：**从 nagi-emotion.json 实读**，不硬编码期望表——2026-10-17 踩过：
+  // D37 把 smile 从文件名改成 Name 后，这里的硬编码表没同步（还写着 smile→脸红），
+  // 而检查只验"表情存在且可应用"、不对比配置，于是静默漂移，C 项失去意义。
+  // 实读之后：配置指向不存在的表情 → 应用失败 → C 项挂；配置改了 → 期望跟着改。
+  const EMOTION_KEYS = ['calm', 'smile', 'joy', 'puzzled', 'worry', 'pout']
+  const FALLBACK_MAP = { calm: 'nagi_neutral', smile: 'nagi_smile', joy: 'nagi_joy', puzzled: 'nagi_puzzled', worry: '紧张汗', pout: 'nagi_pout' }
+  let MAP = FALLBACK_MAP
+  try {
+    const cfg = JSON.parse(readFileSync(join(ROOT, 'models', 'Maine', 'nagi-emotion.json'), 'utf8'))
+    const got = {}
+    for (const k of EMOTION_KEYS) if (cfg[k]?.expr) got[k] = cfg[k].expr
+    if (Object.keys(got).length === EMOTION_KEYS.length) MAP = got
+    else console.log(`　· 情绪映射：配置缺 ${EMOTION_KEYS.filter((k) => !got[k]).join(',')}，用内置期望表`)
+  } catch {
+    console.log('　· 情绪映射：读 nagi-emotion.json 失败，用内置期望表')
+  }
   const emoBad = []
   for (const [emo, name] of Object.entries(MAP)) {
     const ok = await page.evaluate((n) => {

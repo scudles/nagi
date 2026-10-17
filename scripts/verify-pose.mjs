@@ -39,6 +39,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 function baseEnv(extra = {}) {
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE // 否则 electron 会当 node 跑
+  // 本机 GPU 进程会崩（gpu_process_host.cc exit_code=-1073741819），渲染器沙箱必须关，
+  // 否则桌宠页永远 ready 不了——2026-10-17 排查：本脚本是全仓唯一漏了这个开关的 verify，
+  // 连续两次"桌宠页未就绪"超时。其余 verify-*.mjs 都在自己的启动 env 里设了它。
+  env.NAGI_RENDERER_SANDBOX = '0'
   return Object.assign(env, extra)
 }
 
@@ -136,18 +140,33 @@ async function main() {
     if (!(await waitForCdp(port))) throw new Error('CDP 未就绪')
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`)
     const page = await findPage(browser)
-    if (!page) throw new Error('桌宠页未就绪（模型没加载出来？）')
+    if (!page) throw new Error('桌宠页未就绪（模型没加载出来？GPU 进程崩了？试 NAGI_RENDERER_SANDBOX=0）')
     await sleep(1200) // 等模型把首批帧跑完
 
     /* ① 黑脸系列：清单与调试口都碰不到 */
+    // 2026-10-17 改成**数据驱动**：原先把"11 个"写死（Lisette 时代的数字），
+    // 换模型后必然失败；而且"能应用"用返回 true 判断是假通过（找不到的表情也不抛错）。
+    // 现在直接读模型自己的表情清单来对齐，黑脸按"中英文名都挡"来判。
     const exprs = await page.evaluate(() => window.__nagiExpressionList())
-    check('表情清单无黑脸（11 个，其余一个不少）', Array.isArray(exprs) && exprs.length === 11 && !exprs.some((n) => /dark/i.test(n)), JSON.stringify(exprs))
+    const BLACK = /dark[_-]?mask|dark[_-]?face|脸黑/i
+    const nagi5 = ['nagi_neutral', 'nagi_smile', 'nagi_joy', 'nagi_puzzled', 'nagi_pout']
+    check(
+      '表情清单里没有黑脸，且 5 个 nagi_* 都在',
+      Array.isArray(exprs) && exprs.length > 0 && !exprs.some((n) => BLACK.test(String(n))) && nagi5.every((n) => exprs.includes(n)),
+      `共 ${exprs?.length} 个：${JSON.stringify(exprs)}`
+    )
     const blocked = await page.evaluate(() => window.__nagiTestExpression('dark_mask'))
     const ok2 = await page.evaluate(() => window.__nagiTestExpression('dark_mask2'))
-    const usable = await page.evaluate(() => window.__nagiTestExpression('nagi_calm'))
-    check('调试口拒绝黑脸（dark_mask / dark_mask2 均返回 false）', blocked === false && ok2 === false, `dark_mask→${blocked} dark_mask2→${ok2}`)
-    check('正常表情仍可手动应用（nagi_calm → true）', usable === true)
-    await page.evaluate(() => window.__nagiTestExpression('')) // 复位
+    const ok3 = await page.evaluate(() => window.__nagiTestExpression('脸黑'))
+    check(
+      '调试口拒绝黑脸（dark_mask / dark_mask2 / 脸黑 均返回 false）',
+      blocked === false && ok2 === false && ok3 === false,
+      `dark_mask→${blocked} dark_mask2→${ok2} 脸黑→${ok3}`
+    )
+    // 用真实存在的表情名验证"正常表情仍可应用"
+    const usable = await page.evaluate((n) => window.__nagiTestExpression(n), nagi5[0])
+    check('正常表情仍可手动应用', usable === true, `${nagi5[0]} → ${usable}`)
+    await page.evaluate(() => window.__nagiTestExpression(null)) // 复位
 
     /* ② 鼠标不跟随：焦点控制器必须一直是 0（它每帧都会把内部目标写进目光/头部参数） */
     const focusBefore = await page.evaluate(() => window.__nagiFocusState())
@@ -184,6 +203,18 @@ async function main() {
      *  3. 眼球因此是只属于姿态的硬信号；头部/身体参数还被框架呼吸（峰值
      *     ±15°/±10°/±4°）和待机动作干扰，只做方向性参考 + 快照目视，不设硬断言。
      */
+    // 2026-10-17 起"待机头部摆动"会顺带把眼珠也带着走（眼神跟头转）。
+    // 本块要测的是**注视（focus）**这一层的精确值，所以先把头部摆动关掉，
+    // 否则眼珠的增量里混进 ±0.05 的摆动分量，断言必然偏（实测 0.35 → 0.30）。
+    // 眼球游走也要一起按住：它用 set 写 ParamEyeBall*、钩子顺序还在姿态之后，
+    // 而 probePoseOnce 读的是帧末最终值——不按住，读到的是游走落点而不是姿态目标
+    // （2026-10-17 实测 ΔEyeBallX=0.468 ≠ 0.35，收回后也读到 0.11 的游走残余）。
+    // 产品层已加"姿态激活时游走让位"，这里再按住是双保险：姿态收回之后游走会恢复。
+    await page.evaluate(() => {
+      window.__nagiSetIdleHead?.(0)
+      window.__nagiSetEyeWander?.(0)
+    })
+    await sleep(600)
     const probe = () => page.evaluate(() => window.__nagiPoseParams())
     const STABLE_EPS = 0.03
     const HIT_EPS = STABLE_EPS + 0.005 // 断言容差略大于闸门：两次采样误差叠加后的安全边界
@@ -260,6 +291,10 @@ async function main() {
       `pose=${poseAfter} ΔEyeBallX=${rEyeX?.toFixed(4)} ΔEyeBallY=${rEyeY?.toFixed(4)}`
     )
     await saveSnap(page, 'neutral')
+    await page.evaluate(() => {
+      window.__nagiSetIdleHead?.(1) // 恢复头部摆动（下面几项要正常状态）
+      window.__nagiSetEyeWander?.(1)
+    })
 
     /* ④ 一次完整对话链路（mock 大脑）：thinking 时已在思考态；DONE 后中立 + 情绪落脸 */
     const trace = await page.evaluate(async () => {

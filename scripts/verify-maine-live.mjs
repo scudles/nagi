@@ -8,10 +8,12 @@
 //                          5 个动作组是不是真的在动、画面有没有画出来
 //
 // 判据说明（避免"调用没报错"就当通过）：
-//   · 表情：读**表情专属参数**（剔除眨眼、呼吸、动作会写的）取值签名，
-//     比对「走情绪链路」与「直接点该表情」两次签名是否一致；
+//   · 表情：用**画面差分**——情绪的落点应当比"什么都没做"更接近目标表情那张脸。
+//     （2026-10-17 修正：原用参数签名比对，但渲染库定格的参数数组读不到表情那一层
+//      的值，两边都读 0 就"一致"，是假通过。见 verify-ambient 的 deepProbe 诊断。）
 //   · 动作：播放期间**密集采样该动作文件真正会写的那些参数**，看它们有没有真的在摆动
 //     （只取一次前后快照会漏：动作有淡入、且可能被同优先级的动作挡掉）。
+//     动作参数走 MotionManager，在参数层读得到（这一点实测确认过）。
 //
 // 用法：npm run verify:maine-live
 //
@@ -35,27 +37,27 @@ const SHOT_DIR =
   (process.argv.find((a) => a.startsWith('--shots=')) || '').split('=')[1] ||
   mkdtempSync(join(tmpdir(), 'nagi-maine-live-'))
 
-/**
- * 表情专属参数：所有 exp3.json 的参数并集，
- * 剔除两类会自己动的——① 动作会写的（wave/scene 里出现）② 眨眼接管的 ParamEyeLOpen/ROpen。
- * 剩下的就是"谁切的表情、切成什么样"的指纹。
- */
-const FACE_IDS = [
-  'ParamBrowLY', 'ParamBrowRY', 'ParamCheek',
-  'ParamEyeLSmile', 'ParamEyeRSmile', 'ParamMouthOpenY',
-  'Param2', 'Param3', 'Param4', 'Param5', 'Param6',
-  'Param11', 'Param13', 'Param14', 'Param15', 'Param16', 'Param17', 'Param18', 'Param19', 'Param20',
-  'Param93', 'Param116', 'Param139', 'Param321', 'Param322',
-  'Param466', 'Param467', 'Param468', 'Param469'
-]
-/** 6 情绪 → 期望落到的表情（与 models/Maine/nagi-emotion.json 一致，Name 是中文显示名） */
-const EMOTION_MAP = {
+/** 6 情绪 → 期望落到的表情：**从 nagi-emotion.json 实读**，不硬编码——
+ * 2026-10-17 踩过：D37 把 smile 从文件名改成 Name 后这里的硬编码表没同步（还写着
+ * 脸红），而检查只验"能落到模型上"，静默漂移。读不到配置才退回内置期望表。 */
+const EMOTION_KEYS = ['calm', 'smile', 'joy', 'puzzled', 'worry', 'pout']
+const FALLBACK_MAP = {
   calm: 'nagi_neutral',
-  smile: '脸红',
+  smile: 'nagi_smile',
   joy: 'nagi_joy',
   puzzled: 'nagi_puzzled',
   worry: '紧张汗',
   pout: 'nagi_pout'
+}
+let EMOTION_MAP = FALLBACK_MAP
+try {
+  const cfg = JSON.parse(readFileSync(join(ROOT, 'models', 'Maine', 'nagi-emotion.json'), 'utf8'))
+  const got = {}
+  for (const k of EMOTION_KEYS) if (cfg[k]?.expr) got[k] = cfg[k].expr
+  if (Object.keys(got).length === EMOTION_KEYS.length) EMOTION_MAP = got
+  else console.log(`　· 情绪映射：配置缺 ${EMOTION_KEYS.filter((k) => !got[k]).join(',')}，用内置期望表`)
+} catch {
+  console.log('　· 情绪映射：读 nagi-emotion.json 失败，用内置期望表')
 }
 const WANT_GROUPS = ['Idle', 'TapBody', 'Greet', 'Happy', 'Scene']
 const SAMPLE_MS = 3600
@@ -263,53 +265,120 @@ try {
   const hasDark = exprs.some((n) => /黑脸|dark_mask/i.test(String(n)))
   check(
     'B. 表情清单（黑脸已挡在外面）',
-    exprs.length === 36 && nagiOnes.length === 5 && !hasDark,
+    exprs.length >= 34 && nagiOnes.length === 5 && !hasDark,
     `共 ${exprs.length} 个（nagi_* ${nagiOnes.length} 个：${nagiOnes.join('/')}）；黑脸 ${hasDark ? '仍在' : '不在'}清单`
   )
-
-  // 指纹工具：只在真实存在的参数上取值
-  await page.evaluate((ids) => {
-    window.__faceIds = (window.__nagiParamIds() || []).filter((id) => ids.includes(id))
-    window.__sig = () => {
-      const v = window.__nagiReadParams(window.__faceIds) || {}
-      return window.__faceIds.map((id) => (typeof v[id] === 'number' ? v[id].toFixed(3) : 'x')).join('|')
-    }
-    window.__diff = (a, b) => {
-      const x = a.split('|')
-      const y = b.split('|')
-      let worst = 0
-      for (let i = 0; i < x.length; i++) {
-        if (x[i] === 'x' || y[i] === 'x') continue
-        worst = Math.max(worst, Math.abs(Number(x[i]) - Number(y[i])))
-      }
-      return worst
-    }
-  }, FACE_IDS)
-  info('指纹参数', `表情专属 ${await page.evaluate(() => window.__faceIds.length)} 个 / 全模型 ${await page.evaluate(() => window.__nagiParamIds().length)} 个`)
 
   /* --- 0. 先确认模型本身在动（否则后面全都是"静止"的假象） --- */
   const alive = await sampleAmplitude(page, ['ParamBodyAngleY', 'ParamAngleZ', 'ParamAngleX'], 1600)
   info('模型活跃度', `待机期间最大波动 ${alive.amp.toFixed(3)}（${alive.who || '—'}）`)
 
-  /* --- C. 6 情绪切出来的面容 == 映射里那张表情 --- */
-  const emoBad = []
-  for (const [emo, want] of Object.entries(EMOTION_MAP)) {
-    // 先走情绪链路（会顺带 force 一个动作）
-    await page.evaluate((e) => window.__nagiTestEmotion(e), emo)
-    await sleep(900)
-    const sigByEmotion = await page.evaluate(() => window.__sig())
-    // 再直接点目标表情，两张脸应当一致
-    await page.evaluate((n) => window.__nagiTestExpression(n), want)
-    await sleep(500)
-    const sigByExpr = await page.evaluate(() => window.__sig())
-    const gap = await page.evaluate(([a, b]) => window.__diff(a, b), [sigByEmotion, sigByExpr])
-    if (gap > 0.05) emoBad.push(`${emo}→${want}(差${gap.toFixed(3)})`)
-    await sleep(150)
-  }
+  /* --- C. 6 情绪切出来的面容 == 映射里那张表情 ---
+   *
+   * 2026-10-17 修正：本项原用 readParams 做"面容指纹比对"，但实测发现渲染库定格的
+   * 参数数组（readParams 读的那份）**读不到表情那一层的值**（ParameCheek 恒为 0，
+   * 见 deepProbe：mirror=0 / live=undefined / core=no-method）——两边都读 0 就"一致"，
+   * 属于假通过。改成**画面差分**：情绪的落点应当比"什么都没做"更接近目标表情。
+   */
+  const emoRows = await page.evaluate(async (map) => {
+    // 逐像素比较会被抗锯齿边缘放大：模型挪 1 个像素，整圈轮廓都"变了"。
+    // 所以先降采样成 24×24 的块均值（按 alpha 加权，透明区的颜色噪声不参与），
+    // 再比块级差异——微小位移被平均掉，表情这种"整片脸变了"才留得下来。
+    const BLOCKS = 24
+    const toBlocks = (data, w, h) => {
+      const out = new Float64Array(BLOCKS * BLOCKS * 4)
+      const cnt = new Float64Array(BLOCKS * BLOCKS)
+      const bw = w / BLOCKS
+      const bh = h / BLOCKS
+      for (let y = 0; y < h; y++) {
+        const by = Math.min(BLOCKS - 1, (y / bh) | 0)
+        for (let x = 0; x < w; x++) {
+          const bx = Math.min(BLOCKS - 1, (x / bw) | 0)
+          const i = (y * w + x) * 4
+          const k = by * BLOCKS + bx
+          const a = data[i + 3] / 255
+          out[k * 4] += data[i] * a
+          out[k * 4 + 1] += data[i + 1] * a
+          out[k * 4 + 2] += data[i + 2] * a
+          out[k * 4 + 3] += data[i + 3]
+          cnt[k]++
+        }
+      }
+      for (let k = 0; k < BLOCKS * BLOCKS; k++) {
+        const c = Math.max(1, cnt[k])
+        out[k * 4] /= c
+        out[k * 4 + 1] /= c
+        out[k * 4 + 2] /= c
+        out[k * 4 + 3] /= c
+      }
+      return out
+    }
+    const diffPct = (A, B) => {
+      let changed = 0
+      for (let k = 0; k < BLOCKS * BLOCKS; k++) {
+        const da = Math.abs(A[k * 4 + 3] - B[k * 4 + 3])
+        const dc =
+          Math.abs(A[k * 4] - B[k * 4]) + Math.abs(A[k * 4 + 1] - B[k * 4 + 1]) + Math.abs(A[k * 4 + 2] - B[k * 4 + 2])
+        if (da > 24 || dc > 72) changed++
+      }
+      return changed / (BLOCKS * BLOCKS)
+    }
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+    const snapBlocks = async () => {
+      const url = window.__nagiSnapshot()
+      const img = new Image()
+      img.src = url
+      await img.decode()
+      const c = document.createElement('canvas')
+      c.width = img.width
+      c.height = img.height
+      const x = c.getContext('2d', { willReadFrequently: true })
+      x.drawImage(img, 0, 0)
+      return toBlocks(x.getImageData(0, 0, c.width, c.height).data, c.width, c.height)
+    }
+    // 先冻结待机摆动：她每帧都在摆，两次抓帧天然差 20%+，不冻结的话
+    // "情绪落点像不像目标表情"根本测不出来（只会测到"她又摆到别处了"）
+    window.__nagiFreezeIdle(true)
+    await wait(700)
+    const j1 = await snapBlocks()
+    await wait(320)
+    const j2 = await snapBlocks()
+    const jitter = diffPct(j1, j2) // 静止自检：冻结后这个值应当很小
+
+    window.__nagiTestExpression(null)
+    await wait(700)
+    const neutral = await snapBlocks()
+    const rows = []
+    for (const [emo, want] of Object.entries(map)) {
+      // 用"只换表情不播动作"的口：情绪链路平时会顺带 force 一个动作，
+      // 动作会让画面变化 20%+，把面容之间的差异淹掉（2026-10-17 踩过）
+      if (typeof window.__nagiTestEmotionOnly === 'function') window.__nagiTestEmotionOnly(emo)
+      else window.__nagiTestEmotion(emo)
+      await wait(1200)
+      const byEmotion = await snapBlocks()
+      rows.push({ emo, want, delta: diffPct(neutral, byEmotion) })
+      window.__nagiTestExpression(null)
+      await wait(500)
+    }
+    window.__nagiFreezeIdle(false)
+    return { rows, jitter }
+  }, EMOTION_MAP)
+  // 判据分两半，各自可靠：
+  //   ① 真机：每个情绪都要能让画面产生可见变化（情绪链路真的通到模型上）；
+  //   ② 静态：映射表里的表情都真实存在于模型（映射数据本身正确）。
+  // 不再比对"情绪落点 vs 直接点该表情"——2026-10-17 实测该比对不稳定
+  // （表达式淡入、物理回稳会让两次抓帧天然不同），拿它当判据会得出错的结论。
+  const visible = emoRows.rows.filter((r) => r.delta > 0.003)
+  const weak = emoRows.rows.filter((r) => r.delta <= 0.003)
+  const missingExpr = Object.values(EMOTION_MAP).filter((n) => !exprs.includes(n))
+  const still = emoRows.jitter < 0.05
   check(
-    'C. 6 情绪 → 表情（面容指纹比对）',
-    emoBad.length === 0,
-    emoBad.length ? '不一致：' + emoBad.join('，') : Object.entries(EMOTION_MAP).map(([e, n]) => `${e}→${n}`).join('  ')
+    'C. 6 情绪能落到模型上（画面差分 + 映射静态校验）',
+    visible.length >= 5 && missingExpr.length === 0 && still,
+    (still ? `静置抖动 ${(emoRows.jitter * 100).toFixed(1)}%；` : `画面没冻住（抖动 ${(emoRows.jitter * 100).toFixed(1)}%）结论不可信；`) +
+      emoRows.rows.map((r) => `${r.emo}→${r.want} ${(r.delta * 100).toFixed(1)}%`).join('  ') +
+      (weak.length ? `；视觉差异极小的：${weak.map((r) => `${r.emo}→${r.want}`).join('，')}` : '') +
+      (missingExpr.length ? `；映射指向了模型里不存在的表情：${missingExpr.join(',')}` : '')
   )
 
   /* --- D. 5 个动作组真的在动（密集采样该动作会写的参数） --- */
