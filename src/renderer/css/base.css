@@ -163,6 +163,15 @@ body[data-mode="workbench"] {
   border-left: 2px solid var(--line);
   border-radius: 6px;
 }
+/* 回忆时间线的日期小标题：比分区标题轻、比正文弱，只作分隔用 */
+.notes-panel .np-day {
+  font-size: 11px;
+  color: var(--dim, #9aa3b2);
+  margin: 10px 0 5px;
+  padding-left: 1px;
+  letter-spacing: .06em;
+}
+.notes-panel .np-day::before { content: '— '; opacity: .6; }
 .notes-panel .np-meta { font-size: 11px; color: var(--dim, #9aa3b2); margin-bottom: 3px; }
 .notes-panel .np-text { font-size: 12.5px; line-height: 1.6; word-break: break-word; }
 .notes-panel .np-foot { font-size: 11px; margin: 10px 0 0; }

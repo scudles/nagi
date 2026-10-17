@@ -11,6 +11,7 @@ import { ollamaTagsUrl } from '../../core/llm/ollama.js'
 import { EDGE_VOICES, TTS_ENGINES, ASR_ENGINES } from '../../core/voice/index.js'
 import { toSegments } from '../../core/relation/timeline.js'
 import { presenceConfig } from '../../core/presence/circadian.js'
+import { sortAnchorsByTime, groupAnchorsByDay } from '../../core/presence/anchors.js'
 import { NOTES_EVENT } from '../../shared/notes-protocol.js'
 import * as ui from './ui.js'
 import { initChat, sendText } from './chat.js'
@@ -114,10 +115,28 @@ function showNotesEntry(durationMs) {
 /* ---------------- 她留下的东西（BLUE-3：便签 / 行动留痕 / 回忆物） ---------------- */
 
 const NOTE_KIND_LABEL = { activity: '独处', reunion: '归来', action: '行动' }
+/** 回忆物的四种：第一次、外号、共同的梗、答应过的事 */
+const ANCHOR_KIND_LABEL = {
+  'first-contact': '第一次',
+  nickname: '外号',
+  'shared-reference': '共同的梗',
+  promise: '答应过的事'
+}
+/** 时间线视图一次最多画多少条（只读展示，不分页；主要是别让 DOM 无限长） */
+const ANCHOR_TIMELINE_MAX = 20
 
 function notesTimeText(at) {
   if (!Number.isFinite(at)) return ''
   return new Date(at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+/** 时间线的日期小标题：同年只显示月日，跨年才带年份；时间不明如实说出来 */
+function notesDayText(day) {
+  if (!day) return '时间不明'
+  const parts = String(day).split('-').map(Number)
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return String(day)
+  const [y, m, d] = parts
+  return y === new Date().getFullYear() ? `${m}月${d}日` : `${y}年${m}月${d}日`
 }
 
 /** 渲染查看器内容（数据来自主进程只读列表；写不写、存不存都由设置开关决定） */
@@ -183,21 +202,40 @@ function renderNotesPanel(body, data) {
     section('帮你做过的事', '还没有记录。她替你跑过工具之后会记一笔（只说跑过、返回，不代表外部效果已生效）。', items)
   }
 
-  // 回忆物（只读展示：她可能想起来的共同经历；是否提起由概率门决定，不会硬凑）
+  // 回忆物：按发生时间倒序的时间线（只读展示；她是否提起由概率门决定，这里不替她开口）
   if (enabled.anchors) {
-    const items = (data.anchors || []).slice(0, 8).map((a) => {
-      const el = document.createElement('div')
-      el.className = 'np-item'
-      const meta = document.createElement('div')
-      meta.className = 'np-meta'
-      meta.textContent = `${notesTimeText(a.occurredAt)} · ${a.trust === 'user-stated' ? '你说过的' : a.trust === 'observed' ? '有来源的' : '她自己的感受'}`
-      const text = document.createElement('div')
-      text.className = 'np-text'
-      text.textContent = a.text || '（无正文）'
-      el.append(meta, text)
-      return el
-    })
-    section('可能想起来的', '还没有可回想的共同经历。', items)
+    // 先按时间排好再截断，否则截掉的可能是最近的
+    const sorted = sortAnchorsByTime(data.anchors || []).slice(0, ANCHOR_TIMELINE_MAX)
+    const items = []
+    for (const g of groupAnchorsByDay(sorted)) {
+      const head = document.createElement('div')
+      head.className = 'np-day'
+      head.textContent = notesDayText(g.day)
+      items.push(head)
+      for (const a of g.items) {
+        const el = document.createElement('div')
+        el.className = 'np-item'
+        const meta = document.createElement('div')
+        meta.className = 'np-meta'
+        const when = Number.isFinite(a.occurredAt) ? notesTimeText(a.occurredAt) : '时间不明'
+        const trust = a.trust === 'user-stated' ? '你说过的' : a.trust === 'observed' ? '有来源的' : '她自己的感受'
+        meta.textContent = `${when} · ${ANCHOR_KIND_LABEL[a.kind] || a.kind} · ${trust}`
+        const text = document.createElement('div')
+        text.className = 'np-text'
+        text.textContent = a.text || '（无正文）'
+        el.append(meta, text)
+        items.push(el)
+      }
+    }
+    const total = (data.anchors || []).length
+    section('共同的时间线', '还没有可回想的共同经历。', items)
+    if (total > sorted.length) {
+      const more = document.createElement('p')
+      more.className = 'dim'
+      more.style.margin = '6px 0 0'
+      more.textContent = `只显示最近 ${sorted.length} 条，共 ${total} 条。`
+      body.appendChild(more)
+    }
   }
 
   // 边界说明：外部文件写入未实现（不伪装成功）
@@ -1712,6 +1750,14 @@ async function refreshVoice() {
   if (vol) vol.value = String(cfg.volume)
   document.getElementById('set-voice-volume-val').textContent = String(cfg.volume)
 
+  // 语气音：默认关闭；概率填的是百分比（上限 30% 与 core 侧上限一致）
+  set('set-backchannel', cfg.backchannel?.enabled === true)
+  const bcProb = document.getElementById('set-backchannel-prob')
+  const bcPct = Math.round((Number(cfg.backchannel?.probability) || 0) * 100)
+  if (bcProb) bcProb.value = String(Math.min(30, Math.max(0, bcPct)))
+  const bcProbVal = document.getElementById('set-backchannel-prob-val')
+  if (bcProbVal) bcProbVal.textContent = `${bcProb ? Number(bcProb.value) : 0}%`
+
   const pt = document.getElementById('set-preview-text')
   if (pt && !pt.value) pt.value = VOICE_PREVIEW_TEXT
 }
@@ -1782,6 +1828,10 @@ function wireVoiceSettings(on) {
   vol?.addEventListener('input', () => {
     document.getElementById('set-voice-volume-val').textContent = String(Number(vol.value))
   })
+  const bcProb = document.getElementById('set-backchannel-prob')
+  bcProb?.addEventListener('input', () => {
+    document.getElementById('set-backchannel-prob-val').textContent = `${Number(bcProb.value)}%`
+  })
 
   // 换引擎 → 音色下拉跟着换数据源
   document.getElementById('set-tts-engine')?.addEventListener('change', () => fillTtsVoices(voiceSnapshot))
@@ -1792,6 +1842,9 @@ function wireVoiceSettings(on) {
   on('btn-save-voice', async () => {
     const engine = document.getElementById('set-tts-engine').value
     const voice = document.getElementById('set-tts-voice').value
+    // 语气音里未在界面暴露的字段（perDayMax / 间隔 / 深夜开关）要从快照带上，
+    // 否则保存会把它们抹成 undefined。
+    const bcPrev = voiceSnapshot?.voice?.backchannel || {}
     await window.nagi.settings.set({
       voice: {
         ttsEnabled: document.getElementById('set-voice-enabled').checked,
@@ -1800,6 +1853,14 @@ function wireVoiceSettings(on) {
         voiceByEngine: voice ? { [engine]: voice } : {},
         rate: Number(document.getElementById('set-voice-rate').value) || 0,
         volume: Number(document.getElementById('set-voice-volume').value ?? 100),
+        // 语气音：整块写回（保留未在界面上暴露的 perDayMax / 间隔 / 深夜开关）
+        backchannel: {
+          enabled: document.getElementById('set-backchannel')?.checked === true,
+          probability: Number(document.getElementById('set-backchannel-prob')?.value || 0) / 100,
+          perDayMax: Number.isFinite(bcPrev.perDayMax) ? bcPrev.perDayMax : 4,
+          minIntervalMs: Number.isFinite(bcPrev.minIntervalMs) ? bcPrev.minIntervalMs : 180000,
+          allowAtNight: bcPrev.allowAtNight === true
+        },
         speakOnReply: document.getElementById('set-speak-reply').checked,
         speakOnProactive: document.getElementById('set-speak-proactive').checked,
         lipSync: document.getElementById('set-lipsync').checked,

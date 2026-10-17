@@ -15,10 +15,11 @@
 
 import { EVT, AGENT_EVENT } from '../../shared/protocol.js'
 import { VOICE_EVT, mergeVoiceSettings } from '../../shared/voice-protocol.js'
-import { createLipTrack, createSegmenter, toSpeechText, encodeWav, resample, trimSilence, peak, ASR_SAMPLE_RATE } from '../../core/voice/index.js'
+import { createLipTrack, createSegmenter, toSpeechText, encodeWav, resample, trimSilence, peak, ASR_SAMPLE_RATE, decideBackchannel, emptyBackchannelState } from '../../core/voice/index.js'
 import * as l2d from './live2d.js'
 import * as ui from './ui.js'
 import { sendText } from './chat.js'
+import { getRhythm } from './presence.js'
 
 /** 录音短于这么久当作误触（手指刚碰到就抬起来了） */
 const MIN_RECORD_MS = 450
@@ -51,11 +52,50 @@ function cancelReply() {
   }
 }
 
+/* ---------------- 非语言语气音（回合首尾；默认关闭） ---------------- */
+
+/**
+ * 语气音状态。**只存内存**：关掉开关不重放积压，重启归零（语气音是点缀，
+ * 不值得为它落盘，落盘反而会让它"跨天还记得"，那不是我们想要的）。
+ */
+let backchannelState = emptyBackchannelState()
+
+/**
+ * 取一句语气音；不该出声时返回 null。
+ * 决策全在 core/voice/backchannel.js（纯函数，有单测）；这里只负责喂上下文。
+ * 开关默认关闭 → 本函数在默认配置下恒返回 null，且不产生任何额外开销。
+ */
+function takeBackchannel(phase) {
+  try {
+    const bc = cfg().backchannel
+    if (!bc || bc.enabled !== true) return null
+    const privacy = getSettings?.()?.privacy || {}
+    const quiet = privacy.doNotDisturb === true || privacy.onlyPresence === true
+    const r = decideBackchannel({
+      phase,
+      mood,
+      period: getRhythm?.()?.period || null,
+      quiet,
+      config: bc,
+      state: backchannelState,
+      now: Date.now()
+    })
+    backchannelState = r.state
+    return r.text || null
+  } catch (err) {
+    console.warn('[voice] 语气音决策失败，已忽略：', err?.message)
+    return null
+  }
+}
+
 function beginReply() {
   cancelReply()
   stopSpeechOnly()
   reply = { segmenter: createSegmenter(), queue: [], running: false, cancelled: false,
     sawDelta: false, done: false, rawText: '', emittedText: '', deferred: false }
+  // 回合开头：先出一声再说话（默认关闭时这里是 null，队列不受影响）
+  const bcStart = takeBackchannel('start')
+  if (bcStart) reply.queue.push(bcStart)
 }
 
 async function pumpReply() {
@@ -111,6 +151,9 @@ function finishReply(text) {
       if (clean) reply.queue.push(clean)
     }
   }
+  // 回合收尾：说完再留一声（默认关闭时这里是 null）
+  const bcEnd = takeBackchannel('end')
+  if (bcEnd) reply.queue.push(bcEnd)
   reply.done = true
   pumpReply()
 }

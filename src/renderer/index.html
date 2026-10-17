@@ -333,6 +333,11 @@
         <label class="check"><input id="set-speak-reply" type="checkbox" /> 她说完话自动念出来</label>
         <label class="check"><input id="set-speak-proactive" type="checkbox" /> 主动搭话、日程提醒也念出来</label>
         <label class="check"><input id="set-voice-profile" type="checkbox" /> 语音情绪映射（语速、音高、音量随她的情绪与昼夜时段微调）</label>
+        <label class="check"><input id="set-backchannel" type="checkbox" /> 回合首尾的语气音（「嗯。」「唉……」这类没有语义的短音；默认关闭）</label>
+        <label>语气音出现概率 <span id="set-backchannel-prob-val" class="dim">0%</span>
+          <input id="set-backchannel-prob" type="range" min="0" max="30" step="5" />
+        </label>
+        <div class="dim voice-note">语气音只在她开口前/说完后来一声，深夜与勿扰时一律不出声；概率上限 30%，每天最多 4 次。</div>
         <label class="check"><input id="set-lipsync" type="checkbox" /> 说话时同步口型</label>
         <label>试听文本 <input id="set-preview-text" type="text" /></label>
         <div class="sp-row">
