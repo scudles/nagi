@@ -87,17 +87,30 @@ export function buildFallbackObservation(windows = [], at = Date.now(), { proces
 
 /**
  * 合并 SMTC 观测与窗口标题兜底（选择策略，纯函数可单测）：
- *   ① SMTC 有「播放中」会话 → 以 SMTC 为准（权威、有播放状态）；
+ *   ① SMTC 有「播放中」会话 → 以 SMTC 为主，但**兜底里的其他播放器要并进来**
+ *      （2026-10-18 真机：用户一边在 Edge 看视频、一边用网易云听歌，
+ *       旧实现只报 Edge，歌被完全盖掉 → 她以为用户只是在看视频）；
  *   ② 否则有白名单播放器标题 → 用兜底（状态 unknown、来源已标注，措辞诚实）；
  *   ③ 再否则用 SMTC 的 paused/stopped（至少「刚才在放的那个已暂停」是事实）；
  *   ④ 都没有 → no-session。
  */
 export function mergeMediaObservations(smtcRaw, fallbackRaw) {
-  const smtcBest = smtcRaw?.available && Array.isArray(smtcRaw.sessions) ? pickActiveSession(smtcRaw.sessions) : null
-  if (smtcBest?.playbackStatus === 'playing') return { available: true, sessions: smtcRaw.sessions }
-  if (fallbackRaw?.available && fallbackRaw.sessions?.length) {
-    return { available: true, sessions: fallbackRaw.sessions }
+  const smtcSessions = smtcRaw?.available && Array.isArray(smtcRaw.sessions) ? smtcRaw.sessions : []
+  const smtcBest = pickActiveSession(smtcSessions)
+  const fallbackSessions = fallbackRaw?.available && Array.isArray(fallbackRaw.sessions) ? fallbackRaw.sessions : []
+
+  if (smtcBest?.playbackStatus === 'playing') {
+    // 主报告用 SMTC（权威），再并上窗口标题兜底里**不同应用**的条目，
+    // 让「同时还在听歌」这件事对模型可见。同一应用不重复（避免标题与 SMTC 双份）。
+    const seen = new Set(smtcSessions.map((s) => String(s?.app || '').toLowerCase()))
+    const extra = fallbackSessions.filter((s) => !seen.has(String(s?.app || '').toLowerCase()))
+    return { available: true, sessions: [...smtcSessions, ...extra] }
   }
-  if (smtcRaw?.available) return { available: true, sessions: smtcRaw.sessions }
+  if (fallbackSessions.length) {
+    // 兜底为主时，也把 SMTC 里**正在播放**的会话带上（否则视频在播却只报歌）
+    const playing = smtcSessions.filter((s) => pickActiveSession([s])?.playbackStatus === 'playing')
+    return { available: true, sessions: [...fallbackSessions, ...playing] }
+  }
+  if (smtcRaw?.available) return { available: true, sessions: smtcSessions }
   return { available: false, reason: smtcRaw?.reason || fallbackRaw?.reason || 'no-session' }
 }

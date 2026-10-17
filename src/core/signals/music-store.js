@@ -73,4 +73,13 @@ export class MusicSignal {
     if (!this.authorized() || this.doNotDisturb()) return []
     return musicContext(this.last, now)
   }
+
+  /**
+   * 缓存是否够新（够新就不必再探一次 PowerShell）。
+   * 与 status() 内部的复用阈值（60 秒）保持一致，改一处必须改另一处。
+   */
+  fresh(now = Date.now()) {
+    return Boolean(this.last) && Number.isFinite(now - this.last.observedAt) &&
+      now - this.last.observedAt <= 60000
+  }
 }

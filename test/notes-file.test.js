@@ -193,10 +193,12 @@ test('状态：关闭即清空（不重放积压）、脏数据可恢复、不�
   assert.equal(r.reason, 'ok')
   assert.deepEqual(s, snapshot, '传入的 state 不得被就地修改')
 
-  assert.deepEqual(normalizeNoteFileState({ dayKey: 1, count: 'x', lastAt: 'y', written: 'no' }), {
+  // now 必须显式传 T0：省略会用真实 Date.now()，跨零点后 dayKey 变成"明天"，
+  // 断言 expect_day(T0) 就必挂（2026-10-18 00:2x 实测踩到，是测试自己的时间炸弹）
+  assert.deepEqual(normalizeNoteFileState({ dayKey: 1, count: 'x', lastAt: 'y', written: 'no' }, T0), {
     dayKey: expect_day(s), count: 0, lastAt: 0, written: []
   })
-  assert.deepEqual(normalizeNoteFileState(null).written, [])
+  assert.deepEqual(normalizeNoteFileState(null, T0).written, [])
   const reset = resetNoteFileState(T0)
   assert.equal(reset.count, 0)
   assert.equal(reset.written.length, 0)

@@ -112,7 +112,18 @@ export function normalizeMediaObservation(raw, at = Date.now()) {
   const sessions = Array.isArray(raw.sessions) ? raw.sessions : [raw]
   if (sessions.length === 0) return { available: false, reason: 'no-session', observedAt: at }
   const picked = pickActiveSession(sessions)
-  return { available: true, ...picked, sessionCount: sessions.length, observedAt: at }
+  // 落选的会话（2026-10-18）：用户常常一边看视频一边听歌，旧实现只报一条，
+  // 另一个媒体对模型完全不可见。带上有内容的其他会话，措辞层再决定怎么并列陈述。
+  const others = sessions
+    .filter((s) => s && s.title && String(s.title).trim() && String(s.title) !== picked.title)
+    .slice(0, 3)
+    .map((s) => ({
+      app: clip(s.app, 120),
+      title: clip(s.title, 180),
+      artist: clip(s.artist, 120),
+      playbackStatus: normalizeStatus(s.playbackStatus)
+    }))
+  return { available: true, ...picked, sessionCount: sessions.length, others, observedAt: at }
 }
 
 /**
@@ -135,16 +146,30 @@ export function musicContext(observation, now = Date.now()) {
     ? '（来源：播放器窗口标题，不是系统媒体会话，播放状态未证实，仅作参考）'
     : ''
 
+  // 多来源提醒（2026-10-18 真机）：用户常常一边开浏览器看视频、一边用桌面播放器听歌。
+  // 旧实现只报「最值得报告的那一条」，于是 Edge 视频在播时网易云的歌被完全盖掉，
+  // 她以为用户只是在看视频。这里只**追加一句**并列事实，不改变主报告的选法与措辞。
+  const others = Array.isArray(observation.others) ? observation.others : []
+  const othersLine = others.length
+    ? '\n另外，同时还有：' + others.map((o) => {
+      const label = o.artist ? `${o.title} / ${o.artist}` : o.title
+      const state = o.playbackStatus === 'playing' ? '播放中'
+        : o.playbackStatus === 'paused' ? '已暂停'
+        : o.playbackStatus === 'stopped' ? '已停止' : '状态未知'
+      return `「${label}」（${o.app || '未知应用'}，${state}）`
+    }).join('、') + '。用户可能同时开着好几个媒体。'
+    : ''
+
   if (observation.playbackStatus === 'playing') {
-    return ['用户授权的 Windows 媒体会话报告正在播放：' + observation.title +
-      (observation.artist ? ' / ' + observation.artist : '') +
-      '。这只能证明媒体会话状态，不能推断用户心情或正在认真听。']
+    return ['用户授权的媒体感知报告：正在播放「' + observation.title + '」' +
+      (observation.artist ? ' / ' + observation.artist : '') + where +
+      '。这只能证明媒体会话状态，不能推断用户心情或正在认真听。' + othersLine]
   }
   if (observation.playbackStatus === 'paused') {
-    return [`用户授权的媒体感知报告：${what}${who}${where} 已暂停。${fromTitle}`.trim()]
+    return [`用户授权的媒体感知报告：${what}${who}${where} 已暂停。${fromTitle}${othersLine}`.trim()]
   }
   if (observation.playbackStatus === 'stopped') {
-    return [`用户授权的媒体感知报告：${what}${who}${where} 已停止。${fromTitle}`.trim()]
+    return [`用户授权的媒体感知报告：${what}${who}${where} 已停止。${fromTitle}${othersLine}`.trim()]
   }
-  return [`用户授权的媒体感知报告：${what}${who}${where} 播放状态未知，可能仍在播放。${fromTitle}`.trim()]
+  return [`用户授权的媒体感知报告：${what}${who}${where} 播放状态未知，可能仍在播放。${fromTitle}${othersLine}`.trim()]
 }

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { MusicSignal } from '../src/core/signals/music-store.js'
 import { normalizeMediaObservation, musicContext, pickActiveSession, selfSessionIds, isSelfSession, filterSelfSessions } from '../src/core/signals/music.js'
+import { buildFallbackObservation, mergeMediaObservations } from '../src/core/signals/players.js'
 
 test('音乐信号默认不读取；授权、勿扰和撤销各自生效', async () => {
   const dir = mkdtempSync(join(process.cwd(), '.nagi-music-test-'))
@@ -101,6 +102,48 @@ test('窗口标题兜底来源的观测：措辞注明来源与状态未知', ()
   const line = musicContext(obs, 1500)[0]
   assert.match(line, /播放状态未知/)
   assert.match(line, /播放器窗口标题/)
+  assert.match(line, /不是系统媒体会话/)
+})
+
+test('缓存新鲜度：fresh() 与 status() 复用阈值一致（60 秒）', async () => {
+  const dir = mkdtempSync(join(process.cwd(), '.nagi-music-test-'))
+  let calls = 0
+  try {
+    const signal = new MusicSignal(dir, {
+      probe: async () => { calls++; return { available: true, sessions: [
+        { app: 'cloudmusic', title: '约定', artist: '王菲', playbackStatus: 'unknown', source: 'window-title' }
+      ] } }
+    })
+    signal.authorize(1) // authorizedAt 必须 > 0 才算已授权（authorize(0) 会被 authorized() 判为未授权）
+    assert.equal(signal.fresh(0), false, '没探过之前不算新鲜')
+    await signal.status({ refresh: true, now: 1010 })
+    assert.equal(signal.fresh(1010), true)
+    assert.equal(signal.fresh(1010 + 59999), true, '60 秒内视为新鲜')
+    assert.equal(signal.fresh(1010 + 60001), false, '超过 60 秒必须重新探')
+    assert.equal(calls, 1)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('用户实测场景：SMTC 只有一条 Edge 暂停会话，网易云靠窗口标题兜底仍要知道在放什么', () => {
+  // 2026-10-18 真实探针输出（脱敏）：SMTC 里只有 MSEdge 的 Paused，cloudmusic 根本没注册会话。
+  const smtcRaw = { available: true, sessions: [
+    { app: 'MSEdge', title: '某某游戏杂谈', artist: '', playbackStatus: 'Paused', updatedAt: 0 }
+  ] }
+  const titleRaw = { available: true, windows: [
+    { process: 'cloudmusic', title: 'fake ur face - s0rrow' },
+    { process: 'msedge', title: '某某游戏杂谈 和另外 10 个页面' }
+  ] }
+  const fallbackObs = buildFallbackObservation(titleRaw.windows, 5000)
+  const merged = mergeMediaObservations(smtcRaw, fallbackObs)
+  const obs = normalizeMediaObservation(merged, 5000)
+  assert.equal(obs.available, true, '不能因为 SMTC 只有暂停就说「没在播放」')
+  assert.equal(obs.app, '网易云音乐')
+  assert.equal(obs.title, 'fake ur face')
+  assert.equal(obs.artist, 's0rrow')
+  assert.equal(obs.playbackStatus, 'unknown')
+  const line = musicContext(obs, 6000)[0]
+  assert.match(line, /fake ur face/, '必须说出歌名，否则她只能去开网页猜')
+  assert.match(line, /播放状态未知/, '标题推断不出播放状态，措辞必须诚实')
   assert.match(line, /不是系统媒体会话/)
 })
 

@@ -62,8 +62,10 @@ async function readPlayerTitles() {
 
 /**
  * 一轮完整探测（返回归一化前的原始观测）：
- *   ① SMTC 有「播放中」会话 → 直接以 SMTC 为准（省一次进程）；
- *   ② SMTC 没有播放中会话（no-session / paused / stopped / 读取失败）→ 查窗口标题兜底；
+ *   ① SMTC 与窗口标题**两层都探**——不再「SMTC 有播放中就不看播放器标题」。
+ *      真机踩过（2026-10-18）：用户一边在 Edge 看视频一边用网易云听歌，
+ *      旧实现在 SMTC 见到 playing 就早退，歌被完全盖掉，她以为用户只是在看视频。
+ *   ② 两层结果的取舍（谁做主报告、谁并进 others）全在 core 纯函数里，可单测。
  *   ③ 两个数据源都失败 → 抛错（沿用旧行为：UI 显示读取失败、不编造观测）。
  * 两次 PowerShell 都走串行队列，避免与语音链路互相拖慢。
  */
@@ -82,7 +84,7 @@ function selfIds() {
 let selfLogged = 0
 /**
  * 丢掉凪自己的媒体会话（她说 TTS 时 Chromium 会把她注册成播放器）。
- * 全部被丢掉时返回 no-session 形状，好让调用方继续走窗口标题兜底。
+ * 全部被丢掉时返回 no-session 形状。
  */
 function dropSelfSessions(raw) {
   const all = Array.isArray(raw?.sessions) ? raw.sessions : []
@@ -98,16 +100,13 @@ function dropSelfSessions(raw) {
 async function probeMedia() {
   const smtc = await serialize(() => readSystemMedia())
   if (smtc.ok) smtc.raw = dropSelfSessions(smtc.raw)
-  if (smtc.ok && pickActiveSession(smtc.raw.sessions || [])?.playbackStatus === 'playing') {
-    return mergeMediaObservations(smtc.raw, null)
-  }
   const fallback = await serialize(() => readPlayerTitles())
-  if (fallback.ok) {
+  const fallbackObs = fallback.ok
     // 窗口标题 → sessions 形状的兜底观测（白名单过滤 + 标题解析都在 core，可单测）
-    const fallbackObs = buildFallbackObservation(fallback.raw?.windows || [], Date.now())
-    return mergeMediaObservations(smtc.ok ? smtc.raw : null, fallbackObs)
-  }
-  if (smtc.ok) return mergeMediaObservations(smtc.raw, null)
+    ? buildFallbackObservation(fallback.raw?.windows || [], Date.now())
+    : null
+  if (smtc.ok) return mergeMediaObservations(smtc.raw, fallbackObs)
+  if (fallbackObs) return mergeMediaObservations(null, fallbackObs)
   throw new Error(fallback.error || smtc.error || '媒体感知读取失败')
 }
 
@@ -136,8 +135,44 @@ export function revokeMusic() {
   return getMusicSignal().revoke()
 }
 
-export function currentMusicContext() {
-  return getMusicSignal().context()
+/**
+ * 「她此刻知道的媒体状态」——每轮对话都会调用（agent.js 的 extra）。
+ *
+ * 2026-10-18 修复：原来是同步读缓存（只读 `signal.last`），缓存为空时**永远**返回空数组，
+ * 于是她只会去开网页猜「你在听什么」。用户实测踩到：云音乐在放歌、窗口标题探针也能读到，
+ * 但凪从没主动探过 → 她一无所知。
+ *
+ * 现在：缓存缺失或过期就当场探一次，但**给对话设预算**（探针最坏 20 秒，不能卡住回复）。
+ *   · 预算内探到 → 用新观测；
+ *   · 超预算 → 不让用户等，先返回旧缓存（可能为空），探针仍在后台补上；
+ *   · 探针报错 → 如实返回空数组，绝不编造（沿用「宁可不说」契约）。
+ */
+const CONTEXT_BUDGET_MS = 1500
+
+export async function currentMusicContext(now = Date.now()) {
+  const signal = getMusicSignal()
+  // 未授权 / 勿扰：沿用原语义，静默返回空（不探测、不留痕）
+  if (!signal.authorized() || signal.doNotDisturb()) return []
+  // 缓存新鲜（60 秒内）直接用，省一次 PowerShell
+  if (signal.fresh(now)) return signal.context(now)
+  try {
+    let timer = null
+    const budget = new Promise((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), CONTEXT_BUDGET_MS)
+      timer.unref?.()
+    })
+    // status({refresh:true}) 内部对 inflight 去重，对话连发也不会并发起多轮 PowerShell
+    const probed = signal.status({ refresh: true, now }).catch((err) => {
+      console.warn('[music] 对话前刷新媒体状态失败：', err?.message || err)
+      return null
+    })
+    const winner = await Promise.race([probed, budget])
+    if (timer) clearTimeout(timer)
+    if (winner === 'timeout') return signal.context(Date.now()) // 有旧缓存就先用旧的
+    return signal.context(Date.now())
+  } catch {
+    return []
+  }
 }
 
 // 平时 60 秒刷新一次就够；**失败时 10 秒后重试**——启动那一两分钟里
