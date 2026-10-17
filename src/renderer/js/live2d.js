@@ -669,7 +669,12 @@ export function layout(scale = userScale, mirror = mirrorOn, frame = frameMode) 
   baseScale = fit.scale
   curBand = band // Z 轴支点要按当前取景带算（bust / full 的带底不同）
   model.anchor.set(0.5, fit.anchorY)
-  model.x = fit.x
+  // 镜像补偿：fitBand 的 x 是按**未翻转**的取景带算的（减了 centerOffset，
+  // 把偏心美术摆到框中央）。scale.x 取负是绕 anchor 水平翻转，翻完之后美术的
+  // 偏心方向也跟着反了 —— 少补偿一次就会偏 2×centerOffset×scale，
+  // 2026-10-18 实测旧取景带下偏了约 46px（人明显靠左）。
+  const co = Number(band?.centerOffset)
+  model.x = fit.x + (mirrorOn && Number.isFinite(co) ? 2 * co * fit.scale : 0)
   model.y = fit.y
   model.scale.set(fit.scale)
   model.scale.x = Math.abs(model.scale.x) * (mirrorOn ? -1 : 1)
@@ -1813,7 +1818,12 @@ function ensureDepthHook() {
     const bandBottom = curBand ? Number(curBand.anchorY) : NaN
     const off = Number.isFinite(bandBottom) ? (bandBottom - DEPTH_PIVOT_FY) * baseH * baseScale : 0
     zContainer.pivot.set(px, py - off)
-    zContainer.position.set(px + out.transform.dx, py + out.transform.dy)
+    // ⚠⚠ 位置必须与支点**同一个点**，否则 pixi 的「position − pivot」会变成净位移：
+    // 2026-10-18 实测踩坑——position 写了锚点 (px,py)、pivot 写了支点 (px,py−off)，
+    // 于是整只模型被往下推 off = (带底 0.48 − 颈肩 0.23) × 7000 × scale ≈ 210px，
+    // 肚脐以下的身体全被推出画面，**只剩一颗头和一侧肩膀**（用户报的就是这个）。
+    // 缩放中心（支点）不动、只在它上面叠 dx/dy，才是"绕颈肩缩放"。
+    zContainer.position.set(px + out.transform.dx, py - off + out.transform.dy)
     zContainer.scale.set(out.transform.scale)
     // 验收用：真正写进去的值。判"Z 动作有没有生效"要读这个，不能拿画面差分
     // （头发物理余震会把"已经收回"算成"还在动"，2026-10-17 verify:turns 踩过）

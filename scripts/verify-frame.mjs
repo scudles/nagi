@@ -52,6 +52,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 function baseEnv(extra = {}) {
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
+  // D40 教训：起可见实例的脚本必须自带 sandbox 开关，否则 GPU 崩、桌宠页 ready 不了
+  env.NAGI_RENDERER_SANDBOX = '0'
   return Object.assign(env, extra)
 }
 

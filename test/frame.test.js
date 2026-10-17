@@ -196,10 +196,12 @@ test('缅因取景带：下边界是肚脐线，头顶留容位，横向包住�
   const MH = 7000
   const band = frameBand('bust', MW, MH, 'Maine')
   const p = FRAME_PRESETS.Maine
-  // 实测（2026-10-17）：头顶 fy=0.040、肚脐 fy=0.48、横向美术 fx∈[0.273,0.813]
+  // 实测（2026-10-18，scripts/probe-upper-body.mjs，Z 轴位移 bug 修复后）：
+  // 头顶 fy=0.030、肚脐 fy=0.48、上半身横向美术 fx∈[0.218,0.769]
+  // （旧口径 [0.273,0.813] 是位移 bug 时代测的，中心偏右 0.049，已弃用）
   assert.equal(band.anchorY, 0.48, '带子底边（锚点）应落在肚脐线')
-  assert.ok(p.top < 0.04 && p.top > 0, `头顶上方要留容位但不能是一片空白：top=${p.top}`)
-  assert.ok(p.left < 0.273 && p.right > 0.813, '横向要包住垂臂美术并留余量')
+  assert.ok(p.top < 0.03 && p.top > 0, `头顶上方要留容位但不能是一片空白：top=${p.top}`)
+  assert.ok(p.left < 0.218 && p.right > 0.769, '横向要包住上半身美术并留余量')
   assert.equal(band.y, MH * 0.015, '带子顶边落在画布内 0.015 处（正数，不再越出画布上边界）')
   assert.ok(band.h < MH * 0.5, '特写带高必须明显小于半身')
   assert.ok(band.w / band.h < 1, '肚脐以上是竖长特写，带宽高比应小于 1')
