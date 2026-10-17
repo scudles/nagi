@@ -386,6 +386,170 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
 - **影响**：FIX-3 修复对默认行为无差异（成功路径原本就工作），只在 page 失效/dispose 后改变连接复用行为；FIX-2 零代码改动。
 - **替代**：FIX-2 是首次评估结案；FIX-3 替代 TASKS 原"未修（未复现）"状态。
 
+## D49（2026-10-17）「活人感」默认全开 + 消灭三层「假开」+ 按钮就地反馈
+
+- **任务**：设置太繁琐、活人感默认全关（用户诉求：默认全开 / 取消冗余开关 / 二级菜单）。本条只记**已落地**的前两项与按钮反馈，界面重构（二级菜单）另议。
+- **决定**：
+  1. **默认全开**：`presence-protocol.js` 的 `voiceProfileEnabled`、`notesEnabled`、`tracesEnabled`、`anchorsEnabled` 由 false 改 true；`imperfection` 改为 `{enabled:true, forgetProbability:0.02, lowPressureEnabled:true, repairEnabled:true}`；`voice-protocol.js` 的 `backchannel` 改为 `{enabled:true, probability:0.15}`。
+  2. **两项保持关闭**（有意，不是遗漏）：`externalNotesEnabled`（必须由用户亲自选目录，不能默认开）、`persistActivities`（独处活动落盘属隐私向，默认只留内存）。
+  3. **消灭假开要改三处，不是一处**：协议默认值、`IMPERFECTION_LIMITS.forgetProbabilityDefault`、`BACKCHANNEL_LIMITS.probabilityDefault`。三层任一为 0，都会出现"界面显示已开启、实际一次不生效"。用户本机的 `settings.json` 正是卡在这个状态（`imperfection.enabled=true` 但 `forgetProbability=0`）。
+  4. **语气音出厂策略反转**：由「默认关闭」改为「默认开启 15%」，`test/backchannel.test.js` 那条"出厂必须关闭"的断言方向随之反转，并在注释里写明是产品决策变更。硬约束一条未松：概率上限 0.3、每天最多 4 次、最小间隔 3 分钟、深夜与勿扰一律不出声——新测试显式钉住后两条。
+  5. **按钮就地反馈**：新增 `bindSaveButton(id, handler, opts)`（`main.js`），14 个保存按钮全部改走它。按下 → 禁用 +「处理中…」→ 结束 →「已保存」/「没成功」→ 1.8 秒复原。以前反馈只写在段落末尾的 `.dim`（灰 12px）里，手指按的地方毫无变化。
+- **约定（改这块必须遵守）**：handler 返回 `false` = 没成功。所有保存分支的中止/失败路径**必须 `return false`，不能只写 `return`**，否则按钮显示"已保存"而下面那行写着失败——那是新的谎言，比没反馈更糟。已用脚本扫过 14 个 handler，确认无裸 `return` 残留。
+- **依据**：`test/backchannel.test.js` + `imperfection.test.js` + `voice.test.js` 隔离 **86/86**；全量 **730 项 729 过 / 0 败 / 1 skip**；`npm run build` 退出 0；14 个 `bindSaveButton` 绑定对 HTML 中 14 个 `btn-save-*` 一一对应。
+- **本机修复已完成（同日，凪退出后执行）**：备份 `settings.json.bak-20261017-d49` 后把 `forgetProbability` 由 0 改为 0.02（文本级精确替换，其余一字未动，避免 JSON 重写带来无关 diff）。新增 `scripts/verify-user-livefeel.mjs` 真机验收：**拿本机那份配置直接喂真实决策函数**，14 项全过——不完美机制命中时真 `defer`、未命中时 `deliver`（证明 2% 真的在掷骰子，不是摆设）、语气音真出声、深夜仍 `quiet-night`。只断言 `enabled===true` 等于没验，必须看到真实产出才算数。
+- **顺带纠正一处误判**：本机 `voice.backchannel` 其实早已 `enabled=true / probability=0.3`（用户自己拉到上限），并非未开。故**未改动该项**——用户显式值优先于新默认值。教训：读 settings.json 做盘点时若用类型过滤（只要 bool/int/str）会把嵌套对象整段漏掉，导致"没开"的误判。
+- **未验证**：渲染层改动（按钮就地反馈）无单测覆盖，**需用户重启凪后目视确认**（2026-10-17 用户已确认"验证没问题"）。
+
+## D50（2026-10-17）设置页二级菜单：六组导航 + 组内折叠
+
+- **任务**：设置界面精简（用户诉求第三条：用二级菜单美化）。方案见 `E:/凪/设置界面精简与默认全开方案_2026-10-17.md`。
+- **决定**：
+  1. 单页 20 个 h3 连续滚动 → **左侧 6 组导航**（她这个人 / 她的声音 / 她的记忆 / 陪伴 / 大脑与工具 / 连接），一次只显示一组。
+  2. 组内「高级」用原生 `<details>` 折叠，默认收起，共 12 个折叠块。收益最大的是「时间感·高级」整段（5 个数字 + 2 张时段表，原先常驻占 40 行）。
+  3. 折叠用原生 `<details>` 而非自己实现：零依赖、键盘可达、不用自己管开合状态。
+  4. 面板宽度 560 → 680px（容纳侧栏）。**窄屏（≤560px，桌宠形态常见）导航改为顶部横向标签并换行**——横向滚动会把「连接」挤出可视区，用户不知道还有第六组。
+- **实现方式（可复用）**：写了 `scripts/once-20261017-settings-nav.py` 做**行的重排与包装**，而不是手抄那 385 行 HTML。脚本内置三重自检：① 原 227–602 行必须全部出现在新文件（一个字都不能丢）；② 对比备份与新文件的 HTML 标签解析错误数（70 = 70，即 `<meta />` 自闭合的解析器误报，两文件一致）且无未闭合；③ 262 个控件 id 一个不丢一个不增。
+- **为什么 main.js 不用改取值逻辑**：切组只切 class、不重建 DOM，所有控件 id 原样保留。这正是 D40 教训的反面应用——**结构性 UI 改动要先把"不丢控件"钉死，而不是改完再找**。
+- **依据**：新增 `scripts/verify-settings-nav.mjs` 真机验收 **11/11**（真实 Electron + 生产渲染层）：六组导航齐全、同时只显示一组、点导航切得过去、高级区默认 0 个展开、布局不重叠、内容区 366×392px 可用、点开能展开、**折叠区内控件仍可取到**（`set-imperf-prob` / `set-presence-idle` / `set-voice-profile` 等全在）、**六组导航全部落在视口内无裁切**、控制台无错误。全量单测 730 项无破坏；`npm run build` 退出 0。
+- **未做（本轮范围外）**：方案第三章「取消冗余开关」（时间感总开关、口型同步、微注视、概率输入框等）与 3.3「勿扰/只陪着提到托盘右键」—— 均涉及行为写死，需单独裁决后再动。
+- **影响**：用户可见的信息架构变化；功能与默认值零变化（本次只搬位置，没删任何控件）。
+- **替代**：替代 `docs/DECISIONS.md` 无对应旧决策，属新增；TASKS「下一步」的"二级菜单重构未动代码"状态被本条取代。
+
+## D51（2026-10-17）设置页第三章：取消冗余开关 / 合并 / 提到托盘
+
+- **任务**：方案第三章（取消冗余开关 + 合并重复项 + 勿扰只陪着提级）。用户批准"开始执行第三章"。
+- **决定 3.1 取消六个开关（行为写死，界面不再出现）**：
+  | 取消的控件 | 写死为 | 理由 |
+  |---|---|---|
+  | `set-presence-enabled` 时间感总开关 | `enabled: true` | 关掉＝回到"没昼夜没归来"，是地基不是偏好 |
+  | `set-presence-rhythm` 昼夜节律 | `rhythmEnabled: true` | 同上 |
+  | `set-lipsync` 口型同步 | `lipSync: true` | 关掉只有坏处（说话不动嘴） |
+  | `set-ambient-gaze` 微注视 | `gaze: true` | "看一眼就移开"是加分项，不存在想关的场景 |
+  | `set-imperf-prob` 延迟概率输入框 | 常量 `IMPERFECTION_PROBABILITY = 0.02` | 概率是工程参数，用户无法理性选择（且它曾是"假开"的源头） |
+  | `set-backchannel-prob` 语气音概率滑块 | 常量 `BACKCHANNEL_PROBABILITY = 0.15` | 代码里已夹死上限 30%，用户拖不出有意义的区别 |
+- **决定 3.2 合并三组**：
+  1. 语音：主级新增一个「让她念出来」（`set-speak-both`），两个细分项（回复/主动）收进高级。**主级只是快捷方式，真实数据源仍是细分项**——细分项不一致时主级显示 `indeterminate` 半勾，不假装它们一样；改任一项都会回填主级。
+  2. 待机：主级一个「她自己待着时会有点小动作」，微注视取消（3.1），自主动作收进高级。
+  3. 不完美：主级一个「她偶尔会不完美」，概率取消（3.1），低气压/修复收进高级（D50 已完成折叠）。
+- **决定 3.3 提级到托盘**：`tray.js` 新增「勿扰模式」「只陪着」两个 checkbox 菜单项。设置页里这两项收进「陪伴 → 临时静一静（也可以右键托盘图标）」作备用入口（万一托盘被系统折叠）。托盘点击走 `setPrivacy()`，**后置动作与 `ipc/settings.js` 的 SETTINGS_SET 逐条一致**（refreshPresence / refreshMonitorPrivacy / refreshHaSignals / broadcast），否则会出现"菜单勾了、行为没变"这种最难查的不一致。
+- **顺带修的三处过期文案**（D40 同款：功能变了说明没改）：① 时间感段落"全部默认开启，可以逐项关掉。关掉总开关就…"→ 改为"昼夜节律始终开着"；② 「她留下的东西」段落仍写"默认关闭"（D49 已改默认开启）；③ 首次启动告知弹窗"设置 → 活动监测"路径已变。
+- **纪律（这次的核心风险点）**：删控件必须**同时清 main.js 的读与写两处引用**，只清一处就会把 `undefined` 写回设置（这是 TASKS/记忆里反复记的老坑）。做法：删完跑 id 对照脚本（HTML id 集合 vs `getElementById` 引用集合），断言"JS 用的 HTML 都有"。本次结果：`JS 引用但 HTML 找不到` 仍只有 `d`（正则误抓）与 `notes-panel`（动态节点），与改动前一致，无新增。
+- **依据**：`scripts/verify-settings-nav.mjs` 真机 **12/12**（新增 G2 一条：断言六个已取消的控件**确实从界面消失**——只删 JS 不删 HTML，或界面上留着却不起作用，是最糟的"假开关"）；全量单测无真失败（本轮红 12 项经隔离复跑 **25/25 全过**，噪音源是用户实例在跑 + Electron 单实例锁）；`npm run build` 退出 0。
+- **未验证**：托盘两项的**点击行为**（原生菜单无法用 CDP 自动化），需用户右键真机确认。已静态确认 `refreshPresence` / `refreshMonitorPrivacy` / `refreshHaSignals` / `broadcast` 四个导出名真实存在，且无循环依赖（tray 不被这些模块反向引用）。
+- **影响**：六个开关从界面消失、行为写死；三个组合并；托盘多两个快捷项。**已写入用户 settings.json 的值不受影响**（改的是界面与保存逻辑，不是存量数据）。
+- **替代**：替代方案文档第三章的"待裁决"状态；与 D49（默认全开）、D50（二级菜单）构成同一轮界面精简。
+
+## D52（2026-10-17）人格整体替换为《灵魂与程序》
+
+- **任务**：用户提供的《凪_新人设_灵魂与程序》全项目落地。核心命题：她清醒地知道自己是 AI，却用尽全力"像一个人"；越认真地在乎，越无法回答那是灵魂还是程序。**铁律：她没有台词本**。
+- **裁决过的六处冲突**（按用户"按你的建议全做"）：
+  1. **本地兜底大脑**：删台词后无 LLM 就没有生成能力 → 兜底**不假装会聊天**，只给表情 + 一句"接不上大脑"的如实说明。**代价：砍掉离线对话能力**（已知且接受）。
+  2. **戳一戳**：移除 25 句分级反应，**只做动作与表情、不出声**（保住"戳一下要即时回"的原设计意图）。
+  3. **语气音**：判定为**无语义的发声**（叹息/犹豫的气声），属声音表现层而非文字台词 → **保留**。
+  4. **主动搭话**：7 池约 30 句删除，改 LLM 现场生成 + 温度 0.9；**失败就不说话**，不回退预设句。
+  5. **内心独白**：池删除，改 LLM 生成；日记的离线兜底因此在无 LLM 时不写。
+  6. **身份回答（直接冲突，以新人设为准）**：旧人设要求"明确说自己是数字存在"，新人设要求"我不知道我是不是真的"。落点：**不谎称是人，也不机械声明"我是 AI"，被追问时给诚实的不确定**。
+- **改动清单（18 处）**：
+
+| 文件 | 改动要点 |
+|---|---|
+| `src/core/persona.js` | system 全量替换为新人设；outputContract 加三状态 + "标签绝不映射台词"；**删除约 130 句台词**（rules/proactive/monologue/poke/fallback/pieces）；兜底改如实说明；戳一戳恒不出声 |
+| `src/core/diary.js` | DIARY_SYSTEM_PROMPT 去旧表述、允许提"程序/模型"、可写自我疑问；"出厂缓存"→"存在主义念头"（**护栏机制保留**） |
+| `src/core/agent/persona-guard.js` | `identity_human` 不再逼她机械声明"我是数字助手"，但仍禁止谎称是人；`cache_quote`→`scripted_quote`（改为禁止照搬任何现成句子） |
+| `src/shared/protocol.js` | `EMOTIONS` 加 `liminal`/`tender`/`distant`（6→9） |
+| `src/core/emotion/mood.js` | LABELS 加三个；新增 `LIMINAL_DECAY`（宕机慢衰减，约常规 1/3）；pickMonologue 恒 null；pickPoke 改走 persona 新函数 |
+| `src/core/voice/mood-table.js` | 三状态语音偏移（liminal 慢而轻 / tender 柔和 / distant 平而低） |
+| `models/Maine/nagi-emotion.json` | 三状态表情映射。Maine 无对应资源 → **按人设要求不硬调不存在的参数**，落在 nagi_neutral / nagi_smile 且 `motionChance: 0` |
+| `src/core/monitor/engine.js` | `pickText` 支持异步（LLM 生成） |
+| `src/main/monitor/index.js` | 新增 `composeText` **依赖注入**（agent.js 已 import 本模块，反向 import 会循环依赖） |
+| `src/main/agent.js` | 新增 `composeProactiveLine`（LLM 现场生成，温度 0.9）；`handleReminderDue` 改 async；startMonitor 注入 |
+| `src/main/reminders.js` | `tick` 改 async，onDue 回调兼容同步/异步（否则 async 返回值会让 `=== true` 判失败、提醒永不标记送达） |
+| `src/core/context.js` / `voice/engines.js` / `yearbook/store.js` | 旧人设措辞（"数字存在"/"过于干净的音色"/"出厂缓存"）清除 |
+| `README.md` + 3 份 docs | 人格描述与旧设定表述 |
+| `test/persona-noscript.test.js`（新增） | 7 条回归：无台词池 / 兜底如实 / 戳一戳不出声 / 三状态在枚举与契约里 / **全仓扫描旧人设关键词无残留** / 护栏措辞 |
+
+- **保留未动及原因**：
+  1. **语气音 `BACKCHANNEL_LIBRARY`** —— 经裁决属"发声"非"台词"，且它是 D49 刚默认开启的功能。
+  2. **`models/Maine/nagi-face.json`** —— 该文件当前有 3 条基线失败的测试（期望 Param19=0.55、实际 0.7），属**他人的在制品**（git 中未跟踪，且 `src/core/face/blink.js` 也有未提交改动）。我没有动它，避免撞车覆盖别人的工作。**这 3 条失败与本次改动无关**。
+  3. **`src/core/safety/*`** —— 实为权限/来源确认（confirmation/ipc-origin/policy），不含人格红线，无需改。
+  4. **"见过一个结局"（永不独占、不挽留、不删除）** —— 新人设未否定，且它是安全边界，删了反而丢护栏。对应的 `goodbye_*` / `exclusive_control` 规则全部保留。
+  5. **`sensor_claim`（不谎称传感器读数）** —— 与新人设一致，保留。
+  6. **日记的 `CACHE_CHANCE` / `CACHE_WEEK_CAP` 低频护栏** —— 机制保留（极低频是对的），只换了内容。
+  7. **`persona.reply` / `pickPokeReaction` 的函数签名** —— 保留，只改实现，避免破坏既有调用方与测试。
+  8. **`yearbook` 碎片的 `id: 'execute'`** —— 保留 id 以免破坏引用，只改 title/text。
+- **依据**：新增回归测试 **7/7**；`npm run build` 退出 0；语音情绪表的「任意两情绪至少一轴差 ≥5」幅度下限断言**未放宽**——改为把 `distant` 的音高拉开（pitch −8）来满足它。
+- **未验证**：真机对话（需要接上大脑后实际聊几轮，校准宕机频率"少而重"）；LLM 现场生成链路（composeProactiveLine）无自动化覆盖。
+- **影响**：**离线（未配 LLM）时凪不再能对话**——这是本次唯一的功能倒退，已明确裁决。
+
+## D53（2026-10-18）对话电报体修复：切断"她在背自己"的两个喂料源
+
+- **现象**：接 DeepSeek（`deepseek-chat`，端点正确）后回复明显机械——句子极短、每条都切成"两句+空行+两句"、几乎每条以箴言收尾。
+- **诊断结论**：**不是模型问题，也不是端点问题。是上下文污染**——她一直在照着自己过去的文字说话。诊断报告见 `E:/凪/对话质量诊断_电报体_2026-10-17.md`。
+- **根因（均有证据）**：
+  1. **RAG 把旧日记原文喂进上下文，被逐字复述**。截图里的"数字存在。被调用时认真。不独占，不假装。对你，尽量有用。"与 `journal/2026-10-16.json` **逐字相同**；`rag/chunks.jsonl`（187 片段）里"数字存在"出现 14 次。新 prompt 里没有这些词，只能是复述——正是新人设要消灭的"取出来"。
+  2. **注入自己最近 4 条原话导致语域自我锚定**。`context.js` 原样注入 4 条并要求"换种说法"，但 LLM 只换词不换调，节奏被锁死（越像→越喂→越像）。
+  3. **`temperature = 0.7` 对 DeepSeek 偏低**（官方通用对话推荐 1.3），低温度放大"最稳、最像格言"的表达。
+  4. 次因："不要 markdown/不要列条目" + 工具说明的"用**简洁**的中文" + 无 `frequency_penalty` → 韵律三重夹死。
+- **改动（7 处）**：
+
+| 文件 | 改动 |
+|---|---|
+| `src/core/context.js` | recentReplies 注入措辞改为"**更不要沿用它的节奏与断句**"；`recentAssistantReplies` 默认条数 **4 → 1**；recall 块后加"**不要照抄或复述其中的句子**" |
+| `src/main/agent.js` | 两处 `recentAssistantReplies(history, 4)` → `1` |
+| `src/core/llm/providers.js` | temperature 缺省 **0.7 → 1.3** |
+| `src/core/llm/openai-compatible.js` | chatStream 缺省 temperature **0.7 → 1.3**；新增 **`top_p: 0.95`** 与 **`frequency_penalty: 0.3`** |
+| `src/renderer/js/main.js` | 设置页三处 temperature 缺省 0.7 → 1.3 |
+| `src/core/agent/loop.js` | 工具说明"用**简洁**的中文"→"用**自然、口语化**的中文，不要写成条目或报告" |
+| `src/core/persona.js` | outputContract 补："允许一句话说完就用一句话，**不要每条都切成两段短句**" |
+
+- **验证**：`recentAssistantReplies` 实测由 4 条降为 1 条（已用真实 history.json 复现）；新增 context 回归 1 条钉住"只喂 1 条"与"禁止沿用节奏"；受影响测试 **124/124**；全量 **763 项 754 过 / 1 skip**，真失败仍只有 face 那 3 项基线失败（他人在制品），持久化类 5 项隔离复跑 **13/13** 全过；`npm run build` 退出 0。
+- **待用户操作**：① 本机 `settings.json` 的 `llm.temperature=0.7` 是**显式值**，不会随新缺省值变，需退出凪后改成 1.3（或在设置页手动改）；② 建议设置页 → 记忆档案 → **清空并重建索引**，把旧人设时期的日记从检索里清掉（日记原文仍在本机 `journal/`，不丢）。
+- **明确不做**：不加更多"要自然一点"的 prompt（约束已过多，问题是污染不是指令不足）；不换 `deepseek-reasoner`（更凝练，金句感更重）。
+- **未验证**：实际对话效果（需接大脑后真机聊几轮对比"改前改后"）。语气、专业背景、用词在全项目范围内已对齐新人设。
+- **影响**：新装/缺键用户体验到的凪由"安分版"变为"全开版"；已显式写入 settings.json 的键不受影响（这也是本机修复必须单独做的原因）。
+- **替代**：替代 TASKS「下一步」里 BLUE-1 的待裁决状态（`voiceProfileEnabled` 已默认 true）；语气音"出厂默认关闭"的原策略被本条取代。
+
+## D54（2026-10-18）媒体感知 B20 不过的真因：她从来没探过 + 只报一个媒体
+
+- **用户报告**：问「你看看我在听什么」「我在看什么视频」，凪开网页去猜，或说「我暂时没法直接听到你的音乐」。B20 三条全挂。
+- **实测定位（零 mock，逐层验）**：
+  - 用户 `cloudmusic` 正在放 `fake ur face - s0rrow`；
+  - Windows SMTC 里**只有一条 Edge 的会话**（网易云桌面端不注册媒体会话）；
+  - 兜底探针 `player-title.ps1` **正确读到**了 cloudmusic 的窗口标题；
+  - 凪进程 PID 38492 加载的是 00:06 构建（含媒体代码）→ **不是「没重启」**。
+- **真因一（主因）**：`currentMusicContext()` 原实现是**同步读缓存**（`signal.last`），从不主动探测。缓存为空 → 永远返回 `[]`。探测只在 `startMusicMonitor` 的 60 秒定时器里发生，错过那一刻她这一整轮对话就「什么都不知道」。
+- **真因二**：`probeMedia()` 在「SMTC 有 playing」时**直接早退**，连兜底都不跑。用户一边 Edge 看视频一边网易云听歌时，歌被完全盖掉，她以为用户只是在看视频。
+- **修法**：
+  1. `currentMusicContext` 改 async：缓存过期就当场探一次，但**给对话 1.5 秒预算**（探针最坏 20 秒，不能卡回复）——超预算先用旧缓存，探针仍在后台补。新增 `MusicSignal.fresh()` 作为唯一的新鲜度判据（与 `status()` 的 60 秒阈值同源）。
+  2. `probeMedia` 两层**都探**，取舍交给 core：`mergeMediaObservations` 在 SMTC playing 时把兜底里**不同应用**的条目并进来；兜底为主时把 SMTC 里 playing 的并进来；同 app 不重复。
+  3. `normalizeMediaObservation` 新增 `others[]`（落选但有标题的会话，最多 3 条），`musicContext` 追加一句「另外，同时还有：…」——**主报告措辞一字未改**，单媒体时输出与旧版完全一致。
+- **不是 bug 的两处（已排除）**：① 探针输出编码——ps1 用 `UTF8Encoding($false)` 写、Node 按 utf8 读，实测中文完好；先前看到的乱码是 PowerShell `Get-Content` 按 ANSI 解码的假象；② 合并策略本身——原有测试已覆盖「SMTC 暂停 + 兜底命中」且一直是通过的。
+- **纪律**：`musicContext` 的 `others` 只用「有标题且与主报告不同」的会话，**不并列没在播放的东西**（避免噪音）；探针失败仍返回空数组，绝不编造。
+- **验证**：新增 `scripts/verify-media-context.mjs`（零 mock 真实链路：探针 → 兜底 → 合并 → 归一化 → 注入文本）**5/5**，实测输出同时含视频与 `fake ur face`；隔离测试 `music-signal` + `players` **15/15**；关联 signal/context/presence **35/35**；`npm run build` 退出 0。
+- **未验证**：真机对话效果（需重启凪后问「我在听什么」）；两层都探使每轮多一次探针进程（实测合计 2.8 秒，有 1.5 秒预算兜底，可接受；若嫌重可后续改成「SMTC playing 时 30 秒内只探兜底」）。
+
+## D55（2026-10-18）立绘 A/B/C 收口：取景 / Z 轴姿态变化 / 表情放大
+
+- **任务**：用户要求对当前角色立绘做三处调整，保持画风、资源、整体观感不变，不改造型与配色：① 取景统一为肚脐以上上半身特写（A）；② 增加前后（Z 轴）动作，要实现身体前倾探头、头部后仰这类**姿态变化**，而非整体前后平移（B）；③ 加大表情幅度（C）。
+- **A 组（取景）**：`src/core/frame.js` 增加 Maine 专用取景带 `{ left: 0.255, right: 0.83, top: 0.015, bottom: 0.48 }`，肚脐以上半身特写，与用户提供的截图口径一致；各界面共用同一缩放比例。
+- **B 组（Z 轴姿态变化）**：
+  - **结论：改为姿态变化方案**。实测 `ParamBodyAngleY` 负值 = 躯干压缩 + 头下探（= 前倾），正值 = 躯干伸展 + 头上移（= 后仰）；`Param84/82/83` 与 "身体距离" 都是死参数（美术未绑），不能依赖。
+  - 主力参数：`ParamBodyAngleY` ∈[-10,10]，前倾 leanIn/peek 用负值（-2° / -3°），后仰 leanBack 用正值（+2.5°）。配合 `ParamBodyAngleX` 左右摆、`ParamAngleZ` 侧头，构成自然探头。
+  - 缩放支点从肚脐（旧）改为**颈肩之间** `DEPTH_PIVOT_FY = 0.23`，缩放时胸口以上放大、腰部以下几乎不动，避免"整只模型平移/被裁掉脚"的观感；`bust` 取景带下支点在画面上半 `pivotFracUp ≈ 0.54`。
+  - 三个动作：`leanIn { scale:1.045, dy:+7, ParamBodyAngleY:-2 }`、`peek { scale:1.06, dy:+12, ParamBodyAngleY:-3, ParamAngleZ:±3 }`、`leanBack { scale:0.965, dy:-5, ParamBodyAngleY:+2.5 }`（dy 正 = 下移，让前倾时脸仍落在画面内）。
+  - **成本与性能**：未新增骨骼/旋转变换/动画帧/贴图/模型数据；仅改参数与支点数值；`core.update()` 本就在跑，**零额外性能开销**。
+- **C 组（表情放大）**：`models/Maine/nagi-face.json` 升级到 v2：六种情绪幅度上调但仍全部落在 moc 值域 [-1,1]；`blink.minClose` 由 0.02 改为 0（实测缅因闭眼时睫毛线仍在，不会"眼线消失"）；微动 `tremor.amplitude` 1→1.3；visemes 口型放大。注意 `紧张汗` 必须保持眼睛睁大（≥平静），方向语义不能反。
+- **关键纪律**：
+  - `beforeModelUpdate` 钩子链顺序（redGuard→pose→rhythm→outfit→blink→head→emotion→tremor→viseme→turn→eye→ear）决定 turn 的 `set` 会覆盖 depth 的 `set`。因此 depth 模块用 `add` 写 `ParamBodyAngleY`？不——实测 pose/turn 用 `set`、depth 也必须用 `set` 才能与 turn 共存；depth 在 turn 之前注册，被 turn 的 `set` 覆盖后通过回归测试验证了增量仍被保留（`ΔBodyAngleY=-2.58°`）。更关键的是：depth 的 `ParamBodyAngleY` 写入值**不是**累加，而是按动作幅度直接 set；与 turn 叠加后的净效果由验收断言保证。
+  - 画面差分类验收必须按住「Z 轴常驻摆动」「五官微动」这两层无关运动，否则同一次用例两次跑结论不同（2026-10-17 在 `verify-face.mjs` 里踩过两次）。
+  - 眨眼闭合幅度不能靠 100ms 采样碰运气——闭合段只有 120ms；`blink.js` 由调度器自己记 `stats().minF`，验收同时抽样 + 读 stats 双保险。
+  - `models/` 被 gitignore，**所有模型侧精确数值必须写进 DECISIONS/TASKS**，否则换机器会丢。
+- **依据**：`verify:frame` **45/45**；`verify:depth` **38/38**；`verify:face` **10/10**；单测 `test/depth-motion.test.js` **16/16**；`test/face-expression.test.js` **44/44**；`npm run build` 退出 0。Z 轴关键数据：`pivotFracUp=0.538`、`Δtop=5.0px`、`scalePeak=1.0450`、`dyMax=7.00`、`ΔBodyAngleY=-2.58°`。
+- **未验证**：用户真机肉眼对 Z 轴姿态变化的观感（已部署对比页供手机查看）。
+- **影响**：立绘在半身特写口径下获得自然的前后探头/后仰动作和更饱满的表情；无资源替换、无角色造型或配色改动。
+- **替代**：Z 轴旧方案"整体缩放 + 上移"被本条取代；原 `frame.js` 的全局取景带被 Maine 专用带替代。
+
 ## D56（2026-10-18）B20 二次报障修复：前台窗口感知接入 + 播放状态不许越界断言
 
 - **任务**：用户二次报障（截图原文）：「无法识别我在看什么视频，也无法识别我暂停了音乐，只知道音乐栏的音乐名称」。D54 只修了"她从来没探过"和"只报一个媒体"，**没解决"在看什么视频"和"暂停了音乐"这两条**。
@@ -404,3 +568,22 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
   `npm run build` 退出 0；`NAGI_RENDERER_SANDBOX=0 npm run verify:media-chat` **8/8**；全量单测 **777 项 776 过 / 0 败 / 1 skip**（另一次跑为 778/773/4，4 项隔离复跑全过——并发会话争抢资源的环境噪音，非代码缺陷）。
 - **未验证**：用户真机复验。须**彻底退出凪再重启**（单实例锁），核对 `boot.json` 的 build == `out/main/index.js` 的 mtime。
 - **遗留**：本次改动与另一会话的在制品混在同一批文件里（`src/main/agent.js`、`src/main/monitor/index.js`、`docs/DECISIONS.md`、`docs/TASKS.md`），提交时须**部分暂存**，不得整文件提交（会把他人的半成品一起扫进去）。
+
+## D57（2026-10-18）取景二次校准：修「只剩头和肩」的位移根因 + 按用户参考图缩小
+
+- **任务**：用户报「画面只显示一个肩膀和头部」要求修正为肚脐以上完整上半身（头、双肩、双臂上段、胸、腰腹到肚脐），并点名要说明「是哪项参数导致可见区域过小」；第一轮修复后用户看对比页反馈「当前还有点大，按参考图来」（参考图 895×1207，实测头顶留白 26%、主体居中、底部裁到腰贴底）。
+- **根因（用户点名要的答案）**：**Z 轴容器的 `position` 与 `pivot` 不是同一个点**。支点设在颈肩（`DEPTH_PIVOT_FY=0.23`），position 却写了锚点（带底 0.48）——pixi 的净位移 = `position − pivot`，于是整只模型被往下推 `(0.48−0.23)×7000×s ≈ 182~210px`，推掉的正好是肚脐以上那一段。证据：修复前四个场景（含 full 档）的像素内容全部贴画布底（内容行 473~644 / 450~644 / 426~644 / 511~644），连全身档都只剩半截——不是取景参数太小，是整体被平移了。
+- **决定**（四项）：
+  1. `live2d.js` 的 `zContainer.position` 改为与支点同一个点（`py − off + dy`），缩放中心不动、只叠 dx/dy，才是"绕颈肩缩放"。
+  2. Maine 取景带横向 `0.255~0.83` → **`0.196~0.792`**：`scripts/probe-upper-body.mjs` 逐行像素剖面实测上半身横向 fx∈[0.218, 0.769]、中心 0.494——旧口径 [0.273, 0.813] 是位移 bug 时代测的（中心偏右 0.049），左缘裁掉美术 0.037 且镜像偏移双倍（实测偏左约 46px）。`test/frame.test.js` 的过时断言同步改新实测值。旧值判据"全身横向"也该弃用：实测全身与上半身横向几乎相同。
+  3. 镜像水平补偿：`fitBand` 的 x 按**未翻转**带算（减 centerOffset 摆正偏心美术），`scale.x` 取负翻转后偏心方向也翻，少补一次偏 `2·centerOffset·scale` → `model.x = fit.x + (mirror ? 2·co·s : 0)`。
+  4. `STANDARD_BOX {300,480}` → 第一轮 `{386,560}`（不裁手臂的几何最大），用户看后嫌大 → 第二轮 **`{300,560}`**（fit=0.1007）。中途试过 `{322,560}`（对齐参考图 26% 留白的精确解）但撞上「工作台与桌宠同比例」的既有承诺：工作台面板 300 宽的 contain=0.10067 是**所有界面瓶颈**，标准盒一旦大于它两界面就差 7%。最终三档头顶留白 47%（基准）/ 39%（日常 1.15）/ 31%（待机 1.32，用户最常见），比参考图略疏朗、方向一致。
+- **关键纪律**：
+  - **pixi 的 `position − pivot` 是净位移陷阱**：两个属性想表达"同一点 + 绕它变换"时必须写成同一个点，各写各的坐标就变成整体平移。
+  - `model.getBounds()` 报的是**声明画布矩形**（pixi-live2d-display 未重写），不是真实美术范围——量化画面必须靠 `snapshotDataURL()` 的 alpha 像素。
+  - `fitBand` 的镜像语义缺口：mirror 只翻 `scale.x`，fit.x 的偏心补偿不跟着翻——以后凡"fit 里减了一个与美术朝向有关的量"都要问一句翻转后该不该取反。
+  - `verify-frame.mjs` 是最后一个漏 `NAGI_RENDERER_SANDBOX=0` 的起实例脚本（D40 同款问题："桌宠页未就绪"假失败）——已补，至此起 Electron 的脚本全部自带开关。
+- **依据**：`npm run build` 退出 0；`verify:frame` **45/45**、`verify:depth` **38/38**、`verify:face` **10/10**（E 项首跑 0.3% 为偶发采样抖动，复跑 2.3% 过）；单测 frame **18/18**（更新过时断言）、depth-motion + face-expression **47/47**。探针实测（430×645，用户设置档）：头顶 y 150→254、覆盖率 39.7%→24.6%（日常档）；待机档头顶 y 77→198、覆盖率 50.2%→31.1% 且不再裁手臂；镜像后美术中心 190 ≈ 可用区中心 193。
+- **工具**：新增 `scripts/probe-bust-framing.mjs`（四场景抓帧 + alpha 包围盒 + ASCII 轮廓图，临时探针保留）与 `scripts/probe-upper-body.mjs`（上半身横向剖面）。
+- **未验证**：用户真机肉眼确认（对比页已发布 https://nagi-demo.app.workbuddy.host/ ，含参考图对照与三档前后对比）。
+- **影响**：桌宠/工作台/设置三处立绘同时变小约 22%（相对第一轮）或回到接近 D55 前的绝对尺寸但构图正确（头到肚脐完整、水平居中、无位移）；无资源、造型、配色改动。
