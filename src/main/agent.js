@@ -4,6 +4,7 @@
 
 import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/protocol.js'
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
@@ -15,11 +16,14 @@ import { presenceHooks } from './presence-hooks.js'
 import { PRESENCE_EVENT } from '../shared/presence-protocol.js'
 import { presenceConfig } from '../core/presence/circadian.js'
 import { extractEmotionTag } from '../core/llm/stream-normalize.js'
-import { createClient, chatStream } from '../core/llm/openai-compatible.js'
+import { chat, createClient, chatStream } from '../core/llm/openai-compatible.js'
 import { apiKeyForLlm, isLocalLlm, resolveLlm, supportsNativeTools } from '../core/llm/providers.js'
 import { checkOllama } from '../core/llm/ollama.js'
 import { initCloudBrain, cloudBrainStatus, cloudChatStream } from '../core/llm/cloud-workbuddy.js'
 import { createMood } from '../core/emotion/mood.js'
+import { createThinkGate } from '../core/presence/reaction.js'
+import { createReactionEngine } from './reaction.js'
+import { modelsDir } from './paths.js'
 import { NagiPersona } from '../core/persona.js'
 import { buildContextBlock, recentAssistantReplies, timeSlot } from '../core/context.js'
 import {
@@ -488,8 +492,140 @@ function handleProactive({ mood: hitMood, text, ruleId }) {
 
 /** 启动活动监测（app ready 后调用；幂等）。总开关在 settings.privacy.monitorEnabled */
 export function startActivityMonitor() {
-  startMonitor({ onProactive: handleProactive,
-    onPresenceSample:sample=>presence.observe(sample?{kind:'idle',idleSec:sample.idleSec}:{kind:'pause'}) })
+  startMonitor({
+    onProactive: handleProactive,
+    onPresenceSample: (sample) => {
+      presence.observe(sample ? { kind: 'idle', idleSec: sample.idleSec } : { kind: 'pause' })
+      // 「她想一下再表现」：只喂**活动分类**（隐私上不传标题/应用名）。
+      // 不 await —— 思考要走网络，绝不能拖慢监测节拍。
+      if (sample?.category) {
+        if (!reactionSawCategory) {
+          reactionSawCategory = true
+          console.log(`[reaction] 开始接收活动分类（首个：${sample.category}）`)
+        }
+        try {
+          reactionEngine
+            ?.observe({ category: sample.category, idleMs: (sample.idleSec || 0) * 1000 })
+            .catch(() => {})
+        } catch {
+          /* 这层出问题不影响规则层开口 */
+        }
+      }
+    }
+  })
+}
+
+/* ---------------- 「她想一下再表现」（2026-10-17） ----------------
+ *
+ * 原来的链路是：监测 → 6~8 条硬编码规则 → 一个固定情绪 + 一句预写的话。
+ * 这层在中间插一次**常识推理**：她先说清"我注意到什么、为什么想这样表现"，
+ * 再决定是持续一阵（走情绪，会自然衰减）还是只闪一下（走微表情）。
+ *
+ * 三条刻意保留的克制：
+ *   · 只把活动分类交给模型，不传窗口标题/文件名（用户 2026-10-17 选的边界）；
+ *   · 只在场景切换 / 同场景待久了 / 长空闲时问一次，有小时与每日上限；
+ *   · **允许她什么都不做** —— 模型给低强度就当没反应，这是最常用也最正确的答案。
+ * 规则层完全保留：没配模型、或这层关掉时，行为与之前一模一样。
+ */
+let reactionEngine = null
+let reactionSawCategory = false
+let flashPoolCache = { key: '', pool: [] }
+
+/** 读当前模型的微表情池（只取 id：既当给模型的选项，也当校验白名单） */
+function flashOptions() {
+  try {
+    const rel = getSettings().live2d?.modelPath || ''
+    if (!rel) return []
+    if (flashPoolCache.key === rel) return flashPoolCache.pool
+    const dir = join(modelsDir, rel.replace(/[\\/][^\\/]*$/, ''))
+    const file = join(dir, 'nagi-microexpr.json')
+    if (!existsSync(file)) {
+      flashPoolCache = { key: rel, pool: [] }
+      return []
+    }
+    const cfg = JSON.parse(readFileSync(file, 'utf8'))
+    const pool = (Array.isArray(cfg.pool) ? cfg.pool : []).map((e) => e?.id).filter(Boolean)
+    flashPoolCache = { key: rel, pool }
+    return pool
+  } catch {
+    return []
+  }
+}
+
+/** 用对话那套 LLM 配置发一次"非对话"的短请求；不可用就返回 null（这层静默停用） */
+async function callReactionModel(messages) {
+  const settings = getSettings()
+  const llm = resolveLlm(settings.llm || {})
+  // 云端大脑（workbuddy）走的是另一条会话通道，这层先不接
+  if (llm.provider === 'workbuddy') return null
+  const local = isLocalLlm(llm)
+  const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
+  if (!hasKey && !local) return null
+  const apiKey = apiKeyForLlm(llm, hasKey && !local ? getSecret(SECRET_KEYS.LLM_API_KEY) : null)
+  const client = createClient({ apiKey, baseURL: llm.baseURL })
+  const msg = await chat(client, { model: llm.model, messages, temperature: 0.6 })
+  return msg?.content || null
+}
+
+export function startReactionEngine() {
+  if (reactionEngine) return reactionEngine
+  const cfg = () => getSettings().reaction || {}
+  if (cfg().enabled === false) {
+    console.log('[reaction] 已按设置关闭，行为退回硬编码规则')
+    return null
+  }
+  reactionEngine = createReactionEngine({
+    getContext: () => {
+      const privacy = getSettings().privacy || {}
+      const h = new Date().getHours()
+      return {
+        hour: h,
+        moodLabel: mood.label(),
+        flashOptions: flashOptions(),
+        // 勿扰 / 深夜：不想（她该安静了）
+        silent: !!privacy.doNotDisturb || h >= 23 || h < 7,
+        tone: 'normal'
+      }
+    },
+    callModel: callReactionModel,
+    onSustain: ({ feel, strength }) => {
+      if (!feel) return
+      // 只"提议"，不强设：mood.propose 自带"候选强度够才接管"的粘性，
+      // 所以模型说不清的时候，她原来的脸不会被顶掉
+      mood.propose(feel, strength, 'reaction')
+      broadcastMood()
+    },
+    onFlash: ({ flash, why }) => {
+      if (!flash) return
+      broadcast(EVT.FEELING, { flash, why, at: Date.now() })
+    },
+    onSay: ({ text, feel }) => {
+      // 说话走既有的主动搭话通道（含 companion 预算、勿扰、忙碌判断）
+      saySomething({ mood: feel, text, kind: 'proactive', source: 'reaction' })
+    },
+    gate: createThinkGate({
+      minGapMs: Math.max(1, Number(cfg().minGapMin) || 8) * 60 * 1000,
+      hourMax: Math.max(1, Number(cfg().hourMax) || 4),
+      dayMax: Math.max(1, Number(cfg().dayMax) || 20)
+    }),
+    log: (m) => console.log(m)
+  })
+  console.log('[reaction] 已启用：场景切换/待久了/长空闲时会想一下')
+  // 验收探针：验证环境里主进程未必拿得到真实前台窗口，允许直接注入一个分类，
+  // 这样能单独验"思考 → 校验 → 表现"这段；真实采样那一跳由 monitor 的单测覆盖。
+  if (process.env.NAGI_REACTION_PROBE_CATEGORY) {
+    setTimeout(() => {
+      const c = process.env.NAGI_REACTION_PROBE_CATEGORY
+      console.log(`[reaction] 探针注入分类：${c}`)
+      reactionEngine?.observe({ category: c, idleMs: 0 }).catch(() => {})
+    }, 4000)
+  }
+  return reactionEngine
+}
+
+/** 调试/工作台：她最近一次"在想什么" */
+export function reactionState() {
+  return reactionEngine ? reactionEngine.state() : null
 }
 
 export function stopActivityMonitor() {
@@ -862,7 +998,18 @@ export function getMoodSnapshot() {
 }
 
 /** 戳一戳：返回气泡台词 + 当时表情，并广播 PET 事件 */
+// 连续戳的计数（2026-10-17）：间隔超过 2 分钟就重置，让"连戳"成为真的连戳
+let pokeCount = 0
+let pokeLastAt = 0
+const POKE_RESET_MS = 2 * 60 * 1000
+
 export function handlePoke() {
+  const nowMs = Date.now()
+  const gap = pokeLastAt ? nowMs - pokeLastAt : Infinity
+  if (gap > POKE_RESET_MS) pokeCount = 0
+  pokeCount++
+  pokeLastAt = nowMs
+
   try { companionInteracted() } catch { /* 戳击始终可用 */ }
   mood.noteInteraction() // 戳她也是互动：刷新冷落计时
   noteRelationInteraction() // 关系层同样记一笔（戳也算搭理她）
@@ -871,10 +1018,25 @@ export function handlePoke() {
   } catch {
     /* 记流水失败不影响反应 */
   }
-  const p = mood.pickPoke()
+
+  // 按"第几次"分级：第 1 次正常、2~3 次疑惑、4~6 次不耐烦、7 次以上装作不理。
+  // text 为 null 表示这一下她不出声（只把头转开）——所以气泡不会弹。
+  const r = NagiPersona.pickPokeReaction({
+    count: pokeCount,
+    gapMs: gap,
+    hour: new Date(nowMs).getHours(),
+    moodKey: mood.current().mood
+  })
+  console.log(`[poke] 第 ${pokeCount} 次 → ${r.level}（${r.reason}）${r.text ? '：' + r.text : '（不出声）'}`)
   broadcastMood()
-  broadcast(EVT.PET, { kind: 'poke', text: p.text, expr: p.expr })
-  return p
+  broadcast(EVT.PET, {
+    kind: 'poke',
+    text: r.text || '',
+    expr: r.expr,
+    silent: !r.text,
+    level: r.level
+  })
+  return r
 }
 
 /** 确认条回传 */

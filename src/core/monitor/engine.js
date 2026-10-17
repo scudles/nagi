@@ -8,7 +8,7 @@
 // 主进程用 main/monitor/index.js 把真实实现（powerMonitor + PowerShell + persona）接上。
 
 import { gateSample, collectionAllowed } from './privacy.js'
-import { createTracker } from './tracker.js'
+import { classify, createTracker } from './tracker.js'
 import { createThrottle } from './throttle.js'
 import { evaluateRules, RULES } from './rules.js'
 
@@ -66,8 +66,10 @@ export function createMonitorEngine({
 
     const gate = gateSample(raw, privacy)
     if (gate.skip) {onPresenceSample(null);return { skipped: gate.reason }}
-    // 只输出通过隐私闸的闲置秒数，不给时间状态机窗口标题/应用信息。
-    try {onPresenceSample({ts:raw.ts,idleSec:raw.idleSec})} catch { /* 时间感故障不影响 M3 */ }
+    // 只输出通过隐私闸的闲置秒数与**活动分类**（6 个枚举之一）。
+    // 窗口标题/应用名一律不外传：时间状态机只要空闲秒数，
+    // 「她想一下」那层也只需要知道"在工作/看视频/打游戏…"这个级别。
+    try {onPresenceSample({ts:raw.ts,idleSec:raw.idleSec,category:classify(raw)})} catch { /* 时间感故障不影响 M3 */ }
 
     trk.record(raw)
     const stats = trk.stats()

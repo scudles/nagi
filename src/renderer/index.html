@@ -40,6 +40,8 @@
     </div>
     <!-- 右下角拖拽缩放（按住拖动即等比改变桌宠大小） -->
     <div id="pet-resizer" title="拖动调整大小"></div>
+    <!-- 右键菜单：装束与互动（透明无边框窗用不了系统菜单，这里自己画一个） -->
+    <div id="pet-menu" class="pet-menu hidden"></div>
   </div>
 
   <!-- ============ 工作台形态 ============ -->
@@ -257,6 +259,57 @@
         <div class="sp-row">
           <button id="btn-refresh-models">刷新模型列表</button>
           <button id="btn-save-l2d">保存 Live2D 设置</button>
+        </div>
+
+        <h3>装束</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          换一身打扮（发型、眼镜、兽耳、蝴蝶结、披肩、尾巴）。点一下当场就换，
+          切换时会眨个眼把变化盖过去，不会"啪"地一下变样。
+          也可以在<b>桌宠上按右键</b>，或用全局热键 <code>Ctrl + Alt + O</code> 循环换。
+        </p>
+        <div id="set-outfit-list" class="outfit-list"></div>
+        <div class="sp-row">
+          <button id="btn-outfit-random">随便换一身</button>
+          <span id="set-outfit-current" class="dim"></span>
+        </div>
+
+        <h3>她自己待着的时候</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          没人在跟她说话时，她会自己待着：偶尔顺着你在的方向看一眼（<b>只看一眼就移开</b>，
+          不是一直盯着鼠标）、偶尔换个站姿、偶尔自己换身衣服。
+          所有判断都遵守勿扰开关与夜间静默。
+        </p>
+        <label class="check"><input id="set-ambient-enabled" type="checkbox" /> 启用待机行为</label>
+        <label class="check"><input id="set-ambient-gaze" type="checkbox" /> 微注视（鼠标在动时她会看一眼）</label>
+        <label class="check"><input id="set-ambient-autonomous" type="checkbox" /> 允许她自己做动作、自己换装束</label>
+        <label>活跃程度
+          <select id="set-ambient-level">
+            <option value="conservative">保守（默认：小动作 5~10 分钟一次，换装一天最多 3 次）</option>
+            <option value="medium">中等（小动作 3~6 分钟一次，换装一天最多 4 次）</option>
+            <option value="lively">活泼（小动作 2~4 分钟一次，换装一天最多 6 次）</option>
+          </select>
+        </label>
+        <label class="check"><input id="set-ambient-hotkeys" type="checkbox" /> 启用全局热键（Ctrl+Alt+O 换装束 / Ctrl+Alt+Shift+O 上一个 / Ctrl+Alt+E 让她动一下）</label>
+        <p class="dim" id="set-hotkey-status" style="margin:4px 0 0"></p>
+        <div class="sp-row">
+          <button id="btn-save-ambient">保存待机行为设置</button>
+        </div>
+
+        <h3>她会不会「想一下再表现」</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          打开后，她在关键时机（你换了在做什么的事 / 同一件事做了很久 / 很久没动）会先想一下：
+          「我注意到他在做什么 → 我该不该有反应 → 为什么」。
+          想清楚了才会表现：多数时候是<b>什么都不做</b>；有时持续一阵（会自己淡下去），有时只闪一个微表情。
+          关掉就退回原来那套固定规则，行为与以前一模一样。
+          <br />
+          交给模型看的只有<b>活动分类</b>（在工作 / 看视频 / 打游戏…），不包含窗口标题、文件名或聊天对象。
+        </p>
+        <label class="check"><input id="set-reaction-enabled" type="checkbox" /> 启用「想一下再表现」</label>
+        <label>两次思考至少间隔 <input id="set-reaction-gap" type="number" min="1" max="120" step="1" /> 分钟</label>
+        <label>每小时最多 <input id="set-reaction-hour" type="number" min="1" max="30" step="1" /> 次</label>
+        <label>每天最多 <input id="set-reaction-day" type="number" min="1" max="200" step="1" /> 次</label>
+        <div class="sp-row">
+          <button id="btn-save-reaction">保存思考设置</button>
         </div>
 
         <h3>她的声音（语音输出）</h3>

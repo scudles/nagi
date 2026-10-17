@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { MODE } from '../shared/protocol.js'
 import { switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow } from './windows.js'
+import { outfitCatalog, sendOutfitCommand } from './outfit-state.js'
+import { DEFAULT_SHORTCUTS, prettyAccelerator } from './shortcuts.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -61,8 +63,61 @@ function buildMenu() {
     },
     { label: '看看她的日记', click: () => openDiaryWindow() },
     { type: 'separator' },
+    outfitMenuItems(),
+    {
+      label: '让她动一下',
+      accelerator: prettyAccelerator(DEFAULT_SHORTCUTS.act),
+      click: () => sendOutfitCommand('act')
+    },
+    {
+      label: '让她做个表情',
+      click: () => sendOutfitCommand('expr')
+    },
+    {
+      label: '演一段（完整动作）',
+      click: () => sendOutfitCommand('showpiece')
+    },
+    { type: 'separator' },
     { label: '退出凪', click: () => app.quit() }
   ])
+}
+
+/**
+ * 装束子菜单：清单来自渲染层上报（模型目录的 nagi-outfit.json），
+ * 没上报之前只给一个"下一个"，不让菜单空着。
+ */
+function outfitMenuItems() {
+  const cat = outfitCatalog()
+  const looks = cat.looks || []
+  if (!looks.length) {
+    return {
+      label: '装束',
+      submenu: [{ label: '（模型还没就绪）', enabled: false }]
+    }
+  }
+  return {
+    label: `装束${cat.name ? `：${cat.name}` : ''}`,
+    submenu: [
+      ...looks.map((l) => ({
+        label: l.desc ? `${l.name} —— ${l.desc}` : l.name,
+        type: 'radio',
+        checked: cat.current === l.id,
+        click: () => sendOutfitCommand('set', l.id)
+      })),
+      { type: 'separator' },
+      {
+        label: '下一个',
+        accelerator: prettyAccelerator(DEFAULT_SHORTCUTS.next),
+        click: () => sendOutfitCommand('next')
+      },
+      {
+        label: '上一个',
+        accelerator: prettyAccelerator(DEFAULT_SHORTCUTS.prev),
+        click: () => sendOutfitCommand('prev')
+      },
+      { label: '随便换一身', click: () => sendOutfitCommand('random') }
+    ]
+  }
 }
 
 export function createTray() {

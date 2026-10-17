@@ -101,11 +101,24 @@ test('情绪节律注入不伪造互动、不覆盖强情绪；context/日记明
   assert.match(content,/仍清醒/);assert.match(content,/不是外界感知/)
   assert.match(buildDiaryMessages({rhythm:r})[1].content,/没有生理困倦/)
 })
-test('M3 观察出口只在隐私闸通过时带闲置秒数，标题不外传',async()=>{
+test('M3 观察出口只带闲置秒数与活动分类，标题/应用名不外传',async()=>{
   let privacy={monitorEnabled:true},got=[]
   const engine=createMonitorEngine({sampler:{sample:async()=>({ts:1,idleSec:600,title:'private-title',app:'Code'})},getPrivacy:()=>privacy,
     onPresenceSample:s=>got.push(s),rules:[]})
-  await engine.tickOnce();assert.deepEqual(got,[{ts:1,idleSec:600}])
+  await engine.tickOnce()
+  const s=got[0]
+  assert.equal(s.ts,1)
+  assert.equal(s.idleSec,600)
+  // 2026-10-17 增：多了一个活动分类（「她想一下再表现」要用），
+  // 但它只能是 6 个枚举之一 —— 分类是"在工作/看视频"这个级别，不含任何可识别内容。
+  assert.ok(['work','video','gaming','social','browser','other'].includes(s.category),`分类必须是枚举值，实际 ${s.category}`)
+  // 实质检查：出口上不能出现标题、应用名，也不能出现它们的原文
+  assert.equal('title' in s,false,'观察出口不该带窗口标题')
+  assert.equal('app' in s,false,'观察出口不该带应用名')
+  const dumped=JSON.stringify(s)
+  assert.equal(dumped.includes('private-title'),false,'标题原文泄露到观察出口')
+  assert.equal(dumped.includes('Code'),false,'应用名泄露到观察出口')
+  assert.deepEqual(Object.keys(s).sort(),['category','idleSec','ts'],`出口字段应恰好是这三项，实际 ${Object.keys(s).join(',')}`)
   privacy={doNotDisturb:true};await engine.tickOnce();assert.equal(got.at(-1),null)
 })
 test('voice hook 不含映射：null/异常/Promise/非法值安全回退，注销不误删新提供者',()=>{

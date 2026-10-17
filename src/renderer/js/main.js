@@ -18,6 +18,7 @@ import * as l2d from './live2d.js'
 import { initDiary } from './diary.js'
 import { initVoice } from './voice.js'
 import * as presence from './presence.js'
+import * as ambient from './ambient.js'
 
 const params = new URLSearchParams(location.search)
 const mode = params.get('mode') === MODE.WORKBENCH ? MODE.WORKBENCH : params.get('mode') === 'diary' ? 'diary' : MODE.PET
@@ -40,6 +41,12 @@ let idleTimer = null
 
 function noteActivity() {
   lastActivityAt = Date.now()
+  // 待机行为也认这个时钟：你在动 → 她就不该自己找事做（见 renderer/js/ambient.js）
+  try {
+    ambient.noteActivity()
+  } catch {
+    /* 待机行为没起来时不影响原有逻辑 */
+  }
   if (idleBoosted) {
     idleBoosted = false
     if (l2dReady) l2d.setScale(settings?.live2d?.scale || 1)
@@ -69,8 +76,11 @@ boot().catch((err) => {
   ui.addMessage('error', '启动失败：' + err.message)
 })
 
+let moodFrozen = false // 验证用：冻住情绪广播，免得心跳把手动注入的强度覆盖掉
+
 function applyMood(snap) {
   if (!snap) return
+  if (moodFrozen) return
   currentMood = snap
   ui.setMood(snap.mood)
   if (!l2dReady) return
@@ -78,7 +88,9 @@ function applyMood(snap) {
   const key = snap.mood + '|' + snap.expr
   const changed = key !== lastMoodKey
   lastMoodKey = key
-  l2d.setEmotion(snap.expr, { motion: changed })
+  // 用 mood（而不是 expr）取肌肉：restingExpr 在强度 0.6 处会把 smile 切成 joy，
+  // 那是一次硬跳；直接用 mood 则是一条连续的强度曲线（2026-10-17）
+  l2d.setEmotion(snap.mood || snap.expr, { motion: changed, intensity: snap.intensity })
 }
 
 /* ---------------- 归来便签入口（BLUE-2；便签数据走 BLUE-3） ----------------
@@ -264,6 +276,12 @@ async function boot() {
   // 事件：设置变更
   window.nagi.on(EVT.SETTINGS_CHANGED, (next) => {
     if (next) settings = next
+    // 待机行为的开关/档位/勿扰即时生效（两个窗口各订阅各渲染，天然同步）
+    try {
+      ambient.refreshAmbient({ config: settings?.ambient, privacy: settings?.privacy })
+    } catch {
+      /* 待机行为没起来时忽略 */
+    }
   })
 
   // 事件：情绪状态机广播（主进程单例，双窗同步）——侧栏读数 + 双形态面容/动作
@@ -280,13 +298,25 @@ async function boot() {
   wireNotesEntry()
   presence.initPresence({
     getConfig: () => settings?.presence,
-    onReunion: ({ durationMs }) => showNotesEntry(durationMs)
+    onReunion: ({ durationMs }) => {
+      showNotesEntry(durationMs)
+      // 你离开了一阵又回来 → 转身迎接（幅度最大的一种转向）
+      if (l2dReady) l2d.playTurn('return', { holdMs: 2400 })
+    }
   })
+
+  // 待机行为（2026-10-17）：没人在的时候她自己怎么待着——微注视、自主动作、自主换装
+  wireAmbient()
 
   // 事件：桌宠交互（戳一戳台词气泡 / 活动监测的主动搭话 / 日程提醒）
   window.nagi.on(EVT.PET, (p) => {
     noteActivity()
     if (!p || !p.text) return
+    // 验收用：气泡 DOM 是瞬态的（6 秒自动隐藏、可能被别的气泡顶掉、非桌宠形态根本不显示），
+    // 记一份历史，verify:turns D 项读它判断"台词逐级变化"，不靠抓 DOM 时序
+    if (!window.__nagiPokeBubbles) window.__nagiPokeBubbles = []
+    window.__nagiPokeBubbles.push({ kind: p.kind, text: p.text })
+    if (window.__nagiPokeBubbles.length > 50) window.__nagiPokeBubbles.shift()
     if (mode === MODE.PET) {
       document.getElementById('bubble-ignore')?.classList.toggle('hidden', p.kind !== 'proactive')
       // 提醒是她答应过的事，气泡多停一会儿
@@ -461,7 +491,23 @@ function wirePetControls() {
   const el = document.getElementById('pet-root')
   // 鼠标在桌宠上就是"有动静"
   el?.addEventListener('pointermove', noteActivity)
-  el?.addEventListener('pointerdown', noteActivity)
+  el?.addEventListener('pointerdown', () => {
+    noteActivity()
+    hidePetMenu() // 点别处就收起装束菜单
+  })
+
+  // 鼠标靠近她的窗口 → 抬头看你一眼（turn 内部有 25 秒节流）
+  el?.addEventListener('pointerenter', () => {
+    if (!l2dReady) return
+    l2d.turnToward('approach', ambient.gazeNow?.())
+  })
+
+  // 右键：装束与互动菜单（单击=戳一戳、拖动=搬家，右键不与之冲突）
+  el?.addEventListener('contextmenu', (e) => {
+    e.preventDefault()
+    noteActivity()
+    openPetMenu(e.offsetX, e.offsetY)
+  })
 
   // 工具栏 ＋／－：等比缩放窗口（右下角锚定）
   const resizeBy = (factor) => {
@@ -571,11 +617,168 @@ function wirePetDragAndPoke(el) {
   })
 }
 
+/* ---------------- 待机行为与装束（2026-10-17） ---------------- */
+
+/**
+ * 待机行为接线：
+ *   · 订阅主进程的注视提示（只有方向，没有坐标）→ core/ambient.js 决定要不要看；
+ *   · 订阅宿主下发的装束/动作指令（全局热键、托盘菜单、右键菜单都汇到这里）；
+ *   · 判断"该不该动"全在 core/ambient.js（纯逻辑、可单测），这里只做落地。
+ */
+function wireAmbient() {
+  ambient.initAmbient({
+    getConfig: () => settings?.ambient,
+    getPrivacy: () => settings?.privacy,
+    onRestyle: (e) => {
+      // 她自己换了装束：落盘 + 刷新托盘菜单，并在工作台留一行痕（可解释、可追溯）
+      reportOutfit(e?.reason || 'idle')
+      if (mode === MODE.WORKBENCH) ui.addToolLog?.(`（她自己换了身：${e?.text || ''}）`)
+    }
+  })
+  window.nagi.on(EVT.OUTFIT, (cmd) => {
+    if (!cmd || !l2dReady) return
+    noteActivity()
+    applyAmbientCommand(cmd)
+  })
+  // 「她想一下」之后决定"只闪一下"：主进程只给池子 id，具体怎么闪由渲染层执行
+  window.nagi.on(EVT.FEELING, (p) => {
+    if (!p || !p.flash || !l2dReady) return
+    const hit = ambient.flashMicroExpr(p.flash)
+    if (hit && mode === MODE.WORKBENCH) ui.addToolLog?.(`（她注意到：${p.why || hit.why || ''}）`)
+  })
+}
+
+/** 执行宿主下发的指令（热键 / 托盘 / 右键菜单） */
+function applyAmbientCommand(cmd) {
+  if (cmd.action === 'act') {
+    const r = l2d.randomMotion()
+    if (r && mode === MODE.WORKBENCH) ui.addToolLog?.(`（凪动了一下：${r.group} #${r.index + 1}）`)
+    return
+  }
+  // 闪一个微表情（星星眼/花花/吐舌…）：托盘/热键都能触发，方便你随时看她的表情资源
+  if (cmd.action === 'expr') {
+    ambient.flashMicroExpr?.()
+    return
+  }
+  // 演一段完整专场（就是那个 28 参数的动作）
+  if (cmd.action === 'showpiece') {
+    l2d.playMotion('Scene')
+    if (mode === MODE.WORKBENCH) ui.addToolLog?.('（她演了一段）')
+    return
+  }
+  let changed = null
+  if (cmd.action === 'next') changed = l2d.cycleOutfit(1)
+  else if (cmd.action === 'prev') changed = l2d.cycleOutfit(-1)
+  else if (cmd.action === 'random') changed = l2d.randomOutfit()
+  else if (cmd.action === 'set' && cmd.lookId) changed = l2d.setOutfitLook(cmd.lookId) ? cmd.lookId : null
+  else if (cmd.action === 'slots' && cmd.slots) changed = l2d.setOutfitSlots(cmd.slots) ? 'slots' : null
+  if (!changed) return
+  reportOutfit('user')
+  const cur = l2d.currentOutfit()
+  if (mode === MODE.PET) ui.showBubble?.(cur.name ? `换好了：${cur.name}` : '换好了', { autoHide: 2200 })
+}
+
+/** 把装束清单与当前项上报宿主：托盘菜单据此构建，当前项落盘（重启后还是这一身） */
+function reportOutfit(reason = '') {
+  try {
+    const cfg = l2d.outfitConfig()
+    const cur = l2d.currentOutfit()
+    if (!cfg || !cur.slots) return
+    window.nagi.outfit
+      .report({
+        looks: cfg.looks.map((l) => ({ id: l.id, name: l.name, desc: l.desc })),
+        current: cur.lookId,
+        name: cur.name,
+        slots: cur.slots,
+        describe: cur.describe,
+        reason
+      })
+      ?.catch?.(() => {})
+  } catch {
+    /* 上报失败不该影响表现 */
+  }
+}
+
+/** 桌宠上的右键菜单：装束与互动入口（不占用"单击=戳一戳、拖动=搬家"的既有语义） */
+function openPetMenu(x, y) {
+  const items = []
+  const cfg = l2d.outfitConfig?.()
+  const cur = l2d.currentOutfit?.()
+  if (cfg?.looks?.length) {
+    items.push({ label: `装束${cur?.name ? '：' + cur.name : ''}`, header: true })
+    for (const l of cfg.looks) {
+      items.push({ label: l.name, checked: cur?.lookId === l.id, action: () => applyAmbientCommand({ action: 'set', lookId: l.id }) })
+    }
+    items.push({ sep: true })
+    items.push({ label: '装束 → 下一个', action: () => applyAmbientCommand({ action: 'next' }) })
+    items.push({ label: '装束 → 随便换一身', action: () => applyAmbientCommand({ action: 'random' }) })
+    items.push({ sep: true })
+  }
+  items.push({ label: '让她动一下', action: () => applyAmbientCommand({ action: 'act' }) })
+  items.push({ label: '拉一拉（戳一戳）', action: () => pokeHer() })
+  showPetMenu(items, x, y)
+}
+
+/** 极简右键菜单：桌宠是透明无边框窗，用不了系统菜单，这里自己画一个 */
+function showPetMenu(items, x, y) {
+  const box = document.getElementById('pet-menu')
+  if (!box) return
+  box.innerHTML = ''
+  for (const it of items) {
+    if (it.sep) {
+      const hr = document.createElement('div')
+      hr.className = 'pm-sep'
+      box.appendChild(hr)
+      continue
+    }
+    if (it.header) {
+      const h = document.createElement('div')
+      h.className = 'pm-head'
+      h.textContent = it.label
+      box.appendChild(h)
+      continue
+    }
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'pm-item' + (it.checked ? ' checked' : '')
+    b.textContent = it.checked ? `✓ ${it.label}` : it.label
+    b.addEventListener('click', () => {
+      hidePetMenu()
+      try {
+        it.action?.()
+      } catch (err) {
+        console.warn('[pet-menu] 执行失败：', err)
+      }
+    })
+    box.appendChild(b)
+  }
+  box.classList.remove('hidden')
+  // 贴着点击处显示，但不越出窗口
+  const w = box.offsetWidth || 180
+  const h = box.offsetHeight || 200
+  box.style.left = `${Math.max(4, Math.min(x, window.innerWidth - w - 4))}px`
+  box.style.top = `${Math.max(4, Math.min(y, window.innerHeight - h - 4))}px`
+}
+
+function hidePetMenu() {
+  document.getElementById('pet-menu')?.classList.add('hidden')
+}
+
 /** 戳一戳：演一下 TapBody，再让主进程挑台词（气泡 / 情绪 / 日记都走那条链） */
 function pokeHer() {
   noteActivity()
   if (l2dReady) l2d.playMotion('TapBody')
-  window.nagi?.pet?.poke()?.catch?.(() => {})
+  // 主进程说"这次她装作不理"（turn='away'）就别过头，否则转过来看你
+  window.nagi?.pet
+    ?.poke()
+    ?.then?.((r) => {
+      if (!l2dReady || !r) return
+      if (r.turn === 'away') l2d.playTurn('away')
+      else l2d.turnToward('poke', ambient.gazeNow?.())
+      // 被碰了一下，耳朵抖一下（Param78/79 是物理输入，写它耳朵会自己甩）
+      if (Math.random() < 0.4) l2d.wiggleEars(0.8, 480)
+    })
+    ?.catch?.(() => {})
 }
 
 /** 应用桌宠尺寸（等比 2:3），拖动中不落盘，松手才 persist */
@@ -713,7 +916,9 @@ async function tryLoadLive2D(canvas, placeholder) {
       mirror: !!cfg.mirror,
       // 取景：默认「胸像」（只显示上半身）。模型目录 nagi-emotion.json 里的 frame 优先级更高
       frame: cfg.frame || undefined,
-      eyeBlink: cfg.eyeBlink !== false
+      eyeBlink: cfg.eyeBlink !== false,
+      // 上次穿的还是这一身（settings.live2d.outfit，可能是 look id 也可能是槽位表）
+      outfit: cfg.outfit || undefined
     })
     l2dReady = true
     placeholder?.classList.add('hidden')
@@ -721,6 +926,9 @@ async function tryLoadLive2D(canvas, placeholder) {
     if (currentMood) l2d.setEmotion(currentMood.expr, { motion: false })
     // 时段表现：模型就绪前收到的 rhythm 快照在这里补上（深夜安静/午后慵懒）
     presence.applyCurrentRhythm()
+    // 装束清单上报宿主：托盘菜单据此构建，当前这一身也顺便落盘
+    reportOutfit()
+    console.log('[live2d] 装束：', l2d.currentOutfit().name || '（模型没配 nagi-outfit.json）')
     console.log(
       '[live2d] 已加载模型：',
       rel,
@@ -881,7 +1089,89 @@ function showLlmProfile(provider) {
   document.getElementById('set-temp').value = profile.temperature ?? 0.7
 }
 
+/** 装束面板：按模型当前拥有的装束渲染一排按钮（模型没配 nagi-outfit.json 就说明情况） */
+function renderOutfitPanel() {
+  const box = document.getElementById('set-outfit-list')
+  if (!box) return
+  box.innerHTML = ''
+  const cfg = l2d.outfitConfig?.()
+  if (!cfg?.looks?.length) {
+    const d = document.createElement('div')
+    d.className = 'dim'
+    d.textContent = '（这个模型没有装束配置 nagi-outfit.json）'
+    box.appendChild(d)
+    return
+  }
+  const cur = l2d.currentOutfit()
+  for (const l of cfg.looks) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'outfit-btn' + (cur?.lookId === l.id ? ' active' : '')
+    b.title = l.desc || l.name
+    b.textContent = cur?.lookId === l.id ? `✓ ${l.name}` : l.name
+    b.addEventListener('click', () => {
+      if (!l2d.setOutfitLook(l.id)) return
+      reportOutfit('user')
+      renderOutfitPanel()
+      updateOutfitCurrentLabel()
+    })
+    box.appendChild(b)
+  }
+  updateOutfitCurrentLabel()
+}
+
+function updateOutfitCurrentLabel() {
+  const el = document.getElementById('set-outfit-current')
+  if (!el) return
+  const cur = l2d.currentOutfit?.()
+  el.textContent = cur?.slots ? `现在：${cur.describe || '自定义搭配'}` : ''
+}
+
+/** 待机行为与装束的设置项回填 */
+function fillOutfitAndAmbient() {
+  const a = settings?.ambient || {}
+  const set = (id, v) => {
+    const el = document.getElementById(id)
+    if (el) el.checked = v
+  }
+  set('set-ambient-enabled', a.enabled !== false)
+  set('set-ambient-gaze', a.gaze !== false)
+  set('set-ambient-autonomous', a.autonomous !== false)
+  set('set-ambient-hotkeys', a.hotkeys !== false)
+  const lvl = document.getElementById('set-ambient-level')
+  if (lvl) lvl.value = ['conservative', 'medium', 'lively'].includes(a.level) ? a.level : 'conservative'
+  renderOutfitPanel()
+  refreshHotkeyStatus()
+  // 「她想一下再表现」
+  const rc = settings?.reaction || {}
+  const rcSet = (id, v) => {
+    const el = document.getElementById(id)
+    if (el) el.checked = v
+  }
+  const rcNum = (id, v) => {
+    const el = document.getElementById(id)
+    if (el) el.value = String(v ?? '')
+  }
+  rcSet('set-reaction-enabled', rc.enabled !== false)
+  rcNum('set-reaction-gap', rc.minGapMin ?? 8)
+  rcNum('set-reaction-hour', rc.hourMax ?? 4)
+  rcNum('set-reaction-day', rc.dayMax ?? 20)
+}
+
+/** 热键状态：主进程注册成功/被占用要说清楚，不然用户按了没反应会以为坏了 */
+async function refreshHotkeyStatus() {
+  const el = document.getElementById('set-hotkey-status')
+  if (!el) return
+  const a = settings?.ambient || {}
+  if (a.hotkeys === false) {
+    el.textContent = '热键已关闭。'
+    return
+  }
+  el.textContent = '热键已在系统层注册：Ctrl + Alt + O / Ctrl + Alt + Shift + O / Ctrl + Alt + E。若某个组合被其它软件占用，会在应用日志里列出。'
+}
+
 function fillSettingsForm() {
+  fillOutfitAndAmbient()
   // provider 下拉
   const sel = document.getElementById('set-provider')
   if (sel && sel.options.length === 0) {
@@ -2184,6 +2474,48 @@ function wireSettingsPage() {
     ui.addToolLog('Live2D 设置已保存')
   })
 
+  // 装束：随便换一身（换完立刻上报宿主，当前这一身会落盘）
+  on('btn-outfit-random', () => {
+    if (!l2d.randomOutfit()) return
+    reportOutfit('user')
+    renderOutfitPanel()
+  })
+
+  // 待机行为设置（热键开关会即时重注册，不必重启）
+  on('btn-save-ambient', async () => {
+    await window.nagi.settings.set({
+      ambient: {
+        enabled: document.getElementById('set-ambient-enabled')?.checked !== false,
+        gaze: document.getElementById('set-ambient-gaze')?.checked !== false,
+        autonomous: document.getElementById('set-ambient-autonomous')?.checked !== false,
+        hotkeys: document.getElementById('set-ambient-hotkeys')?.checked !== false,
+        level: document.getElementById('set-ambient-level')?.value || 'conservative'
+      }
+    })
+    settings = await window.nagi.settings.get()
+    ambient.refreshAmbient({ config: settings?.ambient, privacy: settings?.privacy })
+    refreshHotkeyStatus()
+    ui.addToolLog('待机行为设置已保存')
+  })
+
+  // 「她想一下再表现」的设置（改完需要重启凪才生效：那层跑在主进程里）
+  on('btn-save-reaction', async () => {
+    const num = (id, d) => {
+      const v = Number(document.getElementById(id)?.value)
+      return Number.isFinite(v) && v > 0 ? Math.round(v) : d
+    }
+    await window.nagi.settings.set({
+      reaction: {
+        enabled: document.getElementById('set-reaction-enabled')?.checked !== false,
+        minGapMin: num('set-reaction-gap', 8),
+        hourMax: num('set-reaction-hour', 4),
+        dayMax: num('set-reaction-day', 20)
+      }
+    })
+    settings = await window.nagi.settings.get()
+    ui.addToolLog('思考设置已保存（重启凪后生效）')
+  })
+
   // 记忆
   on('btn-memory-add', async () => {
     const input = document.getElementById('memory-new')
@@ -2587,6 +2919,12 @@ window.__nagiTestEmotion = (name) => {
   ui.setMood(name)
   return l2d.setEmotion(name, { motion: 'force' })
 }
+// 只换表情、不播动作：验证"情绪落到哪张脸"时用，避免动作把画面差分成 20%+ 淹没面容比对
+window.__nagiTestEmotionOnly = (name) => {
+  if (!EMOTIONS.includes(name)) return false
+  ui.setMood(name)
+  return l2d.setEmotion(name, { motion: false })
+}
 window.__nagiTestMotion = (group) => l2d.playMotion(group)
 window.__nagiTestMotion2 = (group, index) => l2d.playMotion(group, index)
 window.__nagiStopMotions = () => l2d.stopMotions()
@@ -2616,6 +2954,60 @@ window.__nagiGetRhythmPose = () => l2d.getRhythmPose()
 window.__nagiRhythm = () => presence.getRhythm()
 // 调试：模型实际参数清单（时段表现过滤用）
 window.__nagiParamIds = () => l2d.listParamIds()
+// 调试：装束（2026-10-17）
+window.__nagiOutfitConfig = () => l2d.outfitConfig()
+window.__nagiOutfit = () => l2d.currentOutfit()
+window.__nagiOutfitParams = () => l2d.outfitParams()
+window.__nagiSetOutfit = (id) => l2d.setOutfitLook(id)
+window.__nagiCycleOutfit = (dir) => l2d.cycleOutfit(dir ?? 1)
+window.__nagiRandomOutfit = () => l2d.randomOutfit()
+window.__nagiShiftOutfitSlot = () => l2d.shiftOutfitSlot()
+// 调试：待机行为（微注视 / 自主配额）；setGaze 用来注入一次方向做验证
+window.__nagiSetGaze = (x, y) => l2d.setGaze(x, y)
+window.__nagiAmbient = () => ambient.ambientState()
+window.__nagiAmbientCommand = (cmd) => applyAmbientCommand(cmd)
+window.__nagiBlinkTrace = () => l2d.blinkTrace()
+// 冻结待机摆动：抓帧比对时用（否则她每帧都在摆，两次抓帧天然差 20%+，什么都测不出来）
+window.__nagiFreezeIdle = (on) => l2d.freezeIdleMotion(on)
+// 微表情：池子内容 / 闪一个 / 当前状态（验证用）
+window.__nagiMicroConfig = () => l2d.microExprConfig()
+window.__nagiFlashMicro = (id) => ambient.flashMicroExpr(id || null)
+window.__nagiMicroState = () => l2d.microExprState()
+// 临时禁止自主动作（抓帧比对/静音用），注视不受影响
+window.__nagiSuppressAutoAct = (on) => ambient.suppressAutoAct(on)
+// 面部表达三层（肌肉/微动/口型）：配置、状态、以及按强度试表情
+window.__nagiFaceConfig = () => l2d.faceConfig()
+window.__nagiResolve = (k) => l2d.resolveExpression(k)
+window.__nagiFaceState = () => l2d.faceState()
+window.__nagiParamRange = (ids) => l2d.paramRange(ids)
+window.__nagiApplyAngleProbe = (id, v) => l2d.applyAngleProbe(id, v)
+// 转向层（转头/转身）：调试与验收用
+window.__nagiTurn = (kind, opts) => l2d.playTurn(kind, opts)
+window.__nagiTurnState = () => l2d.turnState()
+window.__nagiSetIdleHead = (k) => l2d.setIdleHeadScale(k)
+// 动作：指定组播一个（验收用：随机播在低帧率下不可控，C 项要确定性地播；__nagiStopMotions 见上方测试钩子区）
+window.__nagiPlayMotion = (group, index) => l2d.playMotion(group, index)
+// 自动眨眼：状态与开关（验证/设置用）
+window.__nagiBlinkState = () => l2d.autoBlinkStats()
+window.__nagiSetBlink = (k) => l2d.setBlinkScale(k)
+// 眼球自主游走与抖耳朵
+window.__nagiEyeState = () => l2d.eyeState()
+window.__nagiSetEyeWander = (k) => l2d.setEyeWanderScale(k)
+window.__nagiWiggleEars = (amp, ms) => l2d.wiggleEars(amp, ms)
+// 直接戳一下（验收用：桌宠的点击要过"拖动 vs 点击"的判定，合成事件未必进得去）
+window.__nagiPoke = () => {
+  pokeHer()
+  return true
+}
+window.__nagiSetTremor = (v) => l2d.setTremorScale(v)
+window.__nagiEmotionIntensity = (name, i) => l2d.setEmotion(name, { motion: false, intensity: i })
+window.__nagiSetMouth = (v) => l2d.setMouthOpen(v)
+// 冻住情绪广播（验证抓帧用：主进程 15 秒一次的心跳会把注入的强度覆盖掉）
+window.__nagiFreezeMood = (on) => {
+  moodFrozen = !!on
+  return moodFrozen
+}
+window.__nagiDeepProbe = (ids) => l2d.deepProbe(ids)
 // 调试：在姿态生效的瞬间采样姿态参数（帧外读不到，Cubism 每帧末尾会还原快照）
 window.__nagiPoseParams = (ids) => l2d.probePoseOnce(ids)
 // 调试：焦点控制器内部状态（验证"目光不跟随鼠标"：它应该一直是 0）

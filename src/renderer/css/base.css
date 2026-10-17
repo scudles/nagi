@@ -206,6 +206,72 @@ body[data-mode="workbench"] {
 }
 .pet-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
 
+/* 右键菜单：装束与互动（2026-10-17）。
+   桌宠是透明无边框窗，用不了系统菜单，这里自己画一个贴点击处的小面板。
+   用 no-drag 保证菜单里的点击不会被"拖动窗口"吃掉。 */
+.pet-menu {
+  position: absolute;
+  z-index: 40;
+  min-width: 148px;
+  max-width: 240px;
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(28, 31, 41, 0.97);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  -webkit-app-region: no-drag;
+  backdrop-filter: blur(6px);
+}
+.pet-menu.hidden { display: none; }
+.pet-menu .pm-head {
+  padding: 5px 8px 3px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--dim, #8b93a7);
+}
+.pet-menu .pm-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+.pet-menu .pm-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.pet-menu .pm-item:hover { background: rgba(255, 255, 255, 0.07); }
+.pet-menu .pm-item.checked { color: var(--accent); }
+
+/* 设置页：装束按钮排（2026-10-17） */
+.outfit-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 8px;
+}
+.outfit-btn {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.outfit-btn:hover { border-color: var(--accent); color: var(--accent); }
+.outfit-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(120, 160, 255, 0.12);
+}
+
 /* 右下角拖拽缩放（鼠标移到桌宠上才出现） */
 #pet-resizer {
   position: absolute;

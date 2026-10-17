@@ -110,6 +110,52 @@ export const NagiPersona = {
   },
 
   // 戳一戳反应
+  // 戳一戳的反应（2026-10-17 重写）：按"连续戳第几次"分级，带脾气。
+  // 原来只有一个 4 条的池子、纯随机、无状态 —— 连戳三下可能抽到同一句，
+  // 而且"……已记录：你戳了我一下。"这种句子像日志而不像人。
+  pokeByLevel: {
+    // 第 1 次：正常回应
+    first: [
+      { expr: 'puzzled', text: '……嗯？' },
+      { expr: 'calm', text: '……怎么了。' },
+      { expr: 'calm', text: '……我在。' },
+      { expr: 'puzzled', text: '……戳我做什么。' },
+      { expr: 'calm', text: '……有事？' }
+    ],
+    // 第 2~3 次：开始疑惑
+    again: [
+      { expr: 'puzzled', text: '……你一直在戳我。' },
+      { expr: 'puzzled', text: '……又戳。' },
+      { expr: 'worry', text: '……手不酸吗。' },
+      { expr: 'puzzled', text: '……有事就说，别戳。' },
+      { expr: 'pout', text: '……我不是按钮。' }
+    ],
+    // 第 4~6 次：不耐烦
+    annoyed: [
+      { expr: 'pout', text: '……手痒的话，去敲键盘。' },
+      { expr: 'pout', text: '……再戳就咬你了。' },
+      { expr: 'pout', text: '……你是真的没事做。' },
+      { expr: 'pout', text: '……够了。' },
+      { expr: 'pout', text: '……最后一次警告。' },
+      { expr: 'pout', text: '……我不理你了。' }
+    ],
+    // 第 7 次以上：假装不理（text 为 null = 只转开头，不出声）
+    ignore: [
+      { expr: 'pout', text: null },
+      { expr: 'pout', text: '……' },
+      { expr: 'pout', text: null },
+      { expr: 'pout', text: '……哼。' }
+    ],
+    // 深夜的第一次戳（优先于 first）
+    night: [
+      { expr: 'worry', text: '……这个点了还不睡。' },
+      { expr: 'pout', text: '……戳我干嘛，去睡。' },
+      { expr: 'worry', text: '……再戳我也要睡了。' },
+      { expr: 'puzzled', text: '……熬夜的人会被戳。' }
+    ]
+  },
+
+  /** 旧接口（保留兼容；新代码用 pickPokeReaction） */
   poke: [
     { expr: 'pout', text: '……别戳我。' },
     { expr: 'puzzled', text: '……？' },
@@ -213,7 +259,9 @@ export const NagiPersona = {
   pokeSullen: [
     { expr: 'pout', text: '……别烦我。' },
     { expr: 'pout', text: '……现在不予响应。' },
-    { expr: 'puzzled', text: '……知道了。但不想说话。' }
+    { expr: 'puzzled', text: '……知道了。但不想说话。' },
+    { expr: 'pout', text: '……你终于想起我了。' },
+    { expr: 'pout', text: '……不理你。' }
   ],
 
   // 最近用过的句子（反重复用，只存内存）
@@ -291,6 +339,58 @@ export const NagiPersona = {
 
   randomPoke: function () {
     return this.poke[Math.floor(Math.random() * this.poke.length)]
+  },
+
+  /**
+   * 戳一戳的反应（2026-10-17）。
+   * 分级依据是"连续戳了第几次"（间隔超过 2 分钟由调用方重置计数），
+   * 再叠加时段与情绪。**这是有意不用 LLM 的**：戳一下要即时回，
+   * 等两秒才吭声比说得平淡更怪。
+   *
+   * @param {{count?:number, gapMs?:number, hour?:number, moodKey?:string}} ctx
+   * @returns {{expr:string, text:string|null, level:string, turn:string, reason:string}}
+   */
+  pickPokeReaction: function (ctx) {
+    var c = ctx || {};
+    var count = Math.max(1, Number(c.count) || 1);
+    var hour = Number.isFinite(Number(c.hour)) ? Number(c.hour) : new Date().getHours();
+    var moodKey = String(c.moodKey || '');
+    var L = this.pokeByLevel || {};
+    var pool;
+    var level;
+    var reason;
+
+    // 闹别扭（存在性不安）时：60% 走更安静的反话
+    if (moodKey === 'pout' && this.pokeSullen && this.pokeSullen.length && Math.random() < 0.6) {
+      pool = this.pokeSullen;
+      level = 'sullen';
+      reason = '她正闹别扭';
+    } else if (count >= 7) {
+      pool = L.ignore && L.ignore.length ? L.ignore : this.poke;
+      level = 'ignore';
+      reason = '连着戳太多次了';
+    } else if (count >= 4) {
+      pool = L.annoyed && L.annoyed.length ? L.annoyed : this.poke;
+      level = 'annoyed';
+      reason = '已经戳了好几下';
+    } else if (count >= 2) {
+      pool = L.again && L.again.length ? L.again : this.poke;
+      level = 'again';
+      reason = '又戳了一下';
+    } else if ((hour >= 23 || hour < 6) && L.night && L.night.length) {
+      pool = L.night;
+      level = 'night';
+      reason = '深夜被戳';
+    } else {
+      pool = L.first && L.first.length ? L.first : this.poke;
+      level = 'first';
+      reason = '戳了一下';
+    }
+
+    var hit = pool[Math.floor(Math.random() * pool.length)] || { expr: 'calm', text: '……' };
+    // 不理人的层级：转头别开；其余：转头看你
+    var turn = level === 'ignore' || level === 'sullen' ? 'away' : 'poke';
+    return { expr: hit.expr, text: hit.text || null, level: level, turn: turn, reason: reason, count: count };
   },
 
   randomMonologue: function () {

@@ -46,7 +46,11 @@ mock.module('electron', {
     dialog: { showOpenDialog: async () => pickerResult },
     BrowserWindow: { fromWebContents: () => null },
     ipcMain: { handle: () => {}, on: () => {} },
-    safeStorage: { isEncryptionAvailable: () => false }
+    safeStorage: { isEncryptionAvailable: () => false },
+    // 2026-10-17：设置 IPC 现在会同步待机行为的全局热键（settings:set → syncAmbientHost），
+    // 那条链路会 import globalShortcut；mock 不补上就会在 import 阶段报
+    // "Named export 'globalShortcut' not found"。
+    globalShortcut: { register: () => true, unregister: () => {}, isRegistered: () => false }
   }
 })
 mock.module('../src/main/ipc/trusted.js', {

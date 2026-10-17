@@ -3,7 +3,7 @@
 // 原则：渲染层拿不到 Node / Electron 原始对象，也拿不到任何密钥明文。
 
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC, EVT } from '../shared/protocol.js'
+import { IPC, EVT, OUTFIT_IPC } from '../shared/protocol.js'
 import { VOICE_IPC, VOICE_EVT } from '../shared/voice-protocol.js'
 import { RAG_IPC, RAG_EVT } from '../shared/rag-protocol.js'
 import { LLM_IPC } from '../shared/llm-protocol.js'
@@ -17,6 +17,10 @@ const ALLOWED_EVENTS = new Set([
   EVT.HA_EVENT,
   EVT.MOOD,
   EVT.PET,
+  // 待机行为：注视提示（只含相对方向）与装束指令
+  EVT.GAZE,
+  EVT.OUTFIT,
+  EVT.FEELING,
   VOICE_EVT.PROGRESS,
   VOICE_EVT.NOTICE,
   VOICE_EVT.OWNER_LOST,
@@ -76,6 +80,10 @@ const api = {
   },
   pet: {
     poke: () => ipcRenderer.invoke(IPC.PET_POKE)
+  },
+  /** 装束：渲染层把清单与当前项上报给宿主（托盘菜单要用、当前项要落盘） */
+  outfit: {
+    report: (payload) => ipcRenderer.invoke(OUTFIT_IPC.REPORT, payload)
   },
   mood: {
     get: () => ipcRenderer.invoke(IPC.MOOD_GET)

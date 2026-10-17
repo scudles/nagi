@@ -88,7 +88,27 @@ export const EVT = {
   SETTINGS_CHANGED: 'settings:changed',
   HA_EVENT: 'ha:event',
   MOOD: 'mood:change',   // 情绪状态机快照 { mood, intensity, expr, label }
-  PET: 'pet:event'       // 桌宠交互 { kind: 'poke' | 'proactive', text, expr }
+  PET: 'pet:event',      // 桌宠交互 { kind: 'poke' | 'proactive', text, expr }
+  // 2026-10-17 待机行为：
+  // 注视提示**只传相对方向**（-1..1），主进程算好再发，渲染层拿不到也存不下绝对鼠标坐标
+  GAZE: 'gaze:hint',     // { x, y, at }  x/y 是鼠标相对桌宠窗口中心的方向
+  OUTFIT: 'outfit:change', // { lookId, slots, reason } 装束变更（双窗同步 + 让主进程记账）
+  // 2026-10-17 「她想一下再表现」：主进程把"闪一下"的指令发下来（持续那部分走情绪通道）
+  FEELING: 'feeling:flash' // { flash: 'star', feel: 'joy', why: '...' }
+}
+
+/**
+ * 装束通道（2026-10-17）
+ *
+ * 单向数据流，避免主进程去猜模型里有什么装束：
+ *   渲染层 ──outfit:report──▶ 主进程（清单 + 当前项；托盘菜单据此构建、当前项落盘）
+ *   主进程 ──outfit:change──▶ 渲染层（指令：{ action:'next'|'prev'|'random'|'set', lookId? }）
+ *
+ * 装束清单来自模型目录的 nagi-outfit.json，只有渲染层读得到（走 nagi-local://），
+ * 所以主进程做"渲染层上报什么就用什么"，不自己维护一份可能过期的副本。
+ */
+export const OUTFIT_IPC = {
+  REPORT: 'outfit:report' // 渲染层上报 { looks, current, slots }
 }
 
 /** 6 种离散情绪（与旧情感系统一致） */
@@ -165,7 +185,25 @@ export const DEFAULT_SETTINGS = {
     eyeBlink: true,
     petWidth: 400, // 桌宠窗口尺寸（可用右下角手柄/Ctrl+滚轮自由调）
     petHeight: 600,
-    idleBoost: true // 待机加成：一段时间无互动时放大一点、换个姿势
+    idleBoost: true, // 待机加成：一段时间无互动时放大一点、换个姿势
+    // 当前装束（nagi-outfit.json 里的 look id；桌宠重启后还是这一身）
+    outfit: 'daily'
+  },
+  // 「她想一下再表现」（2026-10-17）：看你一眼、想一下、再决定要不要有反应
+  // 只把**活动分类**交给模型（不传窗口标题/文件名），且只在关键时机问一次
+  reaction: {
+    enabled: true, // 总开关（关掉就退回原来的硬编码规则）
+    minGapMin: 8, // 两次思考的最小间隔（分钟）
+    hourMax: 4, // 每小时最多想几次
+    dayMax: 20 // 每天最多想几次
+  },
+  // 待机行为（2026-10-17）：没人跟她说话的时候，她自己怎么待着
+  ambient: {
+    enabled: true, // 总开关
+    gaze: true, // 微注视（鼠标明显移动时看她一眼，看一眼就移开）
+    autonomous: true, // 自主动作与自主换装
+    level: 'conservative', // conservative | medium | lively
+    hotkeys: true // 全局热键（Ctrl+Alt+O 系列）
   },
   homeassistant: {
     enabled: false,

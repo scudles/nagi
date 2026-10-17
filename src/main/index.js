@@ -6,8 +6,12 @@ import { statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { registerScheme, registerHandler } from './local-protocol.js'
 import { modelsDir } from './paths.js'
-import { createPetWindow, createWorkbenchWindow, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow, rendererSandbox } from './windows.js'
+import { createPetWindow, createWorkbenchWindow, switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow, rendererSandbox, broadcast } from './windows.js'
 import { createTray } from './tray.js'
+import { startGaze, stopGaze } from './gaze.js'
+import { unregisterShortcuts } from './shortcuts.js'
+import { syncAmbientHost } from './ambient-host.js'
+import { registerOutfitIpc } from './ipc/outfit.js'
 import { registerSettingsIpc } from './ipc/settings.js'
 import { registerChatIpc } from './ipc/chat.js'
 import { registerHomeAssistantIpc } from './ipc/homeassistant.js'
@@ -28,9 +32,9 @@ import { refreshHaSignals } from './signals/ha.js'
 import { initRag } from './rag/index.js'
 import { migrateLegacyLedger } from './ledger.js'
 import { loadSettings, saveSettings } from './settings-store.js'
-import { disposeAgent, startMoodEngine, startActivityMonitor, startReminders, restoreState } from './agent.js'
+import { disposeAgent, startMoodEngine, startActivityMonitor, startReactionEngine, startReminders, restoreState } from './agent.js'
 import { prewarmVoice, disposeVoice } from './voice/index.js'
-import { MODE } from '../shared/protocol.js'
+import { EVT, MODE } from '../shared/protocol.js'
 import { registerPresenceIpc } from './ipc/presence.js'
 import { registerNotesIpc } from './ipc/notes.js'
 import { presenceInput } from './presence.js'
@@ -105,6 +109,7 @@ if (!gotLock) {
     registerGeoIpc()
     registerPresenceIpc()
     registerNotesIpc()
+    registerOutfitIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
@@ -145,6 +150,9 @@ if (!gotLock) {
     // 情绪引擎：心跳 + 独白日史（双窗广播，退出时随 disposeAgent 停止）
     startMoodEngine()
 
+    // 「她想一下再表现」：在监测与规则之间插一次常识推理（只喂活动分类，24 小时后自动静默）
+    startReactionEngine()
+
     // 活动监测：看你在用什么程序，适时主动开口（M3，受 settings.privacy 控制）
     startActivityMonitor()
     startMusicMonitor()
@@ -162,6 +170,26 @@ if (!gotLock) {
 
     // 托盘
     createTray()
+
+    // 待机行为的感知输入（2026-10-17）：鼠标在动就告诉她"往哪边看"。
+    // 只广播方向（-1..1），绝不广播绝对坐标；勿扰/关了活动监测时不采样。
+    // 她是否真的"看"由渲染层的节流调度决定（看一眼就移开，不是盯着鼠标）。
+    startGaze({
+      getWindow: getPetWindow,
+      getPrivacy: () => loadSettings().privacy,
+      getBounds: () => {
+        try {
+          return getPetWindow()?.getBounds() || null
+        } catch {
+          return null
+        }
+      },
+      onHint: (hint) => broadcast(EVT.GAZE, hint)
+    })
+
+    // 全局热键：桌宠不抢焦点，收不到普通键盘事件，只能在系统层注册
+    //（本地触发，不是 Agent 工具调用，因此不走安全门确认）
+    syncAmbientHost(loadSettings())
 
     if (process.env.NAGI_SELFTEST === '1' && process.env.NAGI_SELFTEST_PRESENCE === '1') {
       setTimeout(async () => {
@@ -200,6 +228,8 @@ if (!gotLock) {
     stopPresenceBindings()
     stopMusicMonitor()
     stopGeoMonitor()
+    stopGaze()
+    unregisterShortcuts()
     if (!disposeAgent.__done) {
       disposeAgent.__done = true
       e.preventDefault()

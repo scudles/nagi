@@ -18,6 +18,7 @@ import { modelsDir, projectRoot } from '../paths.js'
 import { refreshMonitorPrivacy } from '../monitor/index.js'
 import { refreshHaSignals } from '../signals/ha.js'
 import { refreshPresence } from '../presence.js'
+import { syncAmbientHost } from '../ambient-host.js'
 
 const ALL_SECRET_KEYS = Object.values(SECRET_KEYS)
 
@@ -61,6 +62,8 @@ export function registerSettingsIpc() {
       throw new Error('文件授权目录只能通过系统选择窗口修改')
     }
     const next = saveSettings(patch || {})
+    // 待机行为：热键的开关要立刻生效（不然用户关了热键发现还能按，以为坏了）
+    if (patch?.ambient) syncAmbientHost(next)
     if (patch?.presence || patch?.privacy) refreshPresence()
     if (patch?.privacy) refreshMonitorPrivacy()
     if (patch?.privacy || patch?.homeassistant) refreshHaSignals()
