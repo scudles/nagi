@@ -1,3 +1,4 @@
+import { reportRendererCatch, CATCH_CLASS } from './catch-report.js'
 // src/renderer/js/ambient.js
 // 待机行为的渲染层接线：把 core/ambient.js 的决定落到模型上，并遵守隐私与静默边界。
 //
@@ -64,9 +65,7 @@ function isSilent() {
   if (privacy.doNotDisturb) return true
   try {
     if (presence.randomMotionSuppressed()) return true
-  } catch {
-    /* presence 没起来时不算静默 */
-  }
+  } catch (__err) { reportRendererCatch('ambient.silentGate', CATCH_CLASS.DEGRADE, __err) }
   return false
 }
 
@@ -74,15 +73,11 @@ function isSilent() {
 function isBusy() {
   try {
     if (l2d.isTalking()) return true
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('ambient.talkingState', CATCH_CLASS.DEGRADE, __err) }
   try {
     const pose = l2d.getPose?.()
     if (pose === 'thinking') return true
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('ambient.poseState', CATCH_CLASS.DEGRADE, __err) }
   return false
 }
 
@@ -121,9 +116,7 @@ function tick() {
       plan.noteShowpiece()
       lastShowpiece = { at: t, group: show.group, why: show.why }
       return // 专场期间不做别的
-    } catch {
-      /* 模型没有这个动作组就算了，继续往下走普通行为 */
-    }
+    } catch (__err) { reportRendererCatch('ambient.showpieceMotion', CATCH_CLASS.DEGRADE, __err) }
   }
 
   // ② 自己动一下
@@ -144,9 +137,7 @@ function tick() {
       lastRestyle = { at: t, reason: restyle.reason, text: describeRestyleReason(restyle.reason) }
       try {
         onRestyleCb?.(lastRestyle)
-      } catch {
-        /* 记账失败不影响表现 */
-      }
+      } catch (__err) { reportRendererCatch('ambient.restyleReport', CATCH_CLASS.MUST_PERSIST, __err) }
     }
   }
 }
@@ -196,9 +187,7 @@ function doAct(reason, opts = {}) {
   try {
     const b = opts.burst || {}
     console.log(`[ambient] act ${g}${opts.big ? '（安静很久，幅度加大）' : ''}${b.burst ? '（簇发，下一个 ' + Math.round((b.left + 1) * 1) + ' 拍后）' : ''}`)
-  } catch {
-    /* 日志失败不影响表现 */
-  }
+  } catch (__err) { reportRendererCatch('ambient.debugLog', CATCH_CLASS.DEGRADE, __err) }
   return r
 }
 

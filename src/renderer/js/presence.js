@@ -1,3 +1,4 @@
+import { reportRendererCatch, CATCH_CLASS } from './catch-report.js'
 // src/renderer/js/presence.js
 // 实感渲染层接线（BLUE-2）：把主进程广播的 presence 快照落到表现层。
 //
@@ -50,9 +51,7 @@ function handle(snap) {
   if (prompt && onReunion) {
     try {
       onReunion({ durationMs, at: snap.rhythm?.at || Date.now() })
-    } catch {
-      /* 入口 UI 失败不能影响表现层 */
-    }
+    } catch (__err) { reportRendererCatch('presence.reunionCallback', CATCH_CLASS.VISIBLE, __err) }
   }
 }
 
@@ -66,7 +65,9 @@ export function initPresence(opts = {}) {
   getConfig = opts.getConfig || getConfig
   const offEvent = window.nagi.on(PRESENCE_EVENT, handle)
   // 初始快照：不必等第一次广播（心跳 15s 一次），先拉一次让时段表现立刻到位
-  window.nagi.presence.status().then(handle).catch(() => { /* 旧主进程无该通道时静默 */ })
+  window.nagi.presence.status().then(handle).catch((err) => {
+    reportRendererCatch('presence.initialStatus', CATCH_CLASS.VISIBLE, err)
+  })
   return () => {
     offEvent()
     onReunion = null

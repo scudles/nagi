@@ -1,3 +1,4 @@
+import { reportRendererCatch, mergeMaintenanceState, clearRendererMaintenance, CATCH_CLASS } from './catch-report.js'
 // src/renderer/js/main.js
 // 渲染层入口：根据 ?mode=pet|workbench 初始化布局，装配 Live2D、对话与设置页。
 //
@@ -44,9 +45,7 @@ function noteActivity() {
   // 待机行为也认这个时钟：你在动 → 她就不该自己找事做（见 renderer/js/ambient.js）
   try {
     ambient.noteActivity()
-  } catch {
-    /* 待机行为没起来时不影响原有逻辑 */
-  }
+  } catch (__err) { reportRendererCatch('main.activity', CATCH_CLASS.DEGRADE, __err) }
   if (idleBoosted) {
     idleBoosted = false
     if (l2dReady) l2d.setScale(settings?.live2d?.scale || 1)
@@ -426,9 +425,7 @@ async function boot() {
     // 待机行为的开关/档位/勿扰即时生效（两个窗口各订阅各渲染，天然同步）
     try {
       ambient.refreshAmbient({ config: settings?.ambient, privacy: settings?.privacy })
-    } catch {
-      /* 待机行为没起来时忽略 */
-    }
+    } catch (__err) { reportRendererCatch('main.ambientRefresh', CATCH_CLASS.VISIBLE, __err) }
   })
 
   // 事件：情绪状态机广播（主进程单例，双窗同步）——侧栏读数 + 双形态面容/动作
@@ -436,9 +433,7 @@ async function boot() {
   // 初始情绪：心跳 15s 一次，先拉一次免得多半分钟默认脸
   try {
     applyMood(await window.nagi.mood.get())
-  } catch {
-    /* 旧版本主进程没有该通道时忽略 */
-  }
+  } catch (__err) { reportRendererCatch('main.moodRead', CATCH_CLASS.VISIBLE, __err) }
 
   // 实感快照（BLUE-2）：时段表现落到 Live2D；归来时弹「她留了张便签」入口
   // （快照由主进程向两窗广播同一份，各自渲染各自的表现，天然同步）
@@ -625,8 +620,10 @@ function wireWindowButtons() {
   on('btn-new-chat', async () => {
     try {
       await window.nagi.memory.clearHistory()
-    } catch {
-      /* ignore */
+    } catch (__err) {
+      reportRendererCatch('main.clearHistory', CATCH_CLASS.MUST_PERSIST, __err)
+      ui.addToolLog('新对话未开始：短期上下文清理失败')
+      return
     }
     const box = document.getElementById('messages')
     if (box) box.innerHTML = ''
@@ -734,9 +731,7 @@ function wirePetDragAndPoke(el) {
     st = { sx: e.screenX, sy: e.screenY, wx: window.screenX, wy: window.screenY, moved: false, id: e.pointerId }
     try {
       el.setPointerCapture(e.pointerId)
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('main.pointerCapture', CATCH_CLASS.DEGRADE, __err) }
   })
 
   el.addEventListener('pointermove', (e) => {
@@ -753,9 +748,7 @@ function wirePetDragAndPoke(el) {
     st = null
     try {
       el.releasePointerCapture(e?.pointerId)
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('main.pointerRelease', CATCH_CLASS.DEGRADE, __err) }
     // 原地松手 = 戳一下（拖动过就不算）
     if (!wasDrag) pokeHer()
   }
@@ -841,9 +834,13 @@ function reportOutfit(reason = '') {
         describe: cur.describe,
         reason
       })
-      ?.catch?.(() => {})
-  } catch {
-    /* 上报失败不该影响表现 */
+      ?.catch?.((err) => {
+        reportRendererCatch('main.outfitReport', CATCH_CLASS.MUST_PERSIST, err)
+        if (reason === 'user' && mode === MODE.PET) ui.showBubble?.('装束保存失败', { autoHide: 2200 })
+      })
+  } catch (__err) {
+    reportRendererCatch('main.outfitReport', CATCH_CLASS.MUST_PERSIST, __err)
+    if (reason === 'user' && mode === MODE.PET) ui.showBubble?.('装束保存失败', { autoHide: 2200 })
   }
 }
 
@@ -926,7 +923,10 @@ function pokeHer() {
       // 被碰了一下，耳朵抖一下（Param78/79 是物理输入，写它耳朵会自己甩）
       if (Math.random() < 0.4) l2d.wiggleEars(0.8, 480)
     })
-    ?.catch?.(() => {})
+    ?.catch?.((err) => {
+      reportRendererCatch('main.poke', CATCH_CLASS.VISIBLE, err)
+      if (mode === MODE.PET) ui.showBubble?.('互动失败，请重试', { autoHide: 2200 })
+    })
 }
 
 /** 应用桌宠尺寸（等比 2:3），拖动中不落盘，松手才 persist */
@@ -1127,12 +1127,14 @@ function maybeShowMonitorNotice() {
   if (!ov) return
   ov.classList.remove('hidden')
   const done = async (patch) => {
-    ov.classList.add('hidden')
     try {
       await window.nagi.settings.set({ privacy: { noticeShown: true, ...patch } })
       settings = await window.nagi.settings.get()
-    } catch {
-      /* ignore */
+      ov.classList.add('hidden')
+    } catch (__err) {
+      reportRendererCatch('main.monitorNoticeSave', CATCH_CLASS.MUST_PERSIST, __err)
+      const button = document.getElementById(patch.monitorEnabled === false ? 'btn-notice-off' : 'btn-notice-ok')
+      if (button) button.textContent = '保存失败，请重试'
     }
   }
   document.getElementById('btn-notice-ok')?.addEventListener('click', () => done({}))
@@ -1146,7 +1148,7 @@ async function openSettings() {
   overlay.classList.remove('hidden')
   // 每次打开都重取一次设置：托盘/另一个窗口/主进程都可能改过它，
   // 用缓存填表会让"监测于 … 授权"这类主进程写的字段停在旧值上（作者裁决 B 要显示的就是它）。
-  try { settings = await window.nagi.settings.get() } catch { /* 取不到就用旧缓存 */ }
+  try { settings = await window.nagi.settings.get() } catch (__err) { reportRendererCatch('main.settingsRead', CATCH_CLASS.VISIBLE, __err) }
   fillSettingsForm()
   refreshCalendarStatus()
   refreshMusicStatus()
@@ -1164,8 +1166,8 @@ async function refreshMaintStatus() {
   const traceBox = document.getElementById('maint-trace')
   if (!label || !window.nagi.maintenance) return
   try {
-    const state = await window.nagi.maintenance.health()
-    const sites = state.sites || []
+    const state = mergeMaintenanceState(await window.nagi.maintenance.health())
+    const sites = state.sites
     const bad = sites.filter((s) => s.lastClass && s.lastClass !== 'degrade')
     // B8-PROMISE-01：恢复也要看得见——"刚红过又好了"不能和"从没红过"长得一样。
     const recovered = sites.filter((s) => !s.lastClass && s.recoveredAt)
@@ -1179,8 +1181,8 @@ async function refreshMaintStatus() {
         .map((s) => `${s.site}（${s.lastClass}，共 ${s.count} 次，最近 ${new Date(s.lastAt).toLocaleString()}）`)
         .join('；')
     }
-    traceBox.textContent = (state.trace || []).length
-      ? (state.trace || []).map((t) => `${new Date(t.at).toLocaleTimeString()} [${t.cls}] ${t.site} ${t.message}`).join(String.fromCharCode(10))
+    traceBox.textContent = state.trace.length
+      ? state.trace.map((t) => `${new Date(t.at).toLocaleTimeString()} [${t.cls}] ${t.site} ${t.message}`).join(String.fromCharCode(10))
       : ''
   } catch (err) {
     label.textContent = '维护状态读取失败：' + (err?.message || err)
@@ -1513,8 +1515,10 @@ async function refreshSecretStatus() {
     const ha = st[SECRET_KEYS.HA_TOKEN] ? '已配置' : '未配置'
     document.getElementById('set-key-status').textContent = llm
     document.getElementById('set-ha-status').textContent = ha
-  } catch {
-    /* ignore */
+  } catch (__err) {
+    reportRendererCatch('main.secretStatus', CATCH_CLASS.VISIBLE, __err)
+    document.getElementById('set-key-status').textContent = '读取失败'
+    document.getElementById('set-ha-status').textContent = '读取失败'
   }
 }
 
@@ -1770,9 +1774,7 @@ async function refreshModels() {
       sel.appendChild(o)
     }
     sel.value = settings?.live2d?.modelPath || list.models[0]
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('main.modelList', CATCH_CLASS.VISIBLE, __err) }
 }
 
 /* ---------------- 语音设置（设置页 · 语音区块） ---------------- */
@@ -1996,6 +1998,7 @@ async function previewVoice() {
     await playPreviewBytes(r.bytes, r.format)
     if (out) out.textContent = '试听结束。满意就保存设置。'
   } catch (err) {
+    reportRendererCatch('main.voicePreview', CATCH_CLASS.SEMANTIC, err)
     if (out) out.textContent = '试听失败：' + err.message
   } finally {
     btn?.classList.remove('playing')
@@ -2004,26 +2007,32 @@ async function previewVoice() {
 
 /** 放一段试听音频（同时驱动口型，方便一起看效果） */
 function playPreviewBytes(bytes, format) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let url = null
+    let a = null
+    let settled = false
+    const finish = (err = null) => {
+      if (settled) return
+      settled = true
+      if (url) URL.revokeObjectURL(url)
+      if (previewAudio === a) previewAudio = null
+      if (err) reject(err)
+      else resolve()
+    }
     try {
       if (previewAudio) {
         previewAudio.pause()
         previewAudio = null
       }
       const blob = new Blob([bytes], { type: format || 'audio/mpeg' })
-      const url = URL.createObjectURL(blob)
-      const a = new Audio(url)
+      url = URL.createObjectURL(blob)
+      a = new Audio(url)
       previewAudio = a
-      const done = () => {
-        URL.revokeObjectURL(url)
-        if (previewAudio === a) previewAudio = null
-        resolve()
-      }
-      a.onended = done
-      a.onerror = done
-      a.play().catch(done)
-    } catch {
-      resolve()
+      a.onended = () => finish()
+      a.onerror = () => finish(new Error('音频播放失败'))
+      a.play().catch((err) => finish(err))
+    } catch (err) {
+      finish(err)
     }
   })
 }
@@ -2727,7 +2736,14 @@ function wireSettingsPage() {
   })
   on('btn-maint-refresh', refreshMaintStatus)
   on('btn-maint-clear', async () => {
-    try { await window.nagi.maintenance.clear(); refreshMaintStatus() } catch { /* 清不掉就下次再说 */ }
+    try {
+      await window.nagi.maintenance.clear()
+      clearRendererMaintenance()
+      await refreshMaintStatus()
+    } catch (__err) {
+      reportRendererCatch('main.maintenanceClear', CATCH_CLASS.VISIBLE, __err)
+      document.getElementById('maint-status').textContent = '维护记录清空失败，请重试'
+    }
   })
   on('btn-music-revoke', async () => {
     await window.nagi.music.revoke()
@@ -3058,8 +3074,12 @@ async function renderRelation() {
       setText('rel-active', r.activeDays)
       setText('rel-hint', `她现在的分寸是「${r.level.label}」——${r.level.note}`)
     }
-    const mem = await window.nagi.memory.list().catch(() => [])
-    setText('rel-mem', (mem || []).length)
+    const mem = await window.nagi.memory.list().catch((err) => {
+      reportRendererCatch('main.relationMemoryRead', CATCH_CLASS.VISIBLE, err)
+      setText('rel-mem', '读取失败')
+      return null
+    })
+    if (mem) setText('rel-mem', mem.length)
   } catch (err) {
     console.warn('[relation] 读取失败', err.message)
   }

@@ -1,3 +1,4 @@
+import { reportRendererCatch, CATCH_CLASS } from './catch-report.js'
 // src/renderer/js/voice.js
 // 渲染层语音客户端（M5）：让她真的开口说话、也真的听得见你说话。
 //
@@ -194,9 +195,7 @@ function releaseUrls(st) {
   for (const u of st.urls) {
     try {
       URL.revokeObjectURL(u)
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('voice.revokeUrl', CATCH_CLASS.DEGRADE, __err) }
   }
   st.urls.clear()
 }
@@ -237,9 +236,7 @@ async function playNext() {
   const onSettled = () => {
     try {
       URL.revokeObjectURL(url)
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('voice.revokePlayedUrl', CATCH_CLASS.DEGRADE, __err) }
     st.urls.delete(url)
     if (speech === st && !st.cancelled) playNext()
   }
@@ -282,10 +279,9 @@ function finishSpeech(st) {
   if (speech === st) speech = null
   st.resolveFinished?.()
   try {
-    window.nagi.voice.stop(st.sessionId)
-  } catch {
-    /* ignore */
-  }
+    Promise.resolve(window.nagi.voice.stop(st.sessionId))
+      .catch((err) => reportRendererCatch('voice.stopSession', CATCH_CLASS.PROMISE, err))
+  } catch (__err) { reportRendererCatch('voice.stopSession', CATCH_CLASS.PROMISE, __err) }
 }
 
 /**
@@ -319,7 +315,8 @@ async function startSpeak(text, opts = {}) {
     return { ok: false, error: started?.error || '语音合成失败' }
   }
   if (ticket !== speechGeneration) {
-    window.nagi.voice.stop(started.sessionId)
+    Promise.resolve(window.nagi.voice.stop(started.sessionId))
+      .catch((err) => reportRendererCatch('voice.stopInterruptedSession', CATCH_CLASS.PROMISE, err))
     return { ok: false, reason: '已打断' }
   }
 
@@ -358,17 +355,14 @@ function stopSpeechOnly() {
   st.playing = false
   try {
     st.audio && st.audio.pause()
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('voice.pauseAudio', CATCH_CLASS.PROMISE, __err) }
   releaseUrls(st)
   l2d.clearLipTrack()
   st.resolveFinished?.()
   try {
-    window.nagi.voice.stop(st.sessionId)
-  } catch {
-    /* ignore */
-  }
+    Promise.resolve(window.nagi.voice.stop(st.sessionId))
+      .catch((err) => reportRendererCatch('voice.stopSessionOnCancel', CATCH_CLASS.PROMISE, err))
+  } catch (__err) { reportRendererCatch('voice.stopSessionOnCancel', CATCH_CLASS.PROMISE, __err) }
   return true
 }
 
@@ -431,7 +425,10 @@ export async function startRecording() {
     if (recordingPending === request) recordingPending = null
     return { ok: false, reason: '已松开麦克风' }
   }
-  try { await window.nagi.chat.abort() } catch { /* 旧模型没在生成也可继续录音 */ }
+  try { await window.nagi.chat.abort() } catch (__err) {
+    reportRendererCatch('voice.abortBeforeRecord', CATCH_CLASS.PROMISE, __err)
+    if (!request.cancelled) notice('上一轮回复未停止，录音仍可继续')
+  }
   if (request.cancelled) {
     stream.getTracks().forEach((track) => track.stop())
     if (recordingPending === request) recordingPending = null
@@ -485,9 +482,7 @@ export async function startRecording() {
       rec.raf = requestAnimationFrame(tickPeak)
     }
     tickPeak()
-  } catch {
-    /* 拿不到分析器也能录，只是少了「没说话」的判断 */
-  }
+  } catch (__err) { reportRendererCatch('voice.analyser', CATCH_CLASS.DEGRADE, __err) }
 
   const maxMs = Number(c.maxRecordMs) || 60000
   rec.timer = setInterval(() => {
@@ -524,27 +519,34 @@ export async function stopRecording(opts = {}) {
   clearTimeout(cur.hardStop)
   if (cur.raf) cancelAnimationFrame(cur.raf)
   try {
-    cur.analyser?.actx.close()
-  } catch {
-    /* ignore */
-  }
+    Promise.resolve(cur.analyser?.actx.close())
+      .catch((err) => reportRendererCatch('voice.contextClose', CATCH_CLASS.DEGRADE, err))
+  } catch (__err) { reportRendererCatch('voice.contextClose', CATCH_CLASS.DEGRADE, __err) }
 
   // 停录 → 等最后一片数据
+  let stopError = false
   const done = new Promise((resolve) => {
     cur.recorder.onstop = resolve
     try {
       cur.recorder.stop()
-    } catch {
+    } catch (err) {
+      reportRendererCatch('voice.recorderStop', CATCH_CLASS.SEMANTIC, err)
+      stopError = true
       resolve()
     }
   })
   const heldMs = Date.now() - cur.startedAt
   try {
     await done
-  } catch {
-    /* ignore */
+  } catch (__err) {
+    reportRendererCatch('voice.recorderWait', CATCH_CLASS.SEMANTIC, __err)
+    stopError = true
   }
   cur.stream.getTracks().forEach((t) => t.stop())
+  if (stopError) {
+    notice('录音停止失败，请重试')
+    return { ok: false, error: '录音停止失败' }
+  }
 
   if (heldMs < MIN_RECORD_MS) {
     return { ok: false, reason: '按太短了（要按住说话）' }
@@ -632,9 +634,7 @@ function bindMicButton(id) {
     e.stopPropagation()
     try {
       el.setPointerCapture?.(e.pointerId)
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('voice.pointerCapture', CATCH_CLASS.DEGRADE, __err) }
     startRecording()
   })
   const release = (e) => {
@@ -734,11 +734,9 @@ export function initVoice(opts = {}) {
     stopSpeaking()
     if (recordingPending) recordingPending.cancelled = true
     if (rec) {
-      try {
-        rec.recorder.stop()
-        rec.stream.getTracks().forEach((t) => t.stop())
-      } catch {
-        /* ignore */
+      try { rec.recorder.stop() } catch (__err) { reportRendererCatch('voice.recordingCleanup', CATCH_CLASS.PROMISE, __err) }
+      try { rec.stream.getTracks().forEach((t) => t.stop()) } catch (__err) {
+        reportRendererCatch('voice.recordingTracks', CATCH_CLASS.PROMISE, __err)
       }
       rec = null
     }

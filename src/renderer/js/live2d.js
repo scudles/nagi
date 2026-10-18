@@ -1,3 +1,4 @@
+import { reportRendererCatch, CATCH_CLASS } from './catch-report.js'
 // src/renderer/js/live2d.js
 // Live2D 加载与驱动：缩放锚点（底部对齐居中）、自动眨眼、待机动作轮换、
 // 戳一戳（TapBody）、情绪 → 表情 + 动作映射、说话口型、对话状态驱动的思考姿态。
@@ -222,9 +223,7 @@ export function frameInfo() {
   try {
     const b = model.getBounds()
     bounds = { x: b.x, y: b.y, w: b.width, h: b.height }
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('live2d.boundsProbe', CATCH_CLASS.DEGRADE, __err) }
   return {
     frame: frameMode,
     preset: frameProfile(frameMode, modelName),
@@ -549,7 +548,7 @@ export async function load(canvas, url, opts = {}) {
     const core = model?.internalModel?.coreModel
     if (!core) return
     for (const id of ['ParamMouthOpenY', 'ParamMouthOpen']) {
-      try { core.setParameterValueById(id, mouthValue) } catch { /* 模型无此参数 */ }
+      try { core.setParameterValueById(id, mouthValue) } catch (__err) { reportRendererCatch('live2d.mouthParam', CATCH_CLASS.DEGRADE, __err) }
     }
   }
   hookRegistry.add('mouthOpen', mouthOpenHook)
@@ -565,9 +564,7 @@ export async function load(canvas, url, opts = {}) {
         for (const id of redIds) {
           try {
             core.setParameterValueById(id, 0)
-          } catch {
-            /* 个别模型不认某个参数，忽略 */
-          }
+          } catch (__err) { reportRendererCatch('live2d.redClamp', CATCH_CLASS.DEGRADE, __err) }
         }
       }
       hookRegistry.add('redGuard', redGuard)
@@ -587,9 +584,7 @@ export async function load(canvas, url, opts = {}) {
   //   · 模型自身的自然动作（呼吸/待机，全部归零时）
   try {
     m.internalModel?.focusController?.focus(0, 0, true)
-  } catch {
-    /* 个别模型没有 focusController，忽略 */
-  }
+  } catch (__err) { reportRendererCatch('live2d.focusReset', CATCH_CLASS.DEGRADE, __err) }
 
   userScale = opts.scale || 1
   mirrorOn = !!opts.mirror
@@ -640,9 +635,7 @@ function readBaseSize(m) {
     if (ci && ci.CanvasWidth > 0 && ci.CanvasHeight > 0) {
       return { w: ci.CanvasWidth, h: ci.CanvasHeight }
     }
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('live2d.modelCanvasInfo', CATCH_CLASS.DEGRADE, __err) }
   const w = Number(m?.internalModel?.originalWidth) || Number(m?.width) || 1
   const h = Number(m?.internalModel?.originalHeight) || Number(m?.height) || 1
   return { w: w > 0 ? w : 1, h: h > 0 ? h : 1 }
@@ -652,17 +645,13 @@ function readBaseSize(m) {
 function observeContainer(canvas) {
   try {
     resizer?.disconnect?.()
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('live2d.resizeDisconnect', CATCH_CLASS.DEGRADE, __err) }
   const target = canvas?.parentElement
   if (!target || typeof ResizeObserver === 'undefined') return
   resizer = new ResizeObserver(() => {
     try {
       app?.resize?.()
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('live2d.resizeObserver', CATCH_CLASS.VISIBLE, __err) }
     layout(userScale, mirrorOn)
   })
   resizer.observe(target)
@@ -737,9 +726,7 @@ export function setMirror(on) {
 export function resize() {
   try {
     app?.resize?.()
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('live2d.resizeCall', CATCH_CLASS.VISIBLE, __err) }
   layout(userScale, mirrorOn)
 }
 
@@ -795,17 +782,13 @@ export function setPose(name) {
       if (Math.abs(c) > 5e-4) {
         try {
           core.addParameterValueById(id, c)
-        } catch {
-          /* 模型没这个参数就跳过 */
-        }
+        } catch (__err) { reportRendererCatch('live2d.poseParam', CATCH_CLASS.DEGRADE, __err) }
       }
     }
     if (poseState.releasing && settled) {
       try {
         hookRegistry?.remove('pose', poseHook)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.poseRelease', CATCH_CLASS.VISIBLE, __err) }
       poseHook = null
       poseState = null
     }
@@ -878,17 +861,13 @@ export function applyRhythmPose(rhythm) {
       if (Math.abs(c) > 5e-4) {
         try {
           core.addParameterValueById(id, c)
-        } catch {
-          /* 模型没这个参数就跳过 */
-        }
+        } catch (__err) { reportRendererCatch('live2d.rhythmParam', CATCH_CLASS.DEGRADE, __err) }
       }
     }
     if (rhythmState.releasing && settled) {
       try {
         hookRegistry?.remove('rhythm', rhythmHook)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.rhythmRelease', CATCH_CLASS.VISIBLE, __err) }
       rhythmHook = null
       rhythmState = null
     }
@@ -939,9 +918,7 @@ function ensureOutfitHook() {
     for (const id of Object.keys(outfitTarget)) {
       try {
         core.setParameterValueById(id, outfitTarget[id])
-      } catch {
-        /* 模型没这个参数（换模型/配置过期）：跳过，不打断这一帧 */
-      }
+      } catch (__err) { reportRendererCatch('live2d.outfitParam', CATCH_CLASS.DEGRADE, __err) }
     }
   }
   hookRegistry.add('outfit', outfitHook)
@@ -975,24 +952,18 @@ function briefBlink(onClosed) {
     for (const id of ['ParamEyeLOpen', 'ParamEyeROpen']) {
       try {
         core.setParameterValueById(id, v)
-      } catch {
-        /* 模型没有这个参数就放弃眨眼掩护 */
-      }
+      } catch (__err) { reportRendererCatch('live2d.blinkCoverParam', CATCH_CLASS.DEGRADE, __err) }
     }
     if (!state.fired && el >= BLINK_CLOSE_MS) {
       state.fired = true
       try {
         state.onClosed?.()
-      } catch {
-        /* 切换失败不能把 hook 弄死 */
-      }
+      } catch (__err) { reportRendererCatch('live2d.blinkCallback', CATCH_CLASS.VISIBLE, __err) }
     }
     if (el >= end) {
       try {
         hookRegistry?.remove('blinkCover', blinkHook)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.blinkRelease', CATCH_CLASS.VISIBLE, __err) }
       blinkHook = null
       blinkState = null
     }
@@ -1017,9 +988,7 @@ function nudgeHead(dir = 0) {
     if (el >= HEAD_NUDGE_MS) {
       try {
         hookRegistry?.remove('headNudge', headHook)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.headRelease', CATCH_CLASS.VISIBLE, __err) }
       headHook = null
       headState = null
       return
@@ -1028,9 +997,7 @@ function nudgeHead(dir = 0) {
     try {
       core.addParameterValueById('ParamAngleZ', state.amount * env)
       core.addParameterValueById('ParamBodyAngleZ', state.amount * 0.5 * env)
-    } catch {
-      /* 没有这些参数就只当没加 */
-    }
+    } catch (__err) { reportRendererCatch('live2d.headParam', CATCH_CLASS.DEGRADE, __err) }
   }
   hookRegistry.add('headNudge', headHook)
 }
@@ -1166,17 +1133,13 @@ export function playMicroExpr(params, holdMs = 1600) {
       if (Math.abs(v) > 1e-4) {
         try {
           core.addParameterValueById(id, v)
-        } catch {
-          /* 模型没这个参数就跳过 */
-        }
+        } catch (__err) { reportRendererCatch('live2d.microParam', CATCH_CLASS.DEGRADE, __err) }
       }
     }
     if (el >= Math.max(state.holdMs, 400)) {
       try {
         hookRegistry?.remove('micro', microHook)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.microRelease', CATCH_CLASS.VISIBLE, __err) }
       microHook = null
       microState = null
     }
@@ -1236,9 +1199,7 @@ function ensureEmotionHook() {
         emotionState.cur[id] = t
         try {
           core.setParameterValueById(id, t)
-        } catch {
-          /* 模型没有这个参数 */
-        }
+        } catch (__err) { reportRendererCatch('live2d.emotionSet', CATCH_CLASS.DEGRADE, __err) }
         continue
       }
       // 约 0.3~0.5 秒到位：情绪换脸应该是"松过去"，不是"啪一下"
@@ -1246,9 +1207,7 @@ function ensureEmotionHook() {
       emotionState.cur[id] = next
       try {
         core.setParameterValueById(id, next)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.emotionBlend', CATCH_CLASS.DEGRADE, __err) }
     }
   }
   hookRegistry.add('emotion', emotionHook)
@@ -1269,9 +1228,7 @@ function ensureTremorHook() {
     for (const id of Object.keys(tr)) {
       try {
         core.addParameterValueById(id, tr[id])
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.tremorParam', CATCH_CLASS.DEGRADE, __err) }
     }
     // 眼球微扫：与注视叠加——她看着某处时眼睛也在微动，这才像活人。
     // 注意它也要受 tremorScale 控制：否则"把微动关到 0"之后眼睛还在扫，
@@ -1281,9 +1238,7 @@ function ensureTremorHook() {
       try {
         core.addParameterValueById('ParamEyeBallX', sac.x * tremorScale)
         core.addParameterValueById('ParamEyeBallY', sac.y * tremorScale)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.saccadeParam', CATCH_CLASS.DEGRADE, __err) }
     }
   }
   hookRegistry.add('tremor', tremorHook)
@@ -1309,9 +1264,7 @@ function ensureVisemeHook() {
     for (const id of Object.keys(mouthShape)) {
       try {
         core.setParameterValueById(id, mouthShape[id] * mouthValue)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.visemeParam', CATCH_CLASS.DEGRADE, __err) }
     }
   }
   hookRegistry.add('viseme', visemeHook)
@@ -1357,9 +1310,7 @@ export function applyAngleProbe(id, value) {
       const core = model?.internalModel?.coreModel
       try {
         core.setParameterValueById(angleProbe.id, angleProbe.value)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.angleProbe', CATCH_CLASS.DEGRADE, __err) }
     }
     hookRegistry.add('angleProbe', angleProbeHook)
   }
@@ -1481,9 +1432,7 @@ function ensureTurnHook() {
       const f = focusState()
       fx = Number(f?.x) || 0
       fy = Number(f?.y) || 0
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('live2d.focusState', CATCH_CLASS.DEGRADE, __err) }
     // tick() 返回的值已经乘过包络 w，这里不要再乘（否则是 w²，幅度少一半）
     const w = s.weight
     const ax = s.x + fx * (1 - w)
@@ -1528,9 +1477,7 @@ function ensureTurnHook() {
       core.setParameterValueById('ParamBodyAngleX', (s.body + fx * (1 - w)) * TURN_BODY_MAX)
       core.setParameterValueById('ParamBodyAngleY', s.body * TURN_BODY_MAX * 0.6)
       core.setParameterValueById('ParamBodyAngleZ', s.x * TURN_BODY_MAX * 0.35)
-    } catch {
-      /* 模型缺参数就算了 */
-    }
+    } catch (__err) { reportRendererCatch('live2d.turnParam', CATCH_CLASS.DEGRADE, __err) }
   }
   hookRegistry.add('turn', turnHook)
 }
@@ -1576,9 +1523,7 @@ function ensureIdleHeadHook() {
     let group = ''
     try {
       group = focusState()?.motionGroup || ''
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('live2d.motionGroup', CATCH_CLASS.DEGRADE, __err) }
     if (group !== lastGroup) {
       lastGroup = group
       actAt = now
@@ -1625,9 +1570,7 @@ function ensureIdleHeadHook() {
         core.addParameterValueById('ParamBodyAngleY', Math.sin(t * 1.7 + 0.8) * ACT_BODY.y * actEnv * keep)
         core.addParameterValueById('ParamBodyAngleZ', Math.sin(t * 2.9 + 1.5) * ACT_BODY.z * actEnv * keep)
       }
-    } catch {
-      /* 模型缺参数就算了 */
-    }
+    } catch (__err) { reportRendererCatch('live2d.idleHeadParam', CATCH_CLASS.DEGRADE, __err) }
   }
   hookRegistry.add('idleHead', idleHeadHook)
 }
@@ -1659,14 +1602,10 @@ function ensureAutoBlinkHook() {
       let base = 1
       try {
         base = core.getParameterValueById(id)
-      } catch {
-        /* 模型没这个参数 */
-      }
+      } catch (__err) { reportRendererCatch('live2d.blinkRead', CATCH_CLASS.DEGRADE, __err) }
       try {
         core.setParameterValueById(id, Math.max(0, Math.min(1, base * f)))
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.blinkWrite', CATCH_CLASS.DEGRADE, __err) }
     }
     window.__blinkLastWritten = { f, at: performance.now() }
   }
@@ -1722,9 +1661,7 @@ function ensureEyeWanderHook() {
     try {
       core.setParameterValueById('ParamEyeBallX', x)
       core.setParameterValueById('ParamEyeBallY', y)
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('live2d.eyeParam', CATCH_CLASS.DEGRADE, __err) }
     window.__eyeLastWritten = { x, y, at: now }
   }
   hookRegistry.add('eyeWander', eyeWanderHook)
@@ -1786,9 +1723,7 @@ function ensureEarHook() {
     try {
       core.addParameterValueById('Param78', v)
       core.addParameterValueById('Param79', -v)
-    } catch {
-      /* 模型没有耳参数就算了 */
-    }
+    } catch (__err) { reportRendererCatch('live2d.earParam', CATCH_CLASS.DEGRADE, __err) }
     window.__earLast = v
   }
   hookRegistry.add('ear', earHook)
@@ -1839,9 +1774,7 @@ function ensureDepthHook() {
       if (Math.abs(v) < 1e-4) continue
       try {
         core.addParameterValueById(id, v)
-      } catch {
-        /* 模型没这个参数 */
-      }
+      } catch (__err) { reportRendererCatch('live2d.depthParam', CATCH_CLASS.DEGRADE, __err) }
     }
     // 容器层：绝对定位（不是增量），绕**颈肩支点**做缩放/位移。
     // 支点 = 模型锚点（取景带底边）上方 (band.bottom − DEPTH_PIVOT_FY) 的位置：
@@ -2024,9 +1957,7 @@ export function freezeIdleMotion(on) {
         try {
           // 眨眼按住"睁开"（1），其余按住 0（中立）
           core.setParameterValueById(id, id.endsWith('Open') ? 1 : 0)
-        } catch {
-          /* 模型没有这个参数就算了 */
-        }
+        } catch (__err) { reportRendererCatch('live2d.freezeParam', CATCH_CLASS.DEGRADE, __err) }
       }
     }
     hookRegistry.add('idleFreeze', idleFreezeHook)
@@ -2035,9 +1966,7 @@ export function freezeIdleMotion(on) {
   if (idleFreezeHook) {
     try {
       hookRegistry?.remove('idleFreeze', idleFreezeHook)
-    } catch {
-      /* ignore */
-    }
+    } catch (__err) { reportRendererCatch('live2d.freezeRelease', CATCH_CLASS.VISIBLE, __err) }
     idleFreezeHook = null
   }
   return false
@@ -2171,9 +2100,7 @@ export function setEmotion(emotion, opts = {}) {
     // 肌肉层接管后要把 exp3 撤掉，否则两套叠加（exp3 是独占的，它一在就把参数顶死）
     try {
       model.expression(null)
-    } catch {
-      /* 没有表情管理器时忽略 */
-    }
+    } catch (__err) { reportRendererCatch('live2d.expressionReset', CATCH_CLASS.DEGRADE, __err) }
     ok = true
   } else if (name) {
     // ② 没有肌肉定义：退回美术调好的 exp3（行为与之前一致）
@@ -2256,9 +2183,7 @@ export function randomMotion() {
 export function stopMotions() {
   try {
     model?.internalModel?.motionManager?.stopAllMotions()
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('live2d.stopMotion', CATCH_CLASS.SEMANTIC, __err) }
 }
 
 /* ---------------- 说话口型 ---------------- */
@@ -2274,13 +2199,9 @@ export function setMouthOpen(v) {
     for (const id of ['ParamMouthOpenY', 'ParamMouthOpen']) {
       try {
         core.setParameterValueById(id, val)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportRendererCatch('live2d.mouthWrite', CATCH_CLASS.DEGRADE, __err) }
     }
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('live2d.mouthWriteFallback', CATCH_CLASS.DEGRADE, __err) }
 }
 
 /** 开始说话：嘴动起来；持续调用会自动续期，超时自动闭合 */
@@ -2368,9 +2289,7 @@ export function destroy({ preserveCanvas = false } = {}) {
   turnCtl.reset()
   try {
     resizer?.disconnect?.()
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('live2d.resizeDisconnectDestroy', CATCH_CLASS.DEGRADE, __err) }
   resizer = null
   try {
     if (model) {
@@ -2386,9 +2305,7 @@ export function destroy({ preserveCanvas = false } = {}) {
       model.destroy()
     }
     app?.destroy(!preserveCanvas, { children: true })
-  } catch {
-    /* ignore */
-  }
+  } catch (__err) { reportRendererCatch('live2d.modelDestroy', CATCH_CLASS.VISIBLE, __err) }
   model = null
   app = null
   zContainer = null
