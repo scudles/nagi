@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { reminderOccurrenceKey } from '../core/reminders/delivery.js'
-import { reportCatch } from './maintenance.js'
+import { reportCatch, maintenanceRecover } from './maintenance.js'
 import { CATCH_CLASS } from '../core/maintenance/catch-audit.js'
 import {
   normalizeItem,
@@ -32,6 +32,13 @@ import { createReminderPromise, getPromiseBook, markReminder, rescheduleReminder
 const DEFAULT_CHECK_SEC = 20
 /** 一次性提醒错过多久就不再打扰（关着应用错过了太久的事，事后提醒也没意义） */
 const STALE_MS = 12 * 3600000
+/**
+ * 投递失败在维护状态里的站点名（B8-PROMISE-01）。
+ * 稳定短名：设置页与绿区验收都按 `reminders.` 前缀找它，改名会同时打破两边。
+ */
+const DISPATCH_SITE = 'reminders.dispatch'
+/** 调度器自身异常的站点名（与投递分开：一个是"这句话没送到"，一个是"节拍崩了"） */
+const TICK_SITE = 'reminders.tick'
 
 let items = null
 let timer = null
@@ -247,14 +254,28 @@ export async function tick(log) {
     dispatching.add(key)
     try {
       let delivered = false
+      let reported = false
       try {
         const r = onDueCb?.({ ...it, when: formatWhen(it.at, now), deliveryKey: key })
         // 兼容同步（返回 boolean）与异步（返回 Promise<boolean>）两种回调
         delivered = (r && typeof r.then === 'function' ? await r : r) === true
       } catch (err) {
-        log && log('[reminder] 回调失败：' + (err && err.message ? err.message : err))
+        // B8-PROMISE-01：提醒是**承诺**。投递回调炸了不能只打一行日志就完——
+        // 设置页的健康状态必须变红，否则用户看到"一切正常"而提醒根本没送到。
+        // 消息先过 safeDispatchMessage：提醒正文是用户内容，不进轨迹/健康快照。
+        reportCatch(DISPATCH_SITE, CATCH_CLASS.PROMISE, new Error(safeDispatchMessage(err, it.text)))
+        reported = true
+        log && log(`[reminder] 提醒没能送出（已记入维护状态，下个检查点重试）：${err && err.message ? err.message : err}`)
       }
-      if (!delivered) continue
+      if (!delivered) {
+        // 回调没抛错但也没送达（返回 false / 返回 undefined）：同样是"答应的事没做到"。
+        // 与抛错同等对待：记承诺类失败、保留提醒、下一拍重试。
+        // 抛错路径上面已经记过一次，这里不重复记。
+        if (!reported) {
+          reportCatch(DISPATCH_SITE, CATCH_CLASS.PROMISE, new Error('提醒投递未完成（回调未确认送达）'))
+        }
+        continue
+      }
       if (!items.includes(it) || it.doneAt || it.missedAt || it.firedAt || it.at !== occurrenceAt) continue
       markReminder(it.id, 'delivered', { kind: 'notification-dispatched' }, now)
       const next = advanceRepeat(it, now)
@@ -266,10 +287,26 @@ export async function tick(log) {
       }
       save()
       if (next) rescheduleReminder(it.id, next.at, now)
+      // B8-PROMISE-01：真的送出去了，把该站点的红记恢复成"已恢复"。
+      // 不是删记录——"刚红过又好了"要能在设置页看出来（recoveredAt + 恢复说明）。
+      // 说明里**不带提醒正文**：健康快照会被 IPC 读出去，用户内容不该出现在这里。
+      maintenanceRecover(DISPATCH_SITE, next ? '已送达（重复提醒，已排下一次）' : '已送达')
     } finally {
       dispatching.delete(key)
     }
   }
+}
+
+/**
+ * 投递失败消息脱敏（B8：有界脱敏）。
+ * 健康快照会被 IPC 读给设置页，提醒正文是用户内容，不能因为一次报错就泄进去。
+ * 这里只做一件保守的事：把已知的提醒正文替换成占位符，其余原样交给 redactMessage。
+ */
+function safeDispatchMessage(err, text) {
+  const raw = err && err.message ? String(err.message) : String(err || '未知错误')
+  const body = String(text || '')
+  if (body && raw.includes(body)) return raw.split(body).join('[提醒正文]')
+  return raw
 }
 
 /** 自测用：塞一条几秒后到期的提醒（NAGI_SELFTEST_REMINDER=1） */
@@ -297,8 +334,14 @@ export function startReminderEngine({ onDue, log = console.log, checkSec } = {})
 
   // tick 已是 async：这里不 await（节拍不需要等），但要兜住可能的 rejection
   // B8：调度器自己的异常不能吞——提醒是承诺，tick 崩了要有轨迹可查。
-  // 仍是异步不阻塞节拍，但失败会进统一轨迹（PROMISE 类，可重试由下一拍承担）。
-  timer = setInterval(() => { tick(log).catch((err) => reportCatch('reminders.tick', CATCH_CLASS.PROMISE, err)) }, Math.round(sec * 1000))
+  // 仍是异步不阻塞节拍，但失败会进统一轨迹（PROMISE 类，可重试由下一拍承担）；
+  // 反过来，正常跑完一拍就把调度站点恢复成"已恢复"（B8-PROMISE-01 恢复状态）。
+  timer = setInterval(() => {
+    tick(log).then(
+      () => { maintenanceRecover(TICK_SITE, '调度正常完成') },
+      (err) => { reportCatch(TICK_SITE, CATCH_CLASS.PROMISE, err) }
+    )
+  }, Math.round(sec * 1000))
   timer.unref?.()
   log(`[reminder] 日程提醒已启动（每 ${Math.round(sec)} 秒检查一次${selftest ? '，自测模式' : ''}）`)
 }

@@ -44,6 +44,13 @@ export function mustSurface(cls) {
  * 只记"哪个点在出事、出了几次、最近一次是什么时候、什么类"，
  * 不记调用次数（避免把状态变成第二个日志系统），站点数有上限。
  *
+ * 站点有三种末态：
+ *  · 正常（lastClass=null，从未失败或已恢复）
+ *  · degrade（失败但可降级）—— 不算红
+ *  · promise / must-persist / visible / semantic —— 算红，要有可见状态
+ * 「恢复」不是把站点删掉（那样"刚出事又好了"就无痕了），而是把 lastClass 归零、
+ * 记下 recoveredAt，让设置页既能看出"这里红过"，也能看出"现在好了"。
+ *
  * @param {{maxSites?:number, now?:() => number}} [opts]
  */
 export function createHealthRegistry({ maxSites = 50, now = Date.now } = {}) {
@@ -52,14 +59,28 @@ export function createHealthRegistry({ maxSites = 50, now = Date.now } = {}) {
   return {
     record(site, cls, message) {
       const key = String(site || 'unknown').slice(0, 80)
-      const prev = sites.get(key) || { site: key, count: 0, lastAt: 0, lastClass: null, lastMessage: '' }
+      const prev = sites.get(key) || { site: key, count: 0, lastAt: 0, lastClass: null, lastMessage: '', recoveredAt: null }
       prev.count++
       prev.lastAt = now()
       prev.lastClass = isCatchClass(cls) ? cls : CATCH_CLASS.DEGRADE
       prev.lastMessage = redactMessage(message).slice(0, 80)
+      prev.recoveredAt = null
       sites.set(key, prev)
       // 有上限：站点太多时丢最早的（Map 保持插入序）
       while (sites.size > cap) sites.delete(sites.keys().next().value)
+      return { ...prev }
+    },
+    /**
+     * 恢复：同一站点重新成功时调用。
+     * 没有失败记录时返回 null（不造幻影站点——没红过就不存在"恢复"这件事）。
+     */
+    recover(site, note = '') {
+      const key = String(site || 'unknown').slice(0, 80)
+      const prev = sites.get(key)
+      if (!prev) return null
+      prev.lastClass = null
+      prev.recoveredAt = now()
+      prev.lastMessage = redactMessage(note || '已恢复').slice(0, 80)
       return { ...prev }
     },
     snapshot() {
@@ -67,9 +88,9 @@ export function createHealthRegistry({ maxSites = 50, now = Date.now } = {}) {
         .map((v) => ({ ...v }))
         .sort((a, b) => b.lastAt - a.lastAt)
     },
-    /** 全绿判定：没有任何"必须出声"的类在最近一次留下痕迹 */
+    /** 全绿判定：没有任何"必须出声"的类在最近一次留下痕迹（已恢复视为正常） */
     healthy() {
-      return [...sites.values()].every((v) => v.lastClass === CATCH_CLASS.DEGRADE)
+      return [...sites.values()].every((v) => v.lastClass === null || v.lastClass === CATCH_CLASS.DEGRADE)
     },
     reset() {
       sites.clear()

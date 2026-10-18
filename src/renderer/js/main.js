@@ -1165,9 +1165,15 @@ async function refreshMaintStatus() {
   if (!label || !window.nagi.maintenance) return
   try {
     const state = await window.nagi.maintenance.health()
-    const bad = (state.sites || []).filter((s) => s.lastClass && s.lastClass !== 'degrade')
+    const sites = state.sites || []
+    const bad = sites.filter((s) => s.lastClass && s.lastClass !== 'degrade')
+    // B8-PROMISE-01：恢复也要看得见——"刚红过又好了"不能和"从没红过"长得一样。
+    const recovered = sites.filter((s) => !s.lastClass && s.recoveredAt)
     if (bad.length === 0) {
-      label.textContent = '一切正常：最近没有影响保存或承诺的失败'
+      label.textContent = recovered.length
+        ? `一切正常（${recovered.length} 处曾出问题、已恢复：` +
+          recovered.map((s) => `${s.site} 已于 ${new Date(s.recoveredAt).toLocaleString()} 恢复`).join('；') + '）'
+        : '一切正常：最近没有影响保存或承诺的失败'
     } else {
       label.textContent = '这些位置最近出过问题：' + bad
         .map((s) => `${s.site}（${s.lastClass}，共 ${s.count} 次，最近 ${new Date(s.lastAt).toLocaleString()}）`)

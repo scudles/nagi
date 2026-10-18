@@ -23,6 +23,15 @@ export function maintenanceHealth() {
   return { healthy: __health.healthy(), sites: __health.snapshot() }
 }
 
+/**
+ * 恢复：同一站点重新成功时调用（B8-PROMISE-01 要求"成功送达后有明确的恢复状态"）。
+ * 没红过的站点不会造出记录——没有失败就没有"恢复"这件事。
+ * @returns {null|object} 恢复后的站点快照
+ */
+export function maintenanceRecover(site, note = '') {
+  return __health.recover(site, note)
+}
+
 /** 一键清空（可删：内存里不留副本） */
 export function clearMaintenanceTrace() {
   __trace.clear()
