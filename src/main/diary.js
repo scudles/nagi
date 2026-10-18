@@ -8,6 +8,7 @@
 //   - 缓存残片的每周计数（人格设定 6.4 的极低频护栏）
 
 import { app } from 'electron'
+import { reportCatch, CATCH_CLASS } from './maintenance.js'
 import { join } from 'node:path'
 import { mkdirSync, appendFileSync, readdirSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs'
 import { getRag } from './rag/index.js'
@@ -52,9 +53,7 @@ export function appendDiary(snapshot, text, { kind } = {}) {
     try {
       const result = getRag().ingestDiary({ text, at: now, kind: kind === 'inner' ? 'inner' : 'spoken', mood: snapshot.label, intensity: snapshot.intensity })
       ragId = result?.id || null
-    } catch {
-      /* 日记文件是原件；检索档案失效时仍保留原件。 */
-    }
+    } catch (__err) { reportCatch('diary.appendDiary', CATCH_CLASS.VISIBLE, __err) }
     recordLedger({ category: 'subjective', text: `${mark}${text}`,
       source: { type: 'diary-live', ref: randomUUID() }, occurredAt: now,
       certainty: 'subjective', ragIds: ragId ? [ragId] : [],

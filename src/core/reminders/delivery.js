@@ -1,3 +1,4 @@
+import { reportCatch, CATCH_CLASS } from '../maintenance/reporter.js'
 /** 同一提醒的每次发生各有独立键；重复提醒推进 at 后得到新键。 */
 export function reminderOccurrenceKey(item) {
   return `${item.id}:${item.at}`
@@ -11,14 +12,14 @@ export function createReminderDelivery({ present, notify }) {
     const key = reminderOccurrenceKey(item)
     const state = states.get(key) || { shown: false, notified: false, unavailable: false }
     if (!state.shown) {
-      try { state.shown = present(item.text, key) === true } catch { /* 继续尝试系统通知 */ }
+      try { state.shown = present(item.text, key) === true } catch (__err) { reportCatch('delivery.createReminderDelivery', CATCH_CLASS.PROMISE, __err) }
     }
     if (!state.notified && !state.unavailable) {
       try {
         const result = notify(item.text, key)
         state.notified = result === true
         state.unavailable = result === 'unavailable'
-      } catch { /* 下轮重试 */ }
+      } catch (__err) { reportCatch('delivery.createReminderDelivery', CATCH_CLASS.PROMISE, __err) }
     }
     states.set(key, state)
     return state.notified || (state.unavailable && state.shown)

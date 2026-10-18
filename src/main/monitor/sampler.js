@@ -90,9 +90,7 @@ export function createSampler({ scriptPath, intervalSec = 5, log = () => {} } = 
     if (child) {
       try {
         child.kill()
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — 子进程已退出或不存在 */ }
       child = null
     }
     running = false

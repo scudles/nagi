@@ -51,14 +51,14 @@ async function readIpGeo() {
         source: 'ip'
       }
     }
-  } catch { /* try backup */ }
+  } catch{ /* B8:degrade — 主源失败正在尝试备用源 */ }
   try {
     const res = await fetch('http://ip-api.com/json/?fields=status,country,regionName,city,lat,lon,isp,query', { signal: AbortSignal.timeout(6000) })
     const j = await res.json()
     if (j && j.status === 'success' && Number.isFinite(Number(j.lat))) {
       return { available: true, lat: Number(j.lat), lon: Number(j.lon), city: String(j.city || ''), country: String(j.country || ''), source: 'ip' }
     }
-  } catch { /* offline */ }
+  } catch{ /* B8:degrade — 离线属预期 */ }
   return { available: false, reason: 'ip-unavailable' }
 }
 

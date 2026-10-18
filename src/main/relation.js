@@ -7,6 +7,7 @@
 // 判定逻辑全在 core/relation/*（纯函数），这里只做 IO 与装配。
 
 import { app } from 'electron'
+import { reportCatch, CATCH_CLASS } from './maintenance.js'
 import { join } from 'node:path'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
 import { emptyStats, normalizeStats, noteInteraction, describeRelation } from '../core/relation/familiarity.js'
@@ -133,9 +134,7 @@ export function pruneTimeline(now = Date.now()) {
       try {
         unlinkSync(fileOf(d))
         removed++
-      } catch {
-        /* 占用/不存在都跳过 */
-      }
+      } catch (__err) { reportCatch('relation.pruneTimeline', CATCH_CLASS.MUST_PERSIST, __err) }
     }
     if (removed) console.log(`[timeline] 清理 ${removed} 个过期日期文件（保留最近 ${TIMELINE.KEEP_DAYS} 天）`)
     return dead.slice(0, removed)

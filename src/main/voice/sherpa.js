@@ -246,9 +246,7 @@ export async function downloadSherpaCli(opts = {}) {
   const ex = await extractTarBz2(archive, root, log)
   try {
     rmSync(archive, { force: true })
-  } catch {
-    /* %TEMP% 外偶尔被占用，留着无妨 */
-  }
+  } catch{ /* B8:degrade — 压缩包删不掉无副作用 */ }
   if (!ex.ok) return { ok: false, error: '解压失败：' + ex.error }
 
   const st = sherpaStatus()
@@ -289,9 +287,7 @@ export async function downloadSherpaModel(opts = {}) {
     if (!got) {
       try {
         rmSync(dest, { force: true }) // 半截文件别留着，否则下次会误判「已存在」
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — 半截模型文件删不掉，下次有校验兜住 */ }
       return { ok: false, error: `${f.name} 下载失败：${lastError}` }
     }
   }
@@ -301,9 +297,7 @@ export async function downloadSherpaModel(opts = {}) {
   // 模型刚被（重）写过：%TEMP% 下的 ASCII 硬链接镜像可能已指向旧 inode，作废重来
   try {
     rmSync(asciiMirrorDir(), { recursive: true, force: true })
-  } catch {
-    /* ignore */
-  }
+  } catch{ /* B8:degrade — 镜像目录作废失败，下次会重判 */ }
   return { ok: true, dir }
 }
 
@@ -380,9 +374,7 @@ function waitForPortOrExit(port, timeoutMs, child) {
         sockDone = true
         try {
           sock.destroy()
-        } catch {
-          /* ignore */
-        }
+        } catch{ /* B8:degrade — socket 已销毁 */ }
         if (settled) return
         if (ok) done({ ok: true, reason: 'ready' })
         else if (Date.now() > deadline) done({ ok: false, reason: 'timeout' })
@@ -543,9 +535,7 @@ async function startServer(log, timeoutMs) {
     // 起不来的方案别留着；端口没被监听过，下一个方案可直接复用
     try {
       child.kill()
-    } catch {
-      /* ignore */
-    }
+    } catch{ /* B8:degrade — 起不来的方案回收失败 */ }
   }
   return { ok: false, error: '识别服务启动失败' + (tail ? '：' + tail : '') }
 }
@@ -578,9 +568,7 @@ export function stopSherpaServer() {
   if (!child) return false
   try {
     child.kill()
-  } catch {
-    /* ignore */
-  }
+  } catch{ /* B8:degrade — 子进程已退出或不存在 */ }
   return true
 }
 
@@ -608,9 +596,7 @@ function transcribeOverWs(port, frame, opts = {}) {
       clearTimeout(timer)
       try {
         ws.close()
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — ws 已关闭 */ }
       resolve(r)
     }
     const timer = setTimeout(() => finish({ ok: false, error: '识别超时' }), timeoutMs)
@@ -626,9 +612,7 @@ function transcribeOverWs(port, frame, opts = {}) {
       log && log(`[voice] 离线识别结果：${text || '(空)'}`)
       try {
         ws.send(SHERPA_DONE)
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — socket 已关闭 */ }
       finish({ ok: true, text })
     })
     ws.on('error', (err) => finish({ ok: false, error: (err && (err.code || err.message)) || 'ws 错误' }))
@@ -704,8 +688,6 @@ export function installSherpaQuitHook() {
   quitHookInstalled = true
   try {
     app.on('will-quit', () => stopSherpaServer())
-  } catch {
-    /* 非 Electron 环境（单测）忽略 */
-  }
+  } catch{ /* B8:degrade — 非 Electron 环境属预期（单测） */ }
 }
 installSherpaQuitHook()

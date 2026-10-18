@@ -137,9 +137,7 @@ export function edgeSpeakOnce(opts = {}, ctx = {}) {
       clearTimeout(timer)
       try {
         ws.close()
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — ws 已关闭或不存在 */ }
       resolve(result)
     }
 
@@ -159,9 +157,7 @@ export function edgeSpeakOnce(opts = {}, ctx = {}) {
       finish({ ok: false, error: 'edge-tts 握手被拒 HTTP ' + res.statusCode + '（接口可能已变更）' })
       try {
         res.destroy()
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — 销毁已失败的请求 */ }
     })
 
     ws.on('message', (data, isBinary) => {

@@ -27,9 +27,7 @@ export function registerNotesIpc() {
   setNotesChangedListener(() => {
     try {
       broadcast(NOTES_EVENT, listNotes())
-    } catch {
-      /* 广播失败不影响记录 */
-    }
+    } catch{ /* B8:degrade — 广播失败不影响已落盘内容 */ }
   })
   trustedHandle(NOTES_IPC.LIST, () => listNotes())
   trustedHandle(NOTES_IPC.CLEAR, () => clearNotes())

@@ -2,6 +2,7 @@
 // 把「采集器 + 纯逻辑引擎 + 人格台词池 + 当前设置」装配成一个可启停的监测服务。
 // 触发时通过 onProactive 回调把结果交回 agent.js（那里才碰情绪/广播/日记）。
 import { join } from 'node:path'
+import { reportCatch, CATCH_CLASS } from '../maintenance.js'
 import { resourcesDir } from '../paths.js'
 import { createSampler } from './sampler.js'
 import { createMonitorEngine } from '../../core/monitor/engine.js'
@@ -124,9 +125,7 @@ export function stopMonitor() {
   if (sampler) {
     try {
       sampler.dispose()
-    } catch {
-      /* ignore */
-    }
+    } catch{ /* B8:degrade — 释放采样器失败无副作用 */ }
   }
   sampler = null
   engine = null
@@ -150,9 +149,7 @@ function syncAuthorizationStamp() {
   try {
     if (enabled && at <= 0) saveSettings({ privacy: { monitorAuthorizedAt: Date.now() } })
     else if (!enabled && at > 0) saveSettings({ privacy: { monitorAuthorizedAt: 0 } })
-  } catch {
-    /* 打戳失败就退回"不显示"，绝不用当前时间冒充 */
-  }
+  } catch (__err) { reportCatch('index.syncAuthorizationStamp', CATCH_CLASS.VISIBLE, __err) }
 }
 
 export function refreshMonitorPrivacy() {

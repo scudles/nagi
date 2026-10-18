@@ -98,9 +98,7 @@ export function install(api) {
   const stopEvents = api.subscribePresenceEvents(() => {
     try {
       syncConfig()
-    } catch {
-      /* 订阅回调不能影响状态机 */
-    }
+    } catch{ /* B8:degrade — 订阅回调不能影响状态机 */ }
   })
   // 主动内容出口：只有在待补救信号存在、且补救开关开着时才给一句短修复；
   // 其余一律返回 null —— 不抢用户对话、不替归来编固定台词。
@@ -116,9 +114,7 @@ export function install(api) {
     for (const stop of [stopProvider, stopEvents]) {
       try {
         stop()
-      } catch {
-        /* 卸载失败不阻断退出 */
-      }
+      } catch{ /* B8:degrade — 卸载失败不阻断退出 */ }
     }
     // 全局关闭：清掉概率缓存与积压
     state = resetImperfectionState()

@@ -16,9 +16,7 @@ function broadcast(channel, payload) {
     if (!w.isDestroyed()) {
       try {
         w.webContents.send(channel, payload)
-      } catch {
-        /* 窗口正在销毁，忽略 */
-      }
+      } catch{ /* B8:degrade — 窗口正在销毁属预期竞态 */ }
     }
   }
 }

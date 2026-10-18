@@ -1,6 +1,7 @@
 // 统一经历账本：正常新增顺序追加，纠错/删除时重写当前态以移除旧正文。
 // 不依赖 Electron；目录由主进程注入，便于迁移和故障恢复测试。
 import { createHash, randomUUID } from 'node:crypto'
+import { reportCatch, CATCH_CLASS } from '../maintenance/reporter.js'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -32,7 +33,7 @@ function readJsonLines(path) {
   const rows = []
   for (const line of readFileSync(path, 'utf8').split('\n')) {
     if (!line.trim()) continue
-    try { rows.push(JSON.parse(line)) } catch { /* 崩溃留下的半行不作为事实 */ }
+    try { rows.push(JSON.parse(line)) } catch (__err) { reportCatch('store.readJsonLines', CATCH_CLASS.MUST_PERSIST, __err) }
   }
   return rows
 }

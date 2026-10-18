@@ -8,6 +8,7 @@
 //   · 入库只写 pending.jsonl（纯文本追加），嵌入是后台的事，失败下轮再来。
 
 import { app } from 'electron'
+import { reportCatch, CATCH_CLASS } from '../maintenance.js'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient, chatStream } from '../../core/llm/openai-compatible.js'
@@ -73,9 +74,7 @@ async function callLlmOnce(messages, temperature = 0.4) {
       if (!cloudBrainStatus().ok) {
         try {
           await initCloudBrain()
-        } catch {
-          /* 初始化失败交给空结果 */
-        }
+        } catch (__err) { reportCatch('index.collect', CATCH_CLASS.VISIBLE, __err) }
       }
       if (!cloudBrainStatus().ok) return ''
       return await collect(await cloudChatStream({ messages }))

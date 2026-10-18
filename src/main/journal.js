@@ -5,6 +5,7 @@
 // 隐私：只记聊天文本与行为类别，绝不记窗口标题原文。
 
 import { app } from 'electron'
+import { reportCatch, CATCH_CLASS } from './maintenance.js'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'node:fs'
 import { JOURNAL, dateKey, normalizeEntries, appendEntry, pruneOld } from '../core/journal.js'
@@ -121,9 +122,7 @@ export function pruneJournals(now = Date.now()) {
       try {
         unlinkSync(fileOf(key))
         removed++
-      } catch {
-        /* 占用/不存在都跳过 */
-      }
+      } catch (__err) { reportCatch('journal.pruneJournals', CATCH_CLASS.MUST_PERSIST, __err) }
     }
     if (removed) console.log(`[journal] 清理 ${removed} 个过期流水文件（保留最近 ${JOURNAL.KEEP_DAYS} 天）`)
     return dead.slice(0, removed)

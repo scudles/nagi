@@ -66,7 +66,7 @@ if (!rendererSandbox) app.commandLine.appendSwitch('no-sandbox')
 function writeBootStamp() {
   try {
     let build = null
-    try { build = statSync(join(app.getAppPath(), 'out', 'main', 'index.js')).mtimeMs } catch { /* 打包态路径不同，留空即可 */ }
+    try { build = statSync(join(app.getAppPath(), 'out', 'main', 'index.js')).mtimeMs } catch{ /* B8:degrade — 打包态路径不同属预期 */ }
     const stamp = { version: app.getVersion(), pid: process.pid, startedAt: Date.now(), packaged: app.isPackaged, build }
     writeFileSync(join(app.getPath('userData'), 'boot.json'), JSON.stringify(stamp), 'utf8')
     console.log('[boot] 实例已启动 pid=' + stamp.pid + ' 构建时间=' + (build ? new Date(build).toLocaleString('zh-CN') : '未知（打包态）'))

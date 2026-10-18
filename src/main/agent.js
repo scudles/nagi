@@ -3,6 +3,7 @@
 // 未配置 API Key 时回退到本地占位大脑，保证应用开箱可用。
 
 import { app, ipcMain, Notification } from 'electron'
+import { reportCatch, CATCH_CLASS } from './maintenance.js'
 import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -250,14 +251,10 @@ export function restoreState() {
   }
   try {
     pruneTimeline()
-  } catch {
-    /* 清理失败不影响启动 */
-  }
+  } catch (__err) { reportCatch('agent.restoreState', CATCH_CLASS.VISIBLE, __err) }
   try {
     pruneJournals()
-  } catch {
-    /* 同上 */
-  }
+  } catch (__err) { reportCatch('agent.restoreState', CATCH_CLASS.VISIBLE, __err) }
   // 先恢复已有情绪，再注入环境基线，避免启动时覆盖尚未读取的情绪存档。
   presence.start()
 }
@@ -385,9 +382,7 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
       if (useCloud && !cloudBrainStatus().ok) {
         try {
           await initCloudBrain()
-        } catch {
-          /* 初始化失败交给离线兜底 */
-        }
+        } catch (__err) { reportCatch('agent.writeDiaryLine', CATCH_CLASS.VISIBLE, __err) }
       }
       const messages = buildDiaryMessages({
         now,
@@ -516,9 +511,7 @@ function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monit
   if (record) {
     try {
       noteEvent({ kind: kind === 'reminder' ? 'reminder' : 'proactive', text })
-    } catch {
-      /* 记流水失败不影响开口 */
-    }
+    } catch (__err) { reportCatch('agent.saySomething', CATCH_CLASS.MUST_PERSIST, __err) }
     appendDiary(snap, text)
   }
   return true
@@ -593,9 +586,7 @@ export function startActivityMonitor() {
           reactionEngine
             ?.observe({ category: sample.category, idleMs: (sample.idleSec || 0) * 1000 })
             .catch(() => {})
-        } catch {
-          /* 这层出问题不影响规则层开口 */
-        }
+        } catch{ /* B8:degrade — 反应层的异步观察失败，不影响规则层 */ }
       }
     }
   })
@@ -1100,9 +1091,7 @@ function syncFactsToRag(added, removed) {
     const rag = getRag()
     for (const t of added || []) if (t) rag.ingestFact({ text: t })
     for (const t of removed || []) if (t) rag.forgetText(t)
-  } catch {
-    /* 档案写入失败不影响对话 */
-  }
+  } catch (__err) { reportCatch('agent.syncFactsToRag', CATCH_CLASS.MUST_PERSIST, __err) }
 }
 
 function trimHistory(messages) {
@@ -1336,7 +1325,7 @@ export async function handleChatSend(text) {
   if (busy) return { ok: false, error: '正在处理上一条消息' }
   reunion.abort()
   busy = true
-  try { companionInteracted() } catch { /* 预算文件故障不影响主动发起的对话 */ }
+  try { companionInteracted() } catch{ /* B8:degrade — 打扰预算文件故障，不影响本轮对话 */ }
   mood.noteInteraction() // 连聊 burst 统计 + 刷新互动时间
   noteRelationInteraction() // 关系层记账：认识多久、聊过多少次、活跃几天
   const emit = (e) => emitAgentEvent(e)
@@ -1363,14 +1352,10 @@ export async function handleChatSend(text) {
     // 这段对话就真实发生过，该进档案。RAG 未就绪时这只是一行 pending 文本。
     try {
       if (reply && accepted) ragId = getRag().ingestTurn({ user: t, assistant: reply, mood: mood.current().mood })?.id || null
-    } catch {
-      /* 进档案失败不影响对话 */
-    }
+    } catch (__err) { reportCatch('agent.emit', CATCH_CLASS.MUST_PERSIST, __err) }
     try {
       noteEvent({ kind: 'chat', user: t, reply: String((accepted && reply) || '') }, Date.now(), ragId ? [ragId] : [], turnRef)
-    } catch {
-      /* 记流水失败不影响对话 */
-    }
+    } catch (__err) { reportCatch('agent.emit', CATCH_CLASS.MUST_PERSIST, __err) }
     // 刚聊完，是她最可能想记一笔的时刻（写不写由节流内部决定）
     maybeWriteDiary('after-chat')
     busy = false
@@ -1398,14 +1383,12 @@ export function handlePoke() {
   pokeCount++
   pokeLastAt = nowMs
 
-  try { companionInteracted() } catch { /* 戳击始终可用 */ }
+  try { companionInteracted() } catch{ /* B8:degrade — 戳击不依赖预算文件 */ }
   mood.noteInteraction() // 戳她也是互动：刷新冷落计时
   noteRelationInteraction() // 关系层同样记一笔（戳也算搭理她）
   try {
     noteEvent({ kind: 'poke' })
-  } catch {
-    /* 记流水失败不影响反应 */
-  }
+  } catch (__err) { reportCatch('agent.handlePoke', CATCH_CLASS.MUST_PERSIST, __err) }
 
   // 按"第几次"分级：第 1 次正常、2~3 次疑惑、4~6 次不耐烦、7 次以上装作不理。
   // text 为 null 表示这一下她不出声（只把头转开）——所以气泡不会弹。
@@ -1448,9 +1431,7 @@ export async function disposeAgent() {
   stopReminderEngine()
   try {
     await browserTools.dispose()
-  } catch {
-    /* ignore */
-  }
+  } catch{ /* B8:degrade — 退出时释放浏览器失败 */ }
   stopHaSignals()
   try {
     // B01：退出刷盘的逐文件结果如实记录——失败绝不静默（warnings 会留给下次启动）
@@ -1462,9 +1443,7 @@ export async function disposeAgent() {
   flushJournal() // 把防抖中的事件流水立刻刷盘
   try {
     getRag().dispose() // 停掉待嵌定时器与预热定时器
-  } catch {
-    /* ignore */
-  }
+  } catch{ /* B8:degrade — 退出时释放检索失败 */ }
 }
 
 /* ---------------- 长期记忆 / 历史 IPC ---------------- */

@@ -104,9 +104,7 @@ export async function downloadEmbedModel(opts = {}) {
     if (!got) {
       try {
         rmSync(dest, { force: true }) // 半截文件别留着，否则下次误判「已存在」
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — 半截文件删不掉，下次有校验兜住 */ }
       return { ok: false, error: `${f.label}下载失败：${lastError}` }
     }
   }

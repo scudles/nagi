@@ -61,9 +61,7 @@ export async function downloadSmart(url, destPath, opts = {}) {
   for (const fn of order) {
     try {
       rmSync(destPath, { force: true })
-    } catch {
-      /* ignore */
-    }
+    } catch{ /* B8:degrade — 目标文件删不掉，稍后的写入会覆盖 */ }
     const stop = watchProgress(destPath, opts.onProgress, opts.expectBytes)
     let r
     try {
@@ -161,9 +159,7 @@ function downloadWithCurl(url, destPath, opts = {}) {
       settled = true
       try {
         child.kill()
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — 子进程已退出或不存在 */ }
       resolve({ ok: false, error: '下载超时' })
     }, timeoutMs)
     timer.unref?.()

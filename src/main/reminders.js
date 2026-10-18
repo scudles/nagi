@@ -162,7 +162,7 @@ export function addReminder(input = {}, now = Date.now(), { sourceIds = [] } = {
     createReminderPromise(item, { sourceIds })
   } catch (err) {
     items = before
-    try { save() } catch { /* 下次启动会从承诺簿与提醒文件恢复可见状态 */ }
+    try { save() } catch (__err) { reportCatch('reminders.addReminder', CATCH_CLASS.PROMISE, __err) }
     return { ok: false, error: `提醒未能可靠保存：${err.message}` }
   }
   return { ok: true, item }
@@ -190,7 +190,7 @@ export function removeReminder({ id, text } = {}, _now = Date.now()) {
       }
     } catch (err) {
       items = oldItems
-      try { save() } catch { /* 下次启动可再核对 */ }
+      try { save() } catch (__err) { reportCatch('reminders.removeReminder', CATCH_CLASS.PROMISE, __err) }
       return { ok: false, error: `取消未能可靠保存：${err.message}` }
     }
   }
@@ -209,7 +209,7 @@ export function completeReminder(id, now = Date.now()) {
     markReminder(it.id, 'completed', { kind: 'user-confirmation' }, now)
   } catch (err) {
     it.doneAt = previous
-    try { save() } catch { /* 下次启动可再核对 */ }
+    try { save() } catch (__err) { reportCatch('reminders.completeReminder', CATCH_CLASS.PROMISE, __err) }
     return { ok: false, error: `完成状态未能可靠保存：${err.message}` }
   }
   return { ok: true }

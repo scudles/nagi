@@ -11,6 +11,7 @@
 //
 // 注册失败通常是组合键被别的软件占了 —— 逐个注册、逐个报告，不因为一个失败就全不注册。
 import { globalShortcut } from 'electron'
+import { reportCatch, CATCH_CLASS } from './maintenance.js'
 
 export const DEFAULT_SHORTCUTS = {
   next: 'Control+Alt+O', // 下一个装束
@@ -51,9 +52,7 @@ export function registerShortcuts({ handlers = {}, accelerators = {}, enabled = 
       done = globalShortcut.register(acc, () => {
         try {
           fn()
-        } catch {
-          /* 一个热键的回调炸了不该影响其它热键 */
-        }
+        } catch (__err) { reportCatch('shortcuts.registerShortcuts', CATCH_CLASS.VISIBLE, __err) }
       })
     } catch {
       done = false
@@ -72,9 +71,7 @@ export function unregisterShortcuts() {
   for (const acc of registered) {
     try {
       globalShortcut.unregister(acc)
-    } catch {
-      /* ignore */
-    }
+    } catch{ /* B8:degrade — 注销失败无副作用 */ }
   }
   registered = []
 }

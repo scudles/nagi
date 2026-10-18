@@ -7,6 +7,7 @@
 //   · "换装束"本身由渲染层执行（它才拿得到模型），宿主只通过 sendOutfitCommand 下发；
 //   · 当前装束落盘到 settings.live2d.outfit，关掉凪再打开她还是那一身。
 import { ipcMain } from 'electron'
+import { reportCatch, CATCH_CLASS } from '../maintenance.js'
 import { OUTFIT_IPC } from '../../shared/protocol.js'
 import { setOutfitCatalog } from '../outfit-state.js'
 import { saveSettings } from '../settings-store.js'
@@ -30,9 +31,7 @@ export function registerOutfitIpc() {
     try {
       const value = current || (next.slots ? next.slots : '')
       if (value) saveSettings({ live2d: { outfit: value } })
-    } catch {
-      /* 落盘失败不该影响表现层 */
-    }
+    } catch (__err) { reportCatch('outfit.registerOutfitIpc', CATCH_CLASS.MUST_PERSIST, __err) }
     if (prev.current !== next.current || prev.looks.length !== next.looks.length) refreshTrayMenu()
     return { ok: true, current }
   })

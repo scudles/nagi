@@ -38,9 +38,7 @@ export function install(api) {
     for (const stop of stops.reverse()) {
       try {
         stop()
-      } catch {
-        /* 卸载失败不阻断退出 */
-      }
+      } catch{ /* B8:degrade — 卸载失败不阻断退出 */ }
     }
   }
 }

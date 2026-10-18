@@ -86,7 +86,7 @@ export function createMood({ now = () => Date.now() } = {}) {
 
   function notify() {
     if (listener) {
-      try { listener(snapshot()); } catch (e) { /* UI 更新失败不影响状态机 */ }
+      try { listener(snapshot()); } catch(e){ /* B8:degrade — 订阅者的 UI 回调失败，不影响状态机 */ }
     }
   }
 

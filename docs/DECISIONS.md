@@ -687,3 +687,37 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
   隔离复跑 `promises-main` / `forget-e2e` / `promise-book` / `anchors` 共 43/43；`npm run build` 退出 0。
   全量 938 项 917 过，失败项全部是已知的 safe-delete `rmSync` 环境噪音（临时测试目录清理被回收站守卫拦截）+ `persist.test.js` 一条沙箱 `rename EPERM`，隔离复跑均通过，与本次改动无关。
 - **未验证**：绿区尚未按 `C5-PROMISE-*` 实测复核；提醒管理界面的"提示用户自行检查/一并取消"UI 接线（IPC `promise:cancel-linked` / `promise:remove` 已就绪，界面未做）；真机走一遍未完成。
+
+## D62（2026-10-18）B8 收口：80 处空 catch 逐点分类 + 失败路径验收（蓝区 阶段二）
+
+- **任务（用户原话）**：「逐点分类剩余空 catch。注入真实持久化失败与承诺失败，证明错误可见、状态可查、恢复后可重试，事件轨迹脱敏可清除。**正常路径 12/12 不能代替失败路径验收**。」
+- **先清点**：`src`（不含 renderer/vendor）共 **80 处**空 catch，此前只有 **2 处**接了上报——其余全靠注释里的一句"I think it's fine"。
+  分类依据不是"这段代码看起来重不重要"，而是**失败之后用户会看到什么**（契约 §12.1 五级）：
+  `degrade 50 / visible 10 / must-persist 15 / promise 5`。
+- **逐点分类的落法（关键取舍）**：不写一份会过期的外部台账，而是把结论**写进代码本身**——
+  每处空 catch 必须满足二选一：接 `reportCatch(站点, 分类, 错误)`，或带 `/* B8:<类> — 理由 */`。
+  `scripts/b8-catch-audit.mjs scan` 会扫全 src，任何既不上报也不分级的新空 catch **退出非 0**（已挂进测试，见下）。
+  分类裁决表在 `scripts/b8-catch-table.py`（唯一出处），台账产物 `docs/b8-catch-ledger.json`。
+- **30 处非 degrade 真正接线**：`src/main/{agent,persist,journal,relation,windows,shortcuts,diary,monitor/index,rag/index,rag/store-io,ipc/outfit,presence-notes,reminders}.js`
+  与 `src/core/{ledger/store,reminders/delivery,tools/browser,agent/reunion-coordinator}.js`。
+  must-persist 典型：`store-io.readPending`（待嵌队列的半行被悄悄丢）、`journal.pruneJournals`（流水删不掉却当删了）、
+  `windows.resizePetWindow`（尺寸没存下来）、`persist.consumePersistWarnings`。
+  promise 典型：`delivery.createReminderDelivery`（答应过要说的话没说出口）、`reminders.{add,remove,complete}Reminder` 的回滚再保存失败。
+- **为什么新加 `src/core/maintenance/reporter.js`**：`maintenance.js` 在主进程侧，core 里的纯模块不能反向依赖它，
+  但持久化和承诺失败恰恰大量发生在 core → 把"轨迹 + 健康状态 + 上报器"三件套下放到 core，main 只是再导出一遍（含 `CATCH_CLASS`）。
+- **失败路径验收（`test/b8-failure.test.js` 6/6）**：全部用**真失败**，注入手法与 `test/persist.test.js` 一致（半行数据 / 目标占成目录），不 mock fs：
+  1. `B8-PERSIST-01` 半行待嵌 → 解析失败但仍是"这条路必须出声"：`healthy` 翻红、`store-io.readPending` 被点名、轨迹消息不含盘符路径、**恢复后可重试**且次数不再累计。
+  2. `B8-PERSIST-02` meta 损坏 → 同样被点到；`clearMaintenanceTrace()` 后轨迹与健康站点都清零。
+  3. `B8-PERSIST-03` 队列文件被占成目录 → 不许假装清干净了。
+  4. `B8-PROMISE-01` present/notify 双通道失败 → 归 `promise` 类、**不得误报送达**；通道恢复后重跑真的送达（可重试）。
+  5. `B8-DEGRADE-01` 可降级只看轨迹不翻红——并配一条**反向对照**（同一站点换 must-persist 立刻翻红），防"恒真"假绿。
+  6. `B8-AUDIT-01` 审计 + 一份 **关键站点清单**（14 个必须出声的点），删掉任何一处上报这条测试就变红。
+- **自己踩的两个坑**（脚本改代码一定要留证）：
+  1. 打标脚本首版把 `agent.js` 从 1516 行**拼成 89023 行**（parts[0] 在循环里被重复累加）→ 已回滚重做。
+  2. 站点名提取正则把 `if (` / `for (` 当成函数名 → 加了关键字黑名单。
+- **依据**：`scripts/b8-catch-audit.mjs scan` 退出 0（80 处全部处置）；`test/b8-failure.test.js` 6/6；
+  全量 **944 项 925 过 / 1 skip**，18 项失败全部是已知的 safe-delete `rmSync` 环境噪音 + `persist.test.js` 那条沙箱 `rename EPERM`，
+  隔离复跑（companion-main / ledger-actions-flush / persist / reminder-delivery / rag-revocation）20/20 通过，与本次改动无关。
+  `npm run build` 退出 0。
+- **未验证**：renderer 那 ~70 处空 catch 未动（红区负责），只在审计脚本里注明需红区裁决；
+  设置页的状态区目前接的是 `maintenance:health`，本次没有新增 UI 文案；真机走一遍未完成。

@@ -93,9 +93,7 @@ export class RagStoreIo {
         const raw = JSON.parse(readFileSync(this.metaFile, 'utf8'))
         if (raw && typeof raw === 'object') meta = { ...meta, ...raw }
       }
-    } catch {
-      /* meta 损坏不影响主数据 */
-    }
+    } catch (__err) { reportCatch('store-io.loadMeta', CATCH_CLASS.MUST_PERSIST, __err) }
     this.meta = meta
     this._metaLoaded = true
     return meta
@@ -176,9 +174,7 @@ export class RagStoreIo {
       try {
         const obj = JSON.parse(t)
         if (obj && typeof obj.text === 'string' && obj.hash) out.push(obj)
-      } catch {
-        /* 半行丢弃 */
-      }
+      } catch (__err) { reportCatch('store-io.readPending', CATCH_CLASS.MUST_PERSIST, __err) }
     }
     return out
   }
@@ -194,9 +190,7 @@ export class RagStoreIo {
     if (!items || !items.length) {
       try {
         if (existsSync(this.pendingFile)) unlinkSync(this.pendingFile)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportCatch('store-io.rewritePending', CATCH_CLASS.MUST_PERSIST, __err) }
       return
     }
     atomicWrite(this.pendingFile, items.map((c) => JSON.stringify(c)).join('\n') + '\n')
@@ -224,9 +218,7 @@ export class RagStoreIo {
     for (const f of [this.vectorsFile, this.chunksFile, this.pendingFile, this.metaFile, this.revokedFile]) {
       try {
         if (existsSync(f)) bytes += statSync(f).size
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — 统计体积失败不影响功能 */ }
     }
     return bytes
   }
@@ -236,9 +228,7 @@ export class RagStoreIo {
     for (const f of [this.vectorsFile, this.chunksFile, this.pendingFile, this.metaFile, this.revokedFile]) {
       try {
         if (existsSync(f)) unlinkSync(f)
-      } catch {
-        /* ignore */
-      }
+      } catch (__err) { reportCatch('store-io.clear', CATCH_CLASS.MUST_PERSIST, __err) }
     }
     this.meta = { version: META_VERSION, model: '', dim: 0, updatedAt: 0 }
   }

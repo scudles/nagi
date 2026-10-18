@@ -9,6 +9,7 @@
 // 在两步之间崩溃会丢光旧数据）。flush 的逐文件结果如实返回，失败绝不静默。
 
 import { app } from 'electron'
+import { reportCatch, CATCH_CLASS } from './maintenance.js'
 import * as fsApi from 'node:fs'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
@@ -127,9 +128,7 @@ export function consumePersistWarnings() {
   if (!events.length) return []
   try {
     if (existsSync(file)) unlinkSync(file)
-  } catch {
-    /* best-effort：清不掉下回还会提示 */
-  }
+  } catch (__err) { reportCatch('persist.consumePersistWarnings', CATCH_CLASS.MUST_PERSIST, __err) }
   return events
 }
 

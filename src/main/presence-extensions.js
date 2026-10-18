@@ -10,5 +10,5 @@ export function installPresenceExtensions() {
     try {const stop=modules[key].install?.(api);if(typeof stop==='function')disposers.push(stop)}
     catch(e) {console.warn('[presence] 扩展注册失败',key,e.message)}
   }
-  return ()=>{for(const stop of disposers.reverse())try{stop()}catch{/* 扩展不能阻断退出 */}}
+  return ()=>{for(const stop of disposers.reverse())try{stop()}catch{ /* B8:degrade — 退出时卸载扩展失败 */ }}
 }

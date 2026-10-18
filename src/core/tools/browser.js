@@ -7,6 +7,7 @@
 //      登录态持久化在 userDataDir。
 
 import { join } from 'node:path'
+import { reportCatch, CATCH_CLASS } from '../maintenance/reporter.js'
 
 const NAV_TIMEOUT = 30000
 
@@ -59,9 +60,7 @@ export function createBrowserTools(cfg = {}) {
             page = ctx.pages().at(-1) || (await ctx.newPage())
             attachPageEvents()
             return { conn, page }
-          } catch (e) {
-            // 回退托管
-          }
+          } catch(e){ { reportCatch('browser.ensure', CATCH_CLASS.VISIBLE, e) } }
         }
 
         // 2) 托管模式
@@ -204,16 +203,12 @@ export function createBrowserTools(cfg = {}) {
       if (inflight) {
         try {
           await inflight
-        } catch {
-          /* 启动失败无需处理 */
-        }
+        } catch{ /* B8:degrade — 等待中的启动失败由调用方处理 */ }
       }
       try {
         if (connKind === 'cdp' && conn) await conn.close() // 断开连接，不关用户的浏览器
         else if (conn) await conn.close() // 托管浏览器一并关闭
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — 关闭浏览器失败无副作用 */ }
       conn = null
       connKind = null
       page = null

@@ -1,0 +1,356 @@
+{
+  "generatedBy": "scripts/b8-catch-audit.mjs",
+  "total": 50,
+  "sites": [
+    {
+      "file": "src/main/agent.js",
+      "line": 589,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 反应层的异步观察失败，不影响规则层 */"
+    },
+    {
+      "file": "src/main/agent.js",
+      "line": 1328,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 打扰预算文件故障，不影响本轮对话 */"
+    },
+    {
+      "file": "src/main/agent.js",
+      "line": 1386,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 戳击不依赖预算文件 */"
+    },
+    {
+      "file": "src/main/agent.js",
+      "line": 1434,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 退出时释放浏览器失败 */"
+    },
+    {
+      "file": "src/main/agent.js",
+      "line": 1446,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 退出时释放检索失败 */"
+    },
+    {
+      "file": "src/main/download.js",
+      "line": 64,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 目标文件删不掉，稍后的写入会覆盖 */"
+    },
+    {
+      "file": "src/main/download.js",
+      "line": 162,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 子进程已退出或不存在 */"
+    },
+    {
+      "file": "src/main/extensions/imperfection.js",
+      "line": 101,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 订阅回调不能影响状态机 */"
+    },
+    {
+      "file": "src/main/extensions/imperfection.js",
+      "line": 117,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 卸载失败不阻断退出 */"
+    },
+    {
+      "file": "src/main/extensions/traces.js",
+      "line": 41,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 卸载失败不阻断退出 */"
+    },
+    {
+      "file": "src/main/gaze.js",
+      "line": 62,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 广播失败不影响轮询 */"
+    },
+    {
+      "file": "src/main/index.js",
+      "line": 69,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 打包态路径不同属预期 */"
+    },
+    {
+      "file": "src/main/ipc/notes.js",
+      "line": 30,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 广播失败不影响已落盘内容 */"
+    },
+    {
+      "file": "src/main/ipc/rag.js",
+      "line": 19,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 窗口正在销毁属预期竞态 */"
+    },
+    {
+      "file": "src/main/ipc/voice.js",
+      "line": 33,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 窗口正在销毁属预期竞态 */"
+    },
+    {
+      "file": "src/main/monitor/index.js",
+      "line": 128,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 释放采样器失败无副作用 */"
+    },
+    {
+      "file": "src/main/monitor/sampler.js",
+      "line": 93,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 子进程已退出或不存在 */"
+    },
+    {
+      "file": "src/main/presence-extensions.js",
+      "line": 13,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 退出时卸载扩展失败 */"
+    },
+    {
+      "file": "src/main/presence-notes.js",
+      "line": 50,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 广播失败不影响已落盘的便签 */"
+    },
+    {
+      "file": "src/main/rag/embed-local.js",
+      "line": 107,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 半截文件删不掉，下次有校验兜住 */"
+    },
+    {
+      "file": "src/main/rag/store-io.js",
+      "line": 221,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 统计体积失败不影响功能 */"
+    },
+    {
+      "file": "src/main/shortcuts.js",
+      "line": 74,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 注销失败无副作用 */"
+    },
+    {
+      "file": "src/main/signals/geo.js",
+      "line": 54,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 主源失败正在尝试备用源 */"
+    },
+    {
+      "file": "src/main/signals/geo.js",
+      "line": 61,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 离线属预期 */"
+    },
+    {
+      "file": "src/main/voice/edge.js",
+      "line": 140,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — ws 已关闭或不存在 */"
+    },
+    {
+      "file": "src/main/voice/edge.js",
+      "line": 160,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 销毁已失败的请求 */"
+    },
+    {
+      "file": "src/main/voice/ps.js",
+      "line": 83,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 子进程已退出或不存在 */"
+    },
+    {
+      "file": "src/main/voice/ps.js",
+      "line": 127,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 临时目录占用，下次会新建 */"
+    },
+    {
+      "file": "src/main/voice/sherpa.js",
+      "line": 249,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 压缩包删不掉无副作用 */"
+    },
+    {
+      "file": "src/main/voice/sherpa.js",
+      "line": 290,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 半截模型文件删不掉，下次有校验兜住 */"
+    },
+    {
+      "file": "src/main/voice/sherpa.js",
+      "line": 300,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 镜像目录作废失败，下次会重判 */"
+    },
+    {
+      "file": "src/main/voice/sherpa.js",
+      "line": 377,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — socket 已销毁 */"
+    },
+    {
+      "file": "src/main/voice/sherpa.js",
+      "line": 538,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 起不来的方案回收失败 */"
+    },
+    {
+      "file": "src/main/voice/sherpa.js",
+      "line": 571,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 子进程已退出或不存在 */"
+    },
+    {
+      "file": "src/main/voice/sherpa.js",
+      "line": 599,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — ws 已关闭 */"
+    },
+    {
+      "file": "src/main/voice/sherpa.js",
+      "line": 615,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — socket 已关闭 */"
+    },
+    {
+      "file": "src/main/voice/sherpa.js",
+      "line": 691,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 非 Electron 环境属预期（单测） */"
+    },
+    {
+      "file": "src/main/windows.js",
+      "line": 40,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 非网页地址属预期 */"
+    },
+    {
+      "file": "src/main/windows.js",
+      "line": 277,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 窗口正在销毁属预期竞态 */"
+    },
+    {
+      "file": "src/main/windows.js",
+      "line": 296,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 渲染帧已销毁属预期竞态 */"
+    },
+    {
+      "file": "src/core/emotion/mood.js",
+      "line": 89,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 订阅者的 UI 回调失败，不影响状态机 */"
+    },
+    {
+      "file": "src/core/homeassistant/ha.js",
+      "line": 131,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 关闭已失效的 ws，失败无副作用 */"
+    },
+    {
+      "file": "src/core/homeassistant/ha.js",
+      "line": 135,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 外部事件回调失败，不中断订阅 */"
+    },
+    {
+      "file": "src/core/homeassistant/ha.js",
+      "line": 168,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 关闭已失效的 ws，失败无副作用 */"
+    },
+    {
+      "file": "src/core/monitor/engine.js",
+      "line": 74,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 时间感采样分发失败，不影响感知本身 */"
+    },
+    {
+      "file": "src/core/persist-io.js",
+      "line": 45,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 临时文件清理失败，原始错误会照常抛出 */"
+    },
+    {
+      "file": "src/core/presence/hooks.js",
+      "line": 9,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 订阅者不能中断调用方 */"
+    },
+    {
+      "file": "src/core/presence/hooks.js",
+      "line": 45,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 候选生成器逐个尝试，失败换下一个 */"
+    },
+    {
+      "file": "src/core/tools/browser.js",
+      "line": 206,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 等待中的启动失败由调用方处理 */"
+    },
+    {
+      "file": "src/core/tools/browser.js",
+      "line": 211,
+      "reported": false,
+      "cls": "degrade",
+      "body": "/* B8:degrade — 关闭浏览器失败无副作用 */"
+    }
+  ]
+}

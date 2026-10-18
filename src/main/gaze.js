@@ -59,9 +59,7 @@ export function createGazeTracker({ getWindow, getPrivacy, getBounds, intervalMs
     const dir = toGazeDir(point, center, view)
     try {
       onHint?.({ ...dir, at: Date.now() })
-    } catch {
-      /* 广播失败不影响轮询 */
-    }
+    } catch{ /* B8:degrade — 广播失败不影响轮询 */ }
   }
 
   return {

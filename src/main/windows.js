@@ -3,6 +3,7 @@
 // 两个窗口加载同一 index.html，用 ?mode=pet|workbench 区分布局。
 
 import { BrowserWindow, screen, shell } from 'electron'
+import { reportCatch, CATCH_CLASS } from './maintenance.js'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { MODE, EVT, DEFAULT_SETTINGS } from '../shared/protocol.js'
@@ -36,7 +37,7 @@ function hardenNavigation(win) {
     try {
       const target = new URL(url)
       if (target.protocol === 'https:' || target.protocol === 'http:') shell.openExternal(url).catch(() => {})
-    } catch { /* 非网页地址不打开 */ }
+    } catch{ /* B8:degrade — 非网页地址属预期 */ }
     return { action: 'deny' }
   })
 }
@@ -107,9 +108,7 @@ export function resizePetWindow(size = {}) {
   if (size.persist !== false) {
     try {
       saveSettings({ live2d: { petWidth: w, petHeight: h } })
-    } catch {
-      /* 设置写失败不影响本次缩放 */
-    }
+    } catch (__err) { reportCatch('windows.resizePetWindow', CATCH_CLASS.MUST_PERSIST, __err) }
   }
   return { width: w, height: h }
 }
@@ -275,9 +274,7 @@ export function switchMode(mode) {
     if (stale && !stale.isDestroyed()) {
       try {
         stale.webContents.send(VOICE_EVT.OWNER_LOST)
-      } catch {
-        /* 窗口正在销毁，忽略 */
-      }
+      } catch{ /* B8:degrade — 窗口正在销毁属预期竞态 */ }
     }
   }
   broadcast(EVT.SETTINGS_CHANGED, { mode: currentMode })
@@ -296,8 +293,6 @@ export function broadcast(channel, payload) {
     if (!wc || wc.isDestroyed() || wc.isCrashed()) continue
     try {
       wc.send(channel, payload)
-    } catch {
-      /* 渲染帧已销毁（导航/崩溃竞态）：丢弃这一帧即可，不影响主进程 */
-    }
+    } catch{ /* B8:degrade — 渲染帧已销毁属预期竞态 */ }
   }
 }

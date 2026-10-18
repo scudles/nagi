@@ -1,21 +1,18 @@
 // src/main/maintenance.js
-// B8（P2-04）：主进程侧的失败轨迹单例。
+// B8（P2-04）：主进程侧的失败轨迹与健康状态入口。
 //
-// 为什么是单例：轨迹要能跨模块读（工作台/验收脚本要看"最近哪些 catch 真的出事了"），
-// 又只该存在内存里、有上限、可一键清空。这里只装配，不含逻辑——
-// 分类与脱敏都在 core（可纯单测）。
-import { createEventTrace } from '../core/maintenance/event-trace.js'
-import { createCatchReporter, createHealthRegistry } from '../core/maintenance/catch-audit.js'
+// 这里只做装配：轨迹与健康状态都汇聚到 core 的单例 —— core 里的模块
+// （ledger store / reminders delivery / …）自己也要上报，不能反向依赖 main。
+// 只存在内存，有上限，可一键清空。分类与脱敏都在 core（可纯单测）。
+import { reportCatch, __trace, __health } from '../core/maintenance/reporter.js'
 
-const trace = createEventTrace({ limit: 200 })
-const health = createHealthRegistry({ maxSites: 50 })
-
-/** 统一的失败上报入口：reportCatch(站点, 分类, 错误) */
-export const reportCatch = createCatchReporter({ trace, health })
+export { reportCatch }
+// 分类常量一并再导出：接线点写一条 import 就够，免得同一个文件冒出两条 maintenance 依赖。
+export { CATCH_CLASS } from '../core/maintenance/catch-audit.js'
 
 /** 最近 n 条失败轨迹（脱敏后） */
 export function maintenanceTrace(n) {
-  return trace.list(n)
+  return __trace.list(n)
 }
 
 /**
@@ -23,16 +20,16 @@ export function maintenanceTrace(n) {
  * 只读快照，供工作台/验收查看（本轮未接 IPC，见 HANDOFF）。
  */
 export function maintenanceHealth() {
-  return { healthy: health.healthy(), sites: health.snapshot() }
+  return { healthy: __health.healthy(), sites: __health.snapshot() }
 }
 
 /** 一键清空（可删：内存里不留副本） */
 export function clearMaintenanceTrace() {
-  trace.clear()
-  health.reset()
+  __trace.clear()
+  __health.reset()
 }
 
 /** 仅测试用：拿到内部轨迹对象，便于断言有界/脱敏 */
 export function __traceForTest() {
-  return trace
+  return __trace
 }

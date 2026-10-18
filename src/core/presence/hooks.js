@@ -6,7 +6,7 @@ export function createPresenceHooks() {
     set.add(fn);return ()=>set.delete(fn)
   }
   function emit(set,event) {
-    for(const fn of set) try { Promise.resolve(fn(structuredClone(event))).catch(()=>{}) } catch { /* 订阅者不能中断工具/状态机 */ }
+    for(const fn of set) try { Promise.resolve(fn(structuredClone(event))).catch(()=>{}) } catch{ /* B8:degrade — 订阅者不能中断调用方 */ }
   }
   return {
     registerVoiceParamsProvider(fn) {
@@ -42,7 +42,7 @@ export function createPresenceHooks() {
             })
           ])
           if(!signal?.aborted && r && typeof r.text==='string' && r.text.trim())return {text:r.text.trim().slice(0,500),mood:r.mood}
-        } catch { /* 候选失败，继续下一个 */ }
+        } catch{ /* B8:degrade — 候选生成器逐个尝试，失败换下一个 */ }
         finally {clearTimeout(timer);controller.abort();signal?.removeEventListener('abort',abort)}
       }
       return null

@@ -13,6 +13,7 @@
 // 不做周期写；单文件小，条数与天数都有硬上限。
 
 import { app } from 'electron'
+import { reportCatch, CATCH_CLASS } from './maintenance.js'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -46,9 +47,7 @@ export function setNotesChangedListener(fn) {
 function notify() {
   try {
     changedListener?.()
-  } catch {
-    /* 广播失败不影响记录 */
-  }
+  } catch{ /* B8:degrade — 广播失败不影响已落盘的便签 */ }
 }
 
 const file = () => join(app.getPath('userData'), 'notes.json')
@@ -344,9 +343,7 @@ export function listAnchorCandidates(now = Date.now()) {
         text: item.title
       })
     }
-  } catch {
-    /* 承诺簿不可读就当没有这类锚点 */
-  }
+  } catch (__err) { reportCatch('presence-notes.listAnchorCandidates', CATCH_CLASS.VISIBLE, __err) }
   const evidence = [...evMap.values()]
   let levelKey = 'stranger'
   try {

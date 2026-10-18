@@ -128,15 +128,11 @@ export class HAClient {
         this.wsAlive = false
         try {
           ws.close()
-        } catch {
-          /* ignore */
-        }
+        } catch{ /* B8:degrade — 关闭已失效的 ws，失败无副作用 */ }
       } else if (msg.type === 'event' && msg.event && this.onEvent) {
         try {
           this.onEvent({ event_type: msg.event.event_type, data: msg.event.data })
-        } catch {
-          /* ignore */
-        }
+        } catch{ /* B8:degrade — 外部事件回调失败，不中断订阅 */ }
       }
     })
     ws.on('close', () => {
@@ -169,9 +165,7 @@ export class HAClient {
     if (this.ws) {
       try {
         this.ws.close()
-      } catch {
-        /* ignore */
-      }
+      } catch{ /* B8:degrade — 关闭已失效的 ws，失败无副作用 */ }
       this.ws = null
     }
     this.wsAlive = false

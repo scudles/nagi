@@ -42,9 +42,7 @@ export function atomicWriteSync(fs, file, payload) {
         fs.unlinkSync(tmp)
         tmpCleaned = true
       }
-    } catch {
-      /* tmp 清理失败不掩盖原始错误 */
-    }
+    } catch{ /* B8:degrade — 临时文件清理失败，原始错误会照常抛出 */ }
     return { ok: false, stage: 'rename', error: `替换失败：${msg(err)}`, tmpCleaned }
   }
 }

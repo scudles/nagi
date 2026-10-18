@@ -80,9 +80,7 @@ export function runPowerShell(scriptPath, args = [], opts = {}) {
         settled = true
         try {
           child.kill()
-        } catch {
-          /* ignore */
-        }
+        } catch{ /* B8:degrade — 子进程已退出或不存在 */ }
         resolve({ ok: false, code: null, stdout, stderr, error: 'timeout (' + timeoutMs + 'ms)' })
       }, GRACE_AFTER_TIMEOUT_MS)
       graceTimer.unref?.()
@@ -126,9 +124,7 @@ export function cleanupDir(dir) {
   if (!dir) return
   try {
     rmSync(dir, { recursive: true, force: true })
-  } catch {
-    /* %TEMP% 下偶尔被占用，留着无妨 */
-  }
+  } catch{ /* B8:degrade — 临时目录占用，下次会新建 */ }
 }
 
 /** 读脚本写的 UTF-8 JSON 结果文件 */
