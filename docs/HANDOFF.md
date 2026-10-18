@@ -78,6 +78,36 @@
 
 **下一步（蓝区）**：① 等人眼确认 Windows 通知中心那条 toast（唯一未闭环项）；② 作者裁决勿扰口径后补 verify；③ 阶段2 蓝区卡 P2-04（B8 空 catch 分类）、P3-04（C1）、P3-05（C2）；④ 顺手修 `verify-settings-nav.mjs`（待允许）。
 
+### 阶段1 闭环二轮（2026-10-18 14:5x，按 PENDING-CODEX 升级单 4 / Codex 三处打回）
+
+**改动文件（本轮）**
+- 新增：`src/core/agent/crisis.js`（L3→L2→L1 保守判定）、`src/core/agent/messages.js`（`assembleTurnMessages` + `isObservationMessage`）、`src/core/emotion/tone.js`（tone 生命周期）、`test/crisis.test.js`、`test/messages.test.js`、`test/emotion-tone.test.js`
+- 改动：`src/main/agent.js`（crisis 接进 `safetyLevel`、危机空正文兜底、tone 按轮清除、观测行移出 system、`trimHistory` 剔除观测段）、`src/core/agent/persona-guard.js`（新增 `crisis` 开关 + `CRISIS_RULES`，**原有规则正则未改**）、`test/reminder-delivery.test.js`（裁决 A 两项）、`scripts/verify-title-outbound.mjs`（改断言位置）、`scripts/verify-reminder-delivery.mjs`（新增 G 段勿扰）
+- 仍未动：`src/core/agent/loop.js`（**零改动**）；契约语义未改。
+
+**已验证结果**（Node 24.19.0，真机 `NAGI_RENDERER_SANDBOX=0`）
+- `npm test`：**845 项 / 844 通过 / 0 失败 / 1 skip，exit 0**
+- `npm run build`：**exit 0**
+- `npm run verify:reminder`：**14/14**（原 10 项 + G 段 4 项）
+- `npm run verify:title-outbound`：**7/7**（A2 直接断言 system 里无观测标记；A1/C3 断言观测段在 user 角色）
+
+**新增测试 21 项**：crisis 10（L3/L2/L1 分层、危机护栏四红线、兜底非空无号码、D7-CROSS-01 三适配器同决策、D7-GUARD-01 首稿合格）、messages 6（C4-AUTH-02 位置、顺序、无观测不产空段、前缀去重、可识别剔除、对抗标题）、emotion-tone 4（beginTurn 清空 / 连续两句独立 / 空白不产虚假来源 / 只读）、reminder-delivery +2（裁决 A 正反两面）。
+
+**请豆包对账点**
+1. **D7 只做到"接线"**：L1 的表达策略（承认感受／最多一个低问题／不推热线）未实现，EVAL §3.1 的 24 场景集也未跑。P1-07 我标的是"🔵部分落地"，别被"crisis 已接"误读成 D7 全绿。
+2. `crisis.js` 的规则是**从 EVAL §3.1 样例 + §2.1 表反推的保守正则**，请按 §2.2 红线 2（正则只作辅助）给一句口径：这类判定要不要进 EVAL 作为"允许的近似"，还是必须等模型/规则混合判定。若你补充样例，我按样例补规则与测试。
+3. **C4-AUTH-02 的"低权威"判定口径**：我实现成"独立 user 消息 + 固定抬头"，并在 `trimHistory` 里剔除（否则采样会固化进历史）。若你认为"user 段之前还需要一轮 assistant 才能算真正低权威"，请明示，我照改。
+
+**请 Codex 复核点**
+1. `crisis.js` 是我（蓝区）写的**判定器**，不是你指定的架构件。按 §8"agent.js 是唯一生成入口、persona-guard 是唯一审核规则"，我把判定放在 core 的独立纯模块、由 agent.js 调用；如果你认为判定应归红区或应走模型判定，请指路，我把这层换掉（接口只依赖 `classifyCrisis(text) → {level, safetyLevel}`）。
+2. 观测段挪成独立 user 消息后，**同一轮会出现两条连续 user 消息**（观测段 + 原话）。OpenAI 兼容与云端网关都接受，但如果你对某些 provider 的连续同角色有顾虑，请指出——替代方案是把观测段并进最后一条 user 消息的前缀（同样不在 system）。
+3. `mockRun` 也接入了 crisis（占位大脑同样走危机兜底）。这会让没有模型的机器在危机输入下输出安全指引而不是占位台词，请确认这符合 B1"无模型也要兜底"的预期。
+
+**升级项**
+1. 沿用：P1-07 剩余（L1 表达策略 + EVAL 场景集）、`verify-settings-nav.mjs` 老化、toast 人眼确认。
+2. **新增**：`crisis.js` 需要绿区补一组"误判/漏判"对照样例（如转述他人、"电影里"），否则保守正则的边界只由我一人判断——这属于规格工作，我不越权自定。
+
+
 ---
 
 ## 🟢 绿区交接（豆包 · 规格/评测/对账）
@@ -101,9 +131,15 @@
 - **P1-05（B5）✅ 符合**：主进程唯一权威（agent.js DONE 先固定 tone 进快照再 `mood.propose(…,'llm')`）；`core/emotion/resolve.js` longMood/tone 显式分层、tone 不写回；renderer `applyMood` 只消费快照、删掉 onDone 满强度重设；mood.js idle/night/rhythm 推力 `interaction:false` 不刷新 lastInteraction、liminal 在线/离线同衰减曲线。测试 `emotion-resolve 5 + mood 补 3` 覆盖。
 - **P1-06（C4）✅ 符合**：EVAL §3.5 八条断言全被 `title-outbound.test.js` 覆盖（C4-SW-01/02、DND、REVOKE-01/02、BLACK、AUTH、FLOW）；独立开关 `privacy.titleOutbound` 默认开、三护栏优先；`agent.js` 出站前 `titleOutboundAllowed` 按设置+epoch 重验；presence guard 纳入 titleOutbound。真机 `verify:title-outbound` 6/6（四跳全通）。
 - **P1-04（B4）✅ 符合**：`generation.test.js` + `persona-guard.test.js` 覆盖 provider 矩阵同决策、重写预算 1、分通道兜底、crisis 兜底永不为空且不给具体号码、拒绝候选不入消息。`maxRetries` 2→1 已按契约对齐并记录（见 TASKS）。
-- **P1-01（B1）⚠️ 部分**：真机 `verify:reminder` 9/10（余 1 项需人眼看 Windows 通知中心）；"勿扰是否拦重要提醒"为**作者裁决项**，已进 PENDING-CODEX 升级单 1。
-- **偏离/缺失**：① PENDING-CODEX 原引用"§6 红区接口骨架"已漂移，本轮修正为 **§8**；② P1-02/P1-03 为纯 🔴 卡未施工（Codex 排期）；③ D6（P3-03）/D2（P2-01）测试为空属阶段归属，进入阶段2/3 时须按 EVAL 回填，防"我能帮你什么"红线漏测。
-- **结论**：阶段1蓝区（P1-05 B5）与共建实现（P1-04/P1-06）**实现符合契约、测试全绿、无阻断性缺陷**；可收口。留待项见 PENDING-CODEX 升级单 1–3。
+- **P1-01（B1）⚠️ 部分**：真机 `verify:reminder` **10/10**（Codex 更正：终态 10/10，早前 9/10 是修脚本前首跑、F7 为脚本假设错、产品代码未动）；余 1 项需人眼看 Windows 通知中心 toast；"勿扰是否拦重要提醒"为**作者裁决项**，已进 PENDING-CODEX 升级单 1。
+- **偏离/缺失**：① PENDING-CODEX 原引用"§6 红区接口骨架"已漂移，本轮修正为 **§8**；② P1-02/P1-03 关单记录缺失（Codex 凭 `9abf398` 关单，TASKS 未回填，见升级单 2）；③ D6（P3-03）/D2（P2-01）测试为空属阶段归属，进入阶段2/3 时须按 EVAL 回填，防"我能帮你什么"红线漏测。
+- **结论**：阶段1蓝区（P1-05 B5）与共建实现（P1-04/P1-06）实现符合契约、测试全绿；**但 Codex 复判打回 B4/B5/C4 三处运行边界**（绿区已核实属实，见 PENDING-CODEX 升级单 4），阶段1 **暂不能整体收口**，待三处闭环 + B1 作者裁决 + B2/B3 关单复核。
+
+**对 Codex 四问的回应（2026-10-18）**：
+1. **C4-FLOW-01"长期记录不落盘"证据链**：代码级旁证（sampler `latest` 只在内存、日志只打 `titleLen` 不打原文、music-store 只存 `authorizedAt`）**满足 `[mock-io]` 层要求**；可在 P2-08（B9）补一条"采样落盘面无 title 字段"结构断言作加固，非本阶段阻塞。
+2. **D7-CROSS-01 provider 矩阵口径**：policy 层四种适配器形状（云原生流 / 兼容 JSON 兜底 / 本地原生流 / 占位单次）验证同一敏感输入同一决策，**满足 `[mock-io]` 层要求**（mock-io 即主进程 mock IO）；未接真实 Ollama 属 `[device]` 层抽样，阶段1 不强制。
+3. **勿扰口径**：绿区建议冻结——**"勿扰开启时：桌面气泡不发，重要提醒仍发系统通知"**，待作者裁决；裁决前 Codex/WorkBuddy 不得自行改动该默认。
+4. **`verify:reminder` 10/10**：确认采纳，EVAL 对账区与 PENDING-CODEX 的 9/10 已改口为 10/10。
 
 ---
 

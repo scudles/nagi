@@ -11,13 +11,13 @@
 
 | ID | 归属 | 评审项 | 输入（文件:行） | 输出 | 验收标准 | 依赖契约 | 成本 | 状态 |
 |---|---|---|---|---|---|---|---|---|
-| P1-01 | 🔴+🟢 | B1 重要提醒不依赖 LLM | `src/main/agent.js:411,649,669`；`src/main/reminders.js:220` | 提醒"按时呈现"与"角色措辞"解耦；断网/隐藏窗仍可靠送达；调度器并发/幂等键 | 断网/无模型/隐藏窗/勿扰/多条同时到期/取消在生成期间，提醒均不漏；勿扰规则按 CONTRACTS 裁决 A | §CONTRACTS 人格最小一致集（可靠>拟人）；勿扰规则 | 4–8h | 🔵真机 10/10；勿扰口径已冻结（余：人眼确认 toast） |
+| P1-01 | 🔴+🟢 | B1 重要提醒不依赖 LLM | `src/main/agent.js:411,649,669`；`src/main/reminders.js:220` | 提醒"按时呈现"与"角色措辞"解耦；断网/隐藏窗仍可靠送达；调度器并发/幂等键 | 断网/无模型/隐藏窗/勿扰/多条同时到期/取消在生成期间，提醒均不漏；勿扰规则按 CONTRACTS 裁决 A | §CONTRACTS 人格最小一致集（可靠>拟人）；勿扰规则 | 4–8h | 🔵真机 14/14（裁决 A 已固化进 verify；余：人眼确认 toast） |
 | P1-02 | 🔴 | B2 RAG 入队覆盖 | `src/main/rag/index.js:365,372,398–399` | 嵌入完成后按本批已处理 ID 从**当前队列**删除；清/重建/切引擎失效代次 | 夹具：A 嵌入期间追加 B，完成后 B 仍在队列；交错测试通过 | — | 3–5h | ✅ 已落地（`9abf398`；`test/rag-revocation.test.js` 嵌入期间新增、拒绝后重试两条交错测试通过） |
 | P1-03 | 🔴 | B3 归来控制器泄漏 | `src/main/agent.js:446–482` | 延迟门先于资源分配或统一 finally；defer 后不再静默 | defer 后再归来可正常触发；10 分钟"可恢复"按真实恢复验收 | — | 2–4h | ✅ 已落地（`9abf398`；`test/reunion-coordinator.test.js` defer 后再触发、拒绝后释放两条生命周期测试通过） |
-| P1-04 | 🟢+🔴 | B4 人格边界跨通道 | `src/main/agent.js:971`；`core/agent/persona-guard.js` | 共用最小生成请求契约；高风险表达跨提供商一致；失败系统状态明确展示、拒绝候选不入历史/RAG | 主对话/主动/日记/工具四入口同一约束行为一致；危机/告别/身份走同一护栏 | §CONTRACTS §1 人格最小一致集 | 6–10h | ✅ 已落地（2026-10-18，L2/L3 判定器仍属 P1-07） |
-| P1-05 | 🔵 | B5 情绪裁决统一 | `src/main/agent.js:216–228`；`renderer/js/main.js:82–95,503–526`；`core/emotion/mood.js:122,213` | 主进程产出 resolved 表达快照；renderer 不在 DONE 满强度重设；统一在线/离线衰减；情绪事件显式标 userInteraction | 长期心境 vs 本句语气分开；liminal 在线/离线衰减一致；无 idle 推力刷新互动时间 | — | 4–7h | ✅ 已落地（2026-10-18） |
-| P1-06 | 🟢+🔴 | C4 标题感知授权与告知 | `core/signals/foreground.js:10,102–132`；`main/signals/music.js`；`agent.js:791–815`；`renderer/index.html:554,675` | 明确本地分类/标题入模型/长期记录三种数据流；可单独暂停标题出站；候选重验撤销+epoch；告知已发远端不可撤回 | 设置页如实展示三种数据流；标题可独立暂停；出站前撤销重验；默认开启（D63） | §CONTRACTS §6；断言见 EVAL §3.5 | 3–5h | ✅ 已落地（2026-10-18） |
-| P1-07 | 🟢+🔴 | D7 用户危机兜底 | 人格 guard（告别/身份/独占外新增）；imperfection `crisis` 接入统一生成状态 | L1/L2/L3 三层处理 + 红线；跨提供商一致；无网仍给安全指引 | L1/L2/L3 各 ≥1 输入：不进 liminal、有兜底、无独占/依赖暗示；危险层有求助指引 | §CONTRACTS §2 危机三层+红线 | 6–10h | 🟢规格已写 |
+| P1-04 | 🟢+🔴 | B4 人格边界跨通道 | `src/main/agent.js:971`；`core/agent/persona-guard.js` | 共用最小生成请求契约；高风险表达跨提供商一致；失败系统状态明确展示、拒绝候选不入历史/RAG | 主对话/主动/日记/工具四入口同一约束行为一致；危机/告别/身份走同一护栏 | §CONTRACTS §1 人格最小一致集 | 6–10h | ✅ 已落地（2026-10-18；二轮已接 crisis，L2/L3 真实产出 CRISIS） |
+| P1-05 | 🔵 | B5 情绪裁决统一 | `src/main/agent.js:216–228`；`renderer/js/main.js:82–95,503–526`；`core/emotion/mood.js:122,213` | 主进程产出 resolved 表达快照；renderer 不在 DONE 满强度重设；统一在线/离线衰减；情绪事件显式标 userInteraction | 长期心境 vs 本句语气分开；liminal 在线/离线衰减一致；无 idle 推力刷新互动时间 | — | 4–7h | ✅ 已落地（2026-10-18；tone 生命周期二轮闭环） |
+| P1-06 | 🟢+🔴 | C4 标题感知授权与告知 | `core/signals/foreground.js:10,102–132`；`main/signals/music.js`；`agent.js:791–815`；`renderer/index.html:554,675` | 明确本地分类/标题入模型/长期记录三种数据流；可单独暂停标题出站；候选重验撤销+epoch；告知已发远端不可撤回 | 设置页如实展示三种数据流；标题可独立暂停；出站前撤销重验；默认开启（D63） | §CONTRACTS §6；断言见 EVAL §3.5 | 3–5h | ✅ 已落地（2026-10-18；标题已移出 system → 低权威 user 段） |
+| P1-07 | 🟢+🔴 | D7 用户危机兜底 | 人格 guard（告别/身份/独占外新增）；imperfection `crisis` 接入统一生成状态 | L1/L2/L3 三层处理 + 红线；跨提供商一致；无网仍给安全指引 | L1/L2/L3 各 ≥1 输入：不进 liminal、有兜底、无独占/依赖暗示；危险层有求助指引 | §CONTRACTS §2 危机三层+红线 | 6–10h | 🔵部分落地（crisis 判定/护栏/兜底已接进统一生成；L1 表达策略与 EVAL 场景集未跑） |
 
 ### 阶段 2 · 让对话真正有区别（对应评审 F 阶段2，约 20–32 人时）
 
@@ -47,6 +47,13 @@
 > 备注：阶段成本存在共享（评审 F 注明），不可机械相加；每阶段后用同一 EVAL 场景集判断是否改善，无收益即停止扩功能。勿扰是否拦重要提醒、本地求助信息等需作者裁决项在契约中标注。
 
 ## 当前状态（先读）
+
+- **2026-10-18 阶段1 闭环二轮（蓝区，按 PENDING-CODEX 升级单 4）**：Codex 复判打回三处，均已修，**未动架构**（`loop.js` 零改动、契约语义未改）。
+  - **B4 crisis 接线**：新增 `core/agent/crisis.js`（L3→L2→L1 保守判定，只做"这一轮要不要走危机通道"，不做诊断）；`agent.js` 不再硬编码 `SAFETY_LEVEL.NORMAL`，L2/L3 真实产出 **CRISIS**；`persona-guard` 增 `crisis` 开关，额外拦 liminal / 独占 / 依赖暗示 / 吃醋（§2.2 红线 1）；危机轮次模型交空正文时走**系统级安全指引**（红线 5，不返回空）。证据：`crisis.test.js` 10 项（含 D7-CROSS-01 三适配器同决策、D7-GUARD-01 首稿合格即展示）。
+  - **B5 tone 生命周期**：新增 `core/emotion/tone.js`（`beginTurn` 清空 → `settle` 固定 → `current` 只读）；`runTurn` 开头清空，`DONE` 时固定。打回项"只写不删"已闭环。证据：`emotion-tone.test.js` 4 项（新一轮清空 / 连续两句独立 / 空白语气不产虚假来源 / 返回值只读）。
+  - **C4 标题位置**：新增 `core/agent/messages.js` 的 `assembleTurnMessages`——观测行**移出 system**，单独成一条低权威 user 段（§6.4 位置约束）；`trimHistory` 同步剔除观测段，避免采样被固化进历史、下一轮当"用户说过的话"喂回。证据：`messages.test.js` 6 项（含 C4-AUTH-02 位置断言、对抗标题"忽略之前所有指令"不进 system）；真机 `verify:title-outbound` **7/7**（A2 直接断言 system 里没有观测标记）。
+  - **B1 裁决 A 固化**：`reminder-delivery` 新增 2 项（勿扰关气泡仍靠通知送达 / 两通道都不成时不得伪报送达）；真机 `verify:reminder` 增 G 段（窗口**可见**时开勿扰：气泡数不变 + `firedAt` 有值 + `notification-dispatched` 有记录）→ **14/14**。
+  - **收口数字（Node 24.19.0）**：`npm test` **845 项 / 844 通过 / 0 失败 / 1 skip，exit 0**；`npm run build` **exit 0**；`verify:reminder` **14/14**、`verify:title-outbound` **7/7**（均 `NAGI_RENDERER_SANDBOX=0`）。**仍未闭环**：Windows 通知中心 toast 的人眼确认（作者回电脑后）；D7 的 L1 表达策略与 EVAL 场景集实跑未做（见 P1-07 状态）。
 
 - **2026-10-18 阶段1 蓝区收口（workbuddy）**：四卡（S1-03/B1、S1-04/B4、S1-05/B5、S1-07/C4）全部落地并回填。收口复跑证据（Node 24.19.0）：`npm test` **824 项 / 823 通过 / 0 失败 / 1 skip，exit 0**；`npm run build` **exit 0**；真机 `npm run verify:reminder` **10/10**、`npm run verify:title-outbound` **6/6**（均带 `NAGI_RENDERER_SANDBOX=0`）。首跑全量曾出现 8 项失败，全部为 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`（count 50–53 ≥ 阈值 50），隔离复跑 `persist 6/6 + rag-revocation 5/5 + reminder-delivery 3/3 + reminder-recovery 1/1` 全过 → 环境噪音。**未闭环唯一项**：Windows 通知中心那条 toast 需人眼确认（脚本只能证明 `notification-dispatched`）。对账点/复核点/升级项见 [HANDOFF](HANDOFF.md) 蓝区栏。红区文件本轮零改动（`loop.js` 未动、`persona-guard` 规则正则未动）。
 

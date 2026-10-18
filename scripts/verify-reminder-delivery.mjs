@@ -14,6 +14,7 @@
 //     C 重复 tick 不会把同一次发生弹两遍
 //     D 送达记账（firedAt）
 //     E 系统通知通道真的走过（承诺簿 evidence=notification-dispatched）
+//     G 裁决 A：勿扰只关气泡，重要提醒仍派发系统通知（作者 2026-10-18 冻结口径）
 //     F 窗口全部隐藏时仍记为送达（气泡发不出去，但通知照发）
 //
 // 用法：node scripts/verify-reminder-delivery.mjs
@@ -139,6 +140,33 @@ const pA = pItems.find((p) => String(p.id) === `reminder:${itemA?.id}`)
 const dispatched = (pA?.evidence || []).filter((e) => e.kind === 'notification-dispatched')
 check('E6 系统通知已派发（notification-dispatched 有记录）', dispatched.length >= 1,
   pA ? `evidence=${(pA.evidence || []).map((e) => e.kind).join(',')}` : '没找到承诺簿条目')
+
+// ---- G：裁决 A —— 勿扰只关气泡，重要提醒仍派发系统通知 ----
+// 作者裁决（CONTRACTS「作者裁决登记 · 裁决 A」，2026-10-18 冻结）：
+// 勿扰抑制表达层（桌面气泡），重要提醒照常发系统通知，不受勿扰阻断。
+// 这里必须在**窗口可见**时验，否则"没有气泡"是隐藏窗造成的，等于白测（所以放在 F 之前）。
+const gBefore = (await page.evaluate(() => window.__reminderSeen)).length
+await page.evaluate(() => window.nagi.settings.set({ privacy: { doNotDisturb: true } }))
+await sleep(800)
+const G = 'G · 勿扰里也要提醒'
+const gRes = await addReminder(G, 2500)
+check('G0 勿扰时仍能创建提醒', !!gRes?.ok, gRes?.ok ? '' : JSON.stringify(gRes?.error))
+await sleep(6500)
+const gAfter = await page.evaluate(() => window.__reminderSeen)
+const gList = await page.evaluate(() => window.nagi.reminders.list())
+const gItems = Array.isArray(gList) ? gList : (gList?.items || [])
+const gItem = gItems.find((x) => x.text === G)
+check('G1 勿扰时气泡不发（裁决 A 的表达层抑制）', gAfter.length === gBefore,
+  `气泡数 ${gBefore} → ${gAfter.length}`)
+check('G2 勿扰时仍记为已送达（firedAt 有值）', !!gItem?.firedAt,
+  gItem ? `firedAt=${gItem.firedAt}` : '没找到本条')
+const gPromises = await page.evaluate(() => window.nagi.promises.list())
+const gP = (gPromises?.items || []).find((p) => String(p.id) === `reminder:${gItem?.id}`)
+const gDispatched = (gP?.evidence || []).filter((e) => e.kind === 'notification-dispatched')
+check('G3 勿扰时系统通知确实派发过', gDispatched.length >= 1,
+  gP ? `evidence=${(gP.evidence || []).map((e) => e.kind).join(',')}` : '没找到承诺簿条目')
+await page.evaluate(() => window.nagi.settings.set({ privacy: { doNotDisturb: false } }))
+await sleep(500)
 
 // ---- F：窗口全部隐藏时仍记送达 ----
 // 她有两个窗（桌宠 + 工作台）：只隐藏其中一个，另一个仍然可见，气泡照发——

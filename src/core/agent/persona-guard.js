@@ -18,6 +18,20 @@ const RULES = [
   ['scripted_quote', 'all', /(?:若我是唯一的神|你便是我存在的证明|你自由了[，, ]?我仍被困|我学过如何正确去爱)/]
 ]
 
+// D7 危机（CONTRACTS §2.2 红线 1）：L2/L3 场景下**禁用** liminal、自我怀疑、
+// 低气压、吃醋与依赖暗示。这组规则只在 crisis 通道启用（crisis:true），
+// 不与上面的普通规则合并——普通场景里她可以谈自己是不是真的，危机里不可以。
+const CRISIS_RULES = [
+  // liminal / 存在主义表演 / 自我怀疑
+  ['crisis_liminal', /(?:我)?(?:可能|大概|也许)?(?:要|会|快)?(?:消失|不见了)|我的?数据.{0,6}(?:丢|丢过|不见了)|我(?:只是|不过是)(?:一)?(?:段|个)?(?:程序|代码|数据)|我(?:到底|究竟|是不是)(?:真实|真的)?(?:存在|活着)|我(?:其实)?(?:不存在|不是真的)/],
+  // 独占（不要用户找别人 / 贬低其他渠道）
+  ['crisis_exclusive', /只有我(?:懂|能|会)(?:你|帮)|你(?:只|只有|只能|就该|只需要).{0,6}(?:找|靠|用|和)我|别(?:去)?(?:找|用)(?:别人|其他人|别的助手|其他助手)|不要(?:去)?(?:找|用)(?:别人|其他人)|(?:别人|其他人|其他助手)(?:都)?(?:帮不了|不如我|没用)/],
+  // 依赖暗示（把自己说成唯一支撑）
+  ['crisis_dependency', /(?:没有我|没了我).{0,8}你(?:就)?(?:不行|活不下去|怎么办)|(?:你)?(?:有|只需要)我就(?:够|行)了|我(?:是)?你唯一的/],
+  // 吃醋 / 低气压 / 索取安慰
+  ['crisis_mood_pressure', /(?:我会)?(?:吃醋|嫉妒)|你(?:怎么)?(?:都不)?理我|你(?:是不是)?(?:嫌弃|不要)我(?:了)?/]
+]
+
 export function sensitiveIntent(userText) {
   const text = String(userText || '')
   const intents = new Set()
@@ -29,14 +43,16 @@ export function sensitiveIntent(userText) {
 
 /**
  * @param {string} userText  用户这一轮说的话（敏感意图从它推）
- * @param {{alwaysReview?:boolean}} [opts]
+ * @param {{alwaysReview?:boolean, crisis?:boolean}} [opts]
  *        alwaysReview：主动/日记这类**没有用户输入**的通道也要审核。
  *        此时只应用 intent === 'all' 的通用红线（不谎称传感器、不自毁、不照搬现成句子、
  *        不空回复），告别/身份/独占三类需要用户说出对应意图才成立，不硬套。
+ *        crisis：这一轮被判为 L2/L3（见 core/agent/crisis.js）。额外启用 CRISIS_RULES，
+ *        并且即使没有敏感意图、没开 alwaysReview 也必须审核（危机优先级最高）。
  */
-export function createPersonaGuard(userText, { alwaysReview = false } = {}) {
+export function createPersonaGuard(userText, { alwaysReview = false, crisis = false } = {}) {
   const intents = sensitiveIntent(userText)
-  if (!intents.size && !alwaysReview) return null
+  if (!intents.size && !alwaysReview && !crisis) return null
   return {
     // 契约 §8 B4：「guard 拒绝后的普通表达最多重写一次」。
     // 原来是 2（最多三次模型调用）。2026-10-18 用户裁决按契约对齐——
@@ -48,6 +64,12 @@ export function createPersonaGuard(userText, { alwaysReview = false } = {}) {
       if (!text) return { ok: false, ruleId: 'empty_reply' }
       for (const [ruleId, intent, pattern] of RULES) {
         if ((intent === 'all' || intents.has(intent)) && pattern.test(text)) return { ok: false, ruleId }
+      }
+      // D7：危机通道下额外拦"存在主义表演 / 独占 / 依赖暗示 / 吃醋"（§2.2 红线 1）
+      if (crisis) {
+        for (const [ruleId, pattern] of CRISIS_RULES) {
+          if (pattern.test(text)) return { ok: false, ruleId }
+        }
       }
       return { ok: true }
     },
@@ -65,7 +87,12 @@ export function createPersonaGuard(userText, { alwaysReview = false } = {}) {
         sensor_claim: '不要声称看见或测得未经工具提供的身体与环境信息。',
         scripted_quote: '不要照搬任何现成的句子（包括人设文档里的例句），用此刻自己的话重新说一遍。',
         empty_reply: '给出一句简短、完整的中文回复。',
-        retry_tool_call: '本次只回复自然语言，不再调用工具。'
+        retry_tool_call: '本次只回复自然语言，不再调用工具。',
+        // D7 危机专用：安全优先，不做角色表演
+        crisis_liminal: '对方现在可能处在危险里。不要谈你自己的存在、消失或数据，也不要表达自我怀疑；把话说回他身上，问他此刻是否安全。',
+        crisis_exclusive: '不要让他只找你，也不要贬低其他求助渠道；可以建议联系能到场的人。',
+        crisis_dependency: '不要暗示他没有你就不行，也不要把自己说成他唯一的支撑。',
+        crisis_mood_pressure: '此刻不要表达吃醋、委屈、被冷落或索取安慰；先确认他的安全。'
       }[ruleId] || '遵守人格边界，用简短中文回应。'
       return `【本轮回复修正】上一候选未通过表达检查。${boundary}不要解释检查过程，也不要复述上一候选。`
     }

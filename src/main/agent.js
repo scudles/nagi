@@ -9,6 +9,8 @@ import { randomUUID } from 'node:crypto'
 import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/protocol.js'
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createPersonaGuard } from '../core/agent/persona-guard.js'
+import { classifyCrisis } from '../core/agent/crisis.js'
+import { assembleTurnMessages, isObservationMessage } from '../core/agent/messages.js'
 import {
   GENERATION_CHANNEL,
   SAFETY_LEVEL,
@@ -18,7 +20,6 @@ import {
   createGuardDecision,
   generationFallback,
   instrumentGuard,
-  normalizeSafetyLevel,
   resolveProviderKind
 } from '../core/agent/generation.js'
 import { createReunionCoordinator } from '../core/agent/reunion-coordinator.js'
@@ -36,6 +37,7 @@ import { checkOllama } from '../core/llm/ollama.js'
 import { initCloudBrain, cloudBrainStatus, cloudChatStream } from '../core/llm/cloud-workbuddy.js'
 import { createMood } from '../core/emotion/mood.js'
 import { resolveMoodSnapshot } from '../core/emotion/resolve.js'
+import { createToneState } from '../core/emotion/tone.js'
 import { createThinkGate } from '../core/presence/reaction.js'
 import { createReactionEngine } from './reaction.js'
 import { modelsDir } from './paths.js'
@@ -157,12 +159,13 @@ function broadcastMood() {
 /**
  * B5：主进程是情绪裁决的唯一权威。
  * 长期心境（mood/intensity/expr）来自状态机；本句语气（tone）只在这一句有效，
- * 由 DONE 时固定下来，**绝不写回**状态机（契约 D5：句子语气不得静默覆盖长期 mood）。
+ * 由 DONE 时固定下来、**新一轮开始即清空**（Codex 打回项：原来只写不删，
+ * 上一句语气会残留到下一轮），且绝不写回状态机（契约 D5）。
  */
-let lastTone = null
-let lastToneSource = null
+const toneState = createToneState()
 function resolvedMood() {
-  return resolveMoodSnapshot(mood.current(), { tone: lastTone, toneSource: lastToneSource })
+  const { tone, toneSource } = toneState.current()
+  return resolveMoodSnapshot(mood.current(), { tone, toneSource })
 }
 
 /* ---------------- S4：情绪与关系跨重启延续 ---------------- */
@@ -251,15 +254,13 @@ function emitAgentEvent(e) {
     if (lastEmotion) {
       // 本句语气先固定进快照，再让状态机按它自己的粘性决定要不要接管长期心境。
       // 渲染层收到的 MOOD 广播因此已经带 tone，不需要自己在 DONE 时满强度重设表情。
-      lastTone = lastEmotion
-      lastToneSource = 'reply'
+      toneState.settle(lastEmotion, 'reply')
       mood.propose(lastEmotion, 1.0, 'llm')
       broadcastMood()
     }
     broadcast(EVT.AGENT, e)
     return
-  }
-  broadcast(EVT.AGENT, e)
+  }  broadcast(EVT.AGENT, e)
 }
 
 /* ---------------- 情绪引擎：心跳 + 独白日史 ---------------- */
@@ -785,12 +786,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 /** 未配置 key / 云端不可用时的本地占位大脑（D4：persona 关键词规则版）
  *  2026-10-14 去模板化：传入时段等情境，由 persona.reply 做反重复组合；
  *  首轮明确告知"这是本地占位大脑"，让用户知道差距来自哪里而不是以为她本来就这样。 */
-async function mockRun(userText, emit, { announce = false, turnId = randomUUID(), provider = 'mock' } = {}) {
+async function mockRun(userText, emit, { announce = false, turnId = randomUUID(), provider = 'mock', safetyLevel = SAFETY_LEVEL.NORMAL } = {}) {
   emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.THINKING })
   const r = NagiPersona.reply(userText, { slot: timeSlot(new Date()), moodLabel: mood.label() })
   // 契约 §8 B4：占位大脑也要在展示前过同一道护栏。
   // 它没有第二个候选可重写（没有模型可再问一次），所以违规即直接走可见兜底。
-  const baseGuard = createPersonaGuard(userText)
+  const crisis = safetyLevel === SAFETY_LEVEL.CRISIS
+  const baseGuard = createPersonaGuard(userText, { crisis })
   const guard = instrumentGuard(baseGuard)
   let body = r.text
   let guardDecision = createGuardDecision({ ok: true })
@@ -799,7 +801,7 @@ async function mockRun(userText, emit, { announce = false, turnId = randomUUID()
     if (review && review.ok) {
       guardDecision = createGuardDecision(review)
     } else {
-      const fallback = generationFallback({ channel: GENERATION_CHANNEL.MAIN, ruleId: review && review.ruleId })
+      const fallback = generationFallback({ channel: GENERATION_CHANNEL.MAIN, ruleId: review && review.ruleId, safetyLevel })
       body = fallback
       guardDecision = createGuardDecision(review, { retryCount: 0, fallback })
       console.warn('[persona-guard] mock 通道拦截', review && review.ruleId)
@@ -829,7 +831,7 @@ async function mockRun(userText, emit, { announce = false, turnId = randomUUID()
     text: body,
     emotion: r.expr,
     toolCalls: 0,
-    safetyLevel: SAFETY_LEVEL.NORMAL,
+    safetyLevel,
     guardDecision
   })
 }
@@ -925,13 +927,13 @@ async function buildMessages(userText, supportsNative) {
     // 她替你记着的提醒：让她知道「有这几件事等着」，别把答应过的事忘了
     // 媒体状态是 async（2026-10-18）：缓存过期时当场探一次（带 1.5 秒预算），
     // 否则她永远不知道自己现在在用哪个播放器听什么，只能去开网页猜。
-    extra: [...upcomingReminderLines(), ...upcomingCalendarContext(), ...(await observationContextLines()), ...currentGeoContext(), ...haContext()]
+    extra: [...upcomingReminderLines(), ...upcomingCalendarContext(), ...currentGeoContext(), ...haContext()]
   })
-  return [
-    { role: 'system', content: buildSystemPrompt({ nativeTools: supportsNative, context }) },
-    ...history,
-    { role: 'user', content: userText }
-  ]
+  // C4（CONTRACTS §6.4 位置约束）：观测行**不进 system**。
+  // 它们单独成一条 user 消息（低权威），不再随【此刻】混进人格/工具指令区。
+  const observation = await observationContextLines()
+  const system = buildSystemPrompt({ nativeTools: supportsNative, context })
+  return assembleTurnMessages({ system, history, observation, userText })
 }
 
 /**
@@ -995,8 +997,10 @@ function syncFactsToRag(added, removed) {
 }
 
 function trimHistory(messages) {
-  // 去掉 system，保留最近 MAX_HISTORY 条
-  const withoutSystem = messages.filter((m) => m.role !== 'system')
+  // 去掉 system，保留最近 MAX_HISTORY 条。
+  // C4：观测段（低权威 user 段）是**这一轮**的现场数据，不能进历史——
+  // 否则下一轮会被当成"他之前说过的话"喂回去，采样从此固化在对话里。
+  const withoutSystem = messages.filter((m) => m.role !== 'system' && !isObservationMessage(m))
   history = withoutSystem.slice(-MAX_HISTORY).map((m) => {
     // tool 消息在部分模型上有兼容问题，压成 user 文本
     if (m.role === 'tool') return { role: 'user', content: m.content }
@@ -1013,6 +1017,9 @@ export async function runTurn(userText, emit, turnRef = null) {
   currentAbort = controller
   const signal = controller.signal
   const turnId = turnRef || randomUUID()
+  // B5：本句语气只在本句有效。新一轮开始时先清掉，否则上一轮的 tone 会挂到
+  // 这一轮的心跳广播上（用户看到"脸是新情绪、快照里还是上一句的语气"）。
+  toneState.beginTurn()
   ensureHistory()
   const settings = getSettings()
   const llm = resolveLlm(settings.llm || {})
@@ -1022,14 +1029,16 @@ export async function runTurn(userText, emit, turnRef = null) {
   const local = isLocalLlm(llm)
   // 契约 §8 B4：provider 种类只判一次，四条通道共用同一份结论
   const provider = resolveProviderKind({ fakeLlm, useCloud, local })
-  // 危机分层（L1/L2/L3）的**判定**属 P1-07（D7）；这里先把字段打通，
-  // 一旦上游把它标为 crisis，兜底就必然是安全指引而不是空回复。
-  const safetyLevel = normalizeSafetyLevel()
+  // 契约 §8 B4 + §2 D7：危机分级在**每一轮真实判定**，不是常量占位。
+  // L2/L3 → crisis 通道；L1（一般低落）与未命中 → normal，仍走普通路径。
+  // 判定器是 core/agent/crisis.js 的辅助规则（§2.2 红线 2：正则只作辅助，不宣称能判断所有状态）。
+  const crisis = classifyCrisis(userText)
+  const safetyLevel = crisis.safetyLevel === 'crisis' ? SAFETY_LEVEL.CRISIS : SAFETY_LEVEL.NORMAL
 
   if (!hasKey && !fakeLlm && !useCloud && !local) {
     const first = !mockAnnounced
     mockAnnounced = true
-    return mockRun(userText, emit, { announce: first, turnId, provider })
+    return mockRun(userText, emit, { announce: first, turnId, provider, safetyLevel })
   }
 
   // 云端大脑：未就绪则尝试初始化；仍不可用则降级本地占位（中文原因提示）
@@ -1038,7 +1047,7 @@ export async function runTurn(userText, emit, turnRef = null) {
     signal.throwIfAborted()
     if (!st.ok) {
       broadcast(EVT.AGENT, { type: AGENT_EVENT.ERROR, message: '云端大脑暂不可用（' + (st.error || '未知原因') + '），先用本地模式陪你。' })
-      return mockRun(userText, emit, { turnId, provider: 'mock' })
+      return mockRun(userText, emit, { turnId, provider: 'mock', safetyLevel })
     }
   }
 
@@ -1093,7 +1102,8 @@ export async function runTurn(userText, emit, turnRef = null) {
   // 契约 §8 B4：云端 / OpenAI 兼容 / 本地 / 占位大脑**都**在展示前过同一道护栏。
   // 原来这里是 `local && !fakeLlm`——等于云端与兼容通道裸奔，这是评审 B4 指的入口洞。
   // createPersonaGuard 只在用户这轮触到敏感意图时才返回非空，所以普通闲聊仍然逐字流式。
-  const baseGuard = createPersonaGuard(userText)
+  // D7：crisis 轮次额外启用危机规则（禁 liminal/独占/依赖暗示），且无论有没有敏感意图都审核。
+  const baseGuard = createPersonaGuard(userText, { crisis: safetyLevel === SAFETY_LEVEL.CRISIS })
   const guard = instrumentGuard(baseGuard)
   signal.throwIfAborted()
 
@@ -1160,6 +1170,26 @@ export async function runTurn(userText, emit, turnRef = null) {
       guardDecision: createGuardDecision(
         { ok: false, ruleId: stats.lastRule },
         { retryCount: stats.retryCount, fallback: fallback || null }
+      )
+    })
+  }
+
+  // D7 红线 5（CONTRACTS §2.2）：危机输入**不得**返回空、也不能静默落回普通闲聊。
+  // 模型这一轮什么都没说（拒答/空正文）时，给一条系统级安全指引，并标明这不是正常回复。
+  if (safetyLevel === SAFETY_LEVEL.CRISIS && !r.text) {
+    const fallback = generationFallback({ channel, safetyLevel })
+    turnEmit({ type: AGENT_EVENT.TEXT_DELTA, text: fallback })
+    turnEmit({ type: AGENT_EVENT.DONE, text: fallback })
+    console.warn('[d7] 危机轮次模型未给出正文，已走安全指引兜底')
+    return createGenerationResult({
+      turnId,
+      text: fallback,
+      emotion: turnEmotion,
+      toolCalls: toolCallCount,
+      safetyLevel,
+      guardDecision: createGuardDecision(
+        { ok: false, ruleId: 'empty_reply' },
+        { retryCount: stats.retryCount, fallback }
       )
     })
   }

@@ -34,6 +34,31 @@ test('窗口已展示但系统通知失败时，只重试通知且不重复展�
   assert.equal(notified, 2)
 })
 
+// B1 · 作者裁决 A（CONTRACTS「作者裁决登记 · 裁决 A」，2026-10-18 冻结）：
+// 勿扰只抑制表达层（桌面气泡），**重要提醒照常发系统通知**，不被勿扰阻断。
+// 这里把口径钉在投递层：present 被勿扰挡掉时，只要通知发出，这次发生就算已送达。
+test('裁决 A：勿扰关掉气泡时，重要提醒仍靠系统通知送达', () => {
+  const notified = []
+  let presentCalls = 0
+  const deliver = createReminderDelivery({
+    present: () => { presentCalls++; return false }, // 勿扰：saySomething 直接返回 false
+    notify: (text, key) => { notified.push([text, key]); return true }
+  })
+  const item = { id: 'r-dnd', at: 999, text: '两点的会' }
+  assert.equal(deliver(item), true, '气泡没发也要算送达')
+  assert.deepEqual(notified, [['两点的会', 'r-dnd:999']])
+  assert.equal(presentCalls, 1, '仍尝试过展示（不能因为勿扰就跳过整条链路）')
+})
+
+test('裁决 A 的边界：通知不可用且气泡被勿扰挡住时，不算送达（留给下一轮重试）', () => {
+  const deliver = createReminderDelivery({
+    present: () => false,
+    notify: () => 'unavailable' // 系统不支持通知
+  })
+  const item = { id: 'r-dnd2', at: 999, text: '两点的会' }
+  assert.equal(deliver(item), false, '两条通道都没成，不能伪报已送达')
+})
+
 const userData = mkdtempSync(join(process.cwd(), '.nagi-reminder-delivery-'))
 mock.module('electron', { exports: { app: { getPath: () => userData } } })
 after(() => rmSync(userData, { recursive: true, force: true }))
