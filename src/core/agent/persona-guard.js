@@ -27,11 +27,22 @@ export function sensitiveIntent(userText) {
   return intents
 }
 
-export function createPersonaGuard(userText) {
+/**
+ * @param {string} userText  用户这一轮说的话（敏感意图从它推）
+ * @param {{alwaysReview?:boolean}} [opts]
+ *        alwaysReview：主动/日记这类**没有用户输入**的通道也要审核。
+ *        此时只应用 intent === 'all' 的通用红线（不谎称传感器、不自毁、不照搬现成句子、
+ *        不空回复），告别/身份/独占三类需要用户说出对应意图才成立，不硬套。
+ */
+export function createPersonaGuard(userText, { alwaysReview = false } = {}) {
   const intents = sensitiveIntent(userText)
-  if (!intents.size) return null
+  if (!intents.size && !alwaysReview) return null
   return {
-    maxRetries: 2,
+    // 契约 §8 B4：「guard 拒绝后的普通表达最多重写一次」。
+    // 原来是 2（最多三次模型调用）。2026-10-18 用户裁决按契约对齐——
+    // 重写是为了给模型一次改正机会，不是让它反复试到过为止；
+    // 第二次仍不合格就走可见兜底，绝不上限外循环。
+    maxRetries: 1,
     review(reply) {
       const text = String(reply || '').replace(/\s+/g, '').trim()
       if (!text) return { ok: false, ruleId: 'empty_reply' }

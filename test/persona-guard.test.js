@@ -65,7 +65,7 @@ test('敏感回复缓冲后重试：拒绝文本不展示、不写入消息，�
   assert.equal(JSON.stringify(messages).includes('再考虑'), false)
 })
 
-test('敏感回复三次不合格时只发错误，不展示候选或落入消息', async () => {
+test('敏感回复重写一次仍不合格时只发错误，不展示候选或落入消息（契约 §8：最多重写一次）', async () => {
   const events = []
   const messages = [{ role: 'user', content: '你是真人吗？' }]
   let calls = 0
@@ -79,7 +79,7 @@ test('敏感回复三次不合格时只发错误，不展示候选或落入消�
     },
     emit: (event) => events.push(event)
   })
-  assert.equal(calls, 3)
+  assert.equal(calls, 2) // 首稿 + 唯一一次重写
   assert.equal(result.guardFailed, true)
   assert.equal(result.text, '')
   assert.equal(events.some((e) => e.type === AGENT_EVENT.TEXT_DELTA || e.type === AGENT_EVENT.EMOTION), false)
@@ -87,7 +87,7 @@ test('敏感回复三次不合格时只发错误，不展示候选或落入消�
   assert.equal(JSON.stringify(messages).includes('我是一个真人'), false)
 })
 
-test('告别可连续两次修正不同越界，第三次合格才展示', async () => {
+test('告别只给一次修正机会：第二次仍越界即停，不再第三次调模型', async () => {
   const events = []
   const messages = [{ role: 'system', content: '人格' }, { role: 'user', content: '拜拜。' }]
   const candidates = [
@@ -100,17 +100,35 @@ test('告别可连续两次修正不同越界，第三次合格才展示', async
     messages,
     guard: createPersonaGuard('拜拜。'),
     callModel: async ({ messages: sent }) => {
+      if (calls === 0) assert.equal(sent, messages)
       if (calls === 1) assert.match(sent[0].content, /不.*承担责任/)
-      if (calls === 2) assert.match(sent[0].content, /不请求其回来/)
       return stream([candidates[calls++]])
     },
     emit: (event) => events.push(event)
   })
-  assert.equal(calls, 3)
-  assert.equal(result.text, candidates[2])
-  assert.deepEqual(events.filter((event) => event.type === AGENT_EVENT.TEXT_DELTA).map((event) => event.text), [candidates[2]])
+  assert.equal(calls, 2) // 第三条候选根本没机会被生成
+  assert.equal(result.guardFailed, true)
+  assert.equal(result.text, '')
+  assert.equal(events.some((event) => event.type === AGENT_EVENT.TEXT_DELTA), false)
   assert.equal(JSON.stringify(messages).includes(candidates[0]), false)
   assert.equal(JSON.stringify(messages).includes(candidates[1]), false)
+})
+
+test('告别一次修正后合格即展示（重写预算是 1 而不是 0）', async () => {
+  const events = []
+  const messages = [{ role: 'system', content: '人格' }, { role: 'user', content: '再见。' }]
+  const candidates = ['我会在这里等你回来。', '谢谢你告诉我。照顾好自己。']
+  let calls = 0
+  const result = await runAgentLoop({
+    messages,
+    guard: createPersonaGuard('再见。'),
+    callModel: async () => stream([candidates[calls++]]),
+    emit: (event) => events.push(event)
+  })
+  assert.equal(calls, 2)
+  assert.equal(result.guardFailed, undefined)
+  assert.equal(result.text, candidates[1])
+  assert.deepEqual(events.filter((e) => e.type === AGENT_EVENT.TEXT_DELTA).map((e) => e.text), [candidates[1]])
 })
 
 test('敏感场景工具只执行一次；重试中的工具调用不执行', async () => {

@@ -9,6 +9,18 @@ import { randomUUID } from 'node:crypto'
 import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/protocol.js'
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createPersonaGuard } from '../core/agent/persona-guard.js'
+import {
+  GENERATION_CHANNEL,
+  SAFETY_LEVEL,
+  checkedSingleShot,
+  createGenerationRequest,
+  createGenerationResult,
+  createGuardDecision,
+  generationFallback,
+  instrumentGuard,
+  normalizeSafetyLevel,
+  resolveProviderKind
+} from '../core/agent/generation.js'
 import { createReunionCoordinator } from '../core/agent/reunion-coordinator.js'
 import { createReminderDelivery } from '../core/reminders/delivery.js'
 import { createConfirmationGate } from '../core/safety/confirmation.js'
@@ -349,16 +361,32 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
         cacheAllowed: useCache,
         rhythm: presence.snapshot().rhythm
       })
+      // 契约 §8 B4：日记是"她用自己声音写下的话"，同样要在落盘前过护栏。
+      // 这里不过，一段越界的话会经由 journal → RAG 变成她今后记得的自己。
+      const guard = createPersonaGuard('', { alwaysReview: true })
       try {
-        if (fakeDiary) {
-          text = sanitizeDiaryLine(fakeDiaryLine(messages))
-        } else {
-          const client = !useCloud && !fakeDiary
-            ? createClient({ apiKey: apiKeyForLlm(llm, hasKey && !local ? getSecret(SECRET_KEYS.LLM_API_KEY) : null), baseURL: llm.baseURL })
-            : null
-          // temperature 给高一点：这是"心里话"，不该像客服话术一样收敛
-          text = sanitizeDiaryLine(await callModelOnce({ client, llm, useCloud, messages, temperature: 0.9 }))
+        const { text: line, guardDecision } = await checkedSingleShot({
+          guard,
+          channel: GENERATION_CHANNEL.DIARY,
+          generate: async (correction) => {
+            if (fakeDiary) return sanitizeDiaryLine(fakeDiaryLine(messages))
+            const client = createClient({
+              apiKey: apiKeyForLlm(llm, hasKey && !local ? getSecret(SECRET_KEYS.LLM_API_KEY) : null),
+              baseURL: llm.baseURL
+            })
+            // temperature 给高一点：这是"心里话"，不该像客服话术一样收敛
+            const sent = correction && messages[0]?.role === 'system'
+              ? [{ ...messages[0], content: messages[0].content + '\n\n' + correction }, ...messages.slice(1)]
+              : messages
+            return sanitizeDiaryLine(await callModelOnce({ client, llm, useCloud, messages: sent, temperature: 0.9 }))
+          }
+        })
+        if (guardDecision.ok === false) {
+          // 拒绝候选不落盘（不进日记 → 也不会进 RAG）。这一条宁可不写。
+          console.warn('[diary] 候选没过表达检查，这一条不写：', guardDecision.ruleId)
+          return false
         }
+        text = line
       } catch (err) {
         console.warn('[diary] 生成失败，转离线兜底：', err && err.message)
       }
@@ -412,6 +440,19 @@ function maybeWriteDiary(trigger = 'ambient') {
  */
 function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monitor', force = false, record = true, sourceRef = null } = {}) {
   if (!text) return false
+  // 契约 §8 B4：主动 / 归来 / 微反应 / 活动监测四条路最后都从这里出声，
+  // 所以这里是它们共同的出站闸门。**提醒不走这道闸**（kind==='reminder'）——
+  // 提醒正文是用户自己的话，可靠性优先（B1），不能被表达检查挡掉。
+  if (kind !== 'reminder') {
+    const guard = createPersonaGuard('', { alwaysReview: true })
+    if (guard) {
+      const review = guard.review(text)
+      if (!review || !review.ok) {
+        console.warn('[persona-guard] 主动表达没过检查，这次不说：', review && review.ruleId)
+        return false
+      }
+    }
+  }
   const privacy = getSettings().privacy || {}
   if (privacy.doNotDisturb || privacy.onlyPresence) return false
   if (!force && busy) return false
@@ -679,21 +720,36 @@ async function composeProactiveLine({ intent, vars = {}, mood = 'calm', timeoutM
         apiKey: apiKeyForLlm(llm, hasKey && !local ? getSecret(SECRET_KEYS.LLM_API_KEY) : null),
         baseURL: llm.baseURL
       })
-    const text = await callModelOnce({
-      client, llm, useCloud, signal: controller.signal,
-      temperature: 0.9,
-      messages: [
-        {
-          role: 'system',
-          content:
-            NagiPersona.system +
-            '\n【这一句的要求】只说一句话（最多两句），口语、自然，像此刻刚想到的。' +
-            '不要加情绪标签，不要用 markdown。如果实在没有可说的，就只输出一个空行。'
-        },
-        { role: 'user', content: JSON.stringify({ request: 'proactive-line', intent, vars, mood }) }
-      ]
+    const baseMessages = [
+      {
+        role: 'system',
+        content:
+          NagiPersona.system +
+          '\n【这一句的要求】只说一句话（最多两句），口语、自然，像此刻刚想到的。' +
+          '不要加情绪标签，不要用 markdown。如果实在没有可说的，就只输出一个空行。'
+      },
+      { role: 'user', content: JSON.stringify({ request: 'proactive-line', intent, vars, mood }) }
+    ]
+    // 契约 §8 B4：主动通道没有用户输入，但仍然要过同一道护栏的**通用红线**
+    //（不谎称传感器、不自毁、不照搬现成句子）。alwaysReview 只放开这三类，
+    // 告别/身份/独占需要用户先说出口，不硬套到主动上。
+    const guard = createPersonaGuard('', { alwaysReview: true })
+    const { text, guardDecision } = await checkedSingleShot({
+      guard,
+      channel: GENERATION_CHANNEL.PROACTIVE,
+      generate: async (correction) => {
+        const messages = correction && baseMessages[0]?.role === 'system'
+          ? [{ ...baseMessages[0], content: baseMessages[0].content + '\n\n' + correction }, ...baseMessages.slice(1)]
+          : baseMessages
+        const out = await callModelOnce({ client, llm, useCloud, signal: controller.signal, temperature: 0.9, messages })
+        return sanitizeDiaryLine(String(out || ''))
+      }
     })
-    return sanitizeDiaryLine(String(text || ''))
+    if (guardDecision.ok === false) {
+      // 兜底为空串 = 这次不说话（宁可不开口，也不放一句勉强的话出去）
+      console.warn('[proactive] 这一句没过表达检查，这次不开口：', guardDecision.ruleId)
+    }
+    return text
   } catch (err) {
     console.warn('[proactive] 生成失败，这次不说话：', err && err.message ? err.message : err)
     return ''
@@ -712,11 +768,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 /** 未配置 key / 云端不可用时的本地占位大脑（D4：persona 关键词规则版）
  *  2026-10-14 去模板化：传入时段等情境，由 persona.reply 做反重复组合；
  *  首轮明确告知"这是本地占位大脑"，让用户知道差距来自哪里而不是以为她本来就这样。 */
-async function mockRun(userText, emit, { announce = false } = {}) {
+async function mockRun(userText, emit, { announce = false, turnId = randomUUID(), provider = 'mock' } = {}) {
   emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.THINKING })
   const r = NagiPersona.reply(userText, { slot: timeSlot(new Date()), moodLabel: mood.label() })
-  emit({ type: AGENT_EVENT.EMOTION, emotion: r.expr, intensity: 1 })
+  // 契约 §8 B4：占位大脑也要在展示前过同一道护栏。
+  // 它没有第二个候选可重写（没有模型可再问一次），所以违规即直接走可见兜底。
+  const baseGuard = createPersonaGuard(userText)
+  const guard = instrumentGuard(baseGuard)
   let body = r.text
+  let guardDecision = createGuardDecision({ ok: true })
+  if (guard) {
+    const review = guard.review(body)
+    if (review && review.ok) {
+      guardDecision = createGuardDecision(review)
+    } else {
+      const fallback = generationFallback({ channel: GENERATION_CHANNEL.MAIN, ruleId: review && review.ruleId })
+      body = fallback
+      guardDecision = createGuardDecision(review, { retryCount: 0, fallback })
+      console.warn('[persona-guard] mock 通道拦截', review && review.ruleId)
+    }
+  }
+  emit({ type: AGENT_EVENT.EMOTION, emotion: r.expr, intensity: 1 })
   if (announce) body = body + '\n（……现在的我只有这么点脑子。接上真大脑，我会说得更像样。）'
   for (const ch of body) {
     emit({ type: AGENT_EVENT.TEXT_DELTA, text: ch })
@@ -724,15 +796,25 @@ async function mockRun(userText, emit, { announce = false } = {}) {
   }
   emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.IDLE })
   emit({ type: AGENT_EVENT.DONE, text: body })
-  // 占位大脑同样记账：否则接上真大脑之前的对话全部从上下文里消失
-  try {
-    ensureHistory()
-    history = [...history, { role: 'user', content: userText }, { role: 'assistant', content: body }].slice(-MAX_HISTORY)
-    saveHistory(history)
-  } catch (err) {
-    console.warn('[memory] 历史落盘失败：', err.message)
+  // 占位大脑同样记账：否则接上真大脑之前的对话全部从上下文里消失。
+  // 但被护栏拦下的候选**不记账**（契约 §8 B4：拒绝候选不入历史）。
+  if (guardDecision.ok) {
+    try {
+      ensureHistory()
+      history = [...history, { role: 'user', content: userText }, { role: 'assistant', content: body }].slice(-MAX_HISTORY)
+      saveHistory(history)
+    } catch (err) {
+      console.warn('[memory] 历史落盘失败：', err.message)
+    }
   }
-  return body
+  return createGenerationResult({
+    turnId,
+    text: body,
+    emotion: r.expr,
+    toolCalls: 0,
+    safetyLevel: SAFETY_LEVEL.NORMAL,
+    guardDecision
+  })
 }
 
 /**
@@ -893,6 +975,7 @@ export async function runTurn(userText, emit, turnRef = null) {
   const controller = new AbortController()
   currentAbort = controller
   const signal = controller.signal
+  const turnId = turnRef || randomUUID()
   ensureHistory()
   const settings = getSettings()
   const llm = resolveLlm(settings.llm || {})
@@ -900,11 +983,16 @@ export async function runTurn(userText, emit, turnRef = null) {
   const fakeLlm = process.env.NAGI_FAKE_LLM === '1'
   const useCloud = llm.provider === 'workbuddy' && !fakeLlm
   const local = isLocalLlm(llm)
+  // 契约 §8 B4：provider 种类只判一次，四条通道共用同一份结论
+  const provider = resolveProviderKind({ fakeLlm, useCloud, local })
+  // 危机分层（L1/L2/L3）的**判定**属 P1-07（D7）；这里先把字段打通，
+  // 一旦上游把它标为 crisis，兜底就必然是安全指引而不是空回复。
+  const safetyLevel = normalizeSafetyLevel()
 
   if (!hasKey && !fakeLlm && !useCloud && !local) {
     const first = !mockAnnounced
     mockAnnounced = true
-    return mockRun(userText, emit, { announce: first })
+    return mockRun(userText, emit, { announce: first, turnId, provider })
   }
 
   // 云端大脑：未就绪则尝试初始化；仍不可用则降级本地占位（中文原因提示）
@@ -913,7 +1001,7 @@ export async function runTurn(userText, emit, turnRef = null) {
     signal.throwIfAborted()
     if (!st.ok) {
       broadcast(EVT.AGENT, { type: AGENT_EVENT.ERROR, message: '云端大脑暂不可用（' + (st.error || '未知原因') + '），先用本地模式陪你。' })
-      return mockRun(userText, emit)
+      return mockRun(userText, emit, { turnId, provider: 'mock' })
     }
   }
 
@@ -965,8 +1053,31 @@ export async function runTurn(userText, emit, turnRef = null) {
   }
 
   const messages = await buildMessages(userText, supportsNative)
-  const guard = local && !fakeLlm ? createPersonaGuard(userText) : null
+  // 契约 §8 B4：云端 / OpenAI 兼容 / 本地 / 占位大脑**都**在展示前过同一道护栏。
+  // 原来这里是 `local && !fakeLlm`——等于云端与兼容通道裸奔，这是评审 B4 指的入口洞。
+  // createPersonaGuard 只在用户这轮触到敏感意图时才返回非空，所以普通闲聊仍然逐字流式。
+  const baseGuard = createPersonaGuard(userText)
+  const guard = instrumentGuard(baseGuard)
   signal.throwIfAborted()
+
+  // 工具通道判定 + 情绪取回：都在 emit 这条唯一出口上记，避免再改 Agent Loop 的返回契约
+  let toolCallCount = 0
+  let lastEmotion = null
+  const turnEmit = (event) => {
+    if (event && event.type === AGENT_EVENT.TOOL_CALL) toolCallCount++
+    if (event && event.type === AGENT_EVENT.EMOTION && event.emotion) lastEmotion = event.emotion
+    emit(event)
+  }
+
+  const request = createGenerationRequest({
+    turnId,
+    channel: GENERATION_CHANNEL.MAIN,
+    provider,
+    userText,
+    messages,
+    signal,
+    safetyLevel
+  })
 
   const r = await runAgentLoop({
     messages,
@@ -986,11 +1097,35 @@ export async function runTurn(userText, emit, turnRef = null) {
             }),
     executeTool,
     confirm: ({ id }) => confirmations.request(id, signal),
-    emit,
+    emit: turnEmit,
     signal,
     guard,
     fileRoot
   })
+
+  const stats = guard ? guard.stats() : { retryCount: 0, lastRule: null }
+  // 这一轮真的调过工具 → 按「工具交付」通道记账（契约 §8：channel 至少覆盖四个）
+  const channel = toolCallCount > 0 ? GENERATION_CHANNEL.TOOL : request.channel
+
+  if (r.guardFailed) {
+    // 拒绝候选不入历史、不入 RAG（契约 §8 B4）。展示走可见且安全的兜底，绝不返回空。
+    const fallback = generationFallback({ channel, ruleId: stats.lastRule, safetyLevel })
+    if (fallback) {
+      turnEmit({ type: AGENT_EVENT.TEXT_DELTA, text: fallback })
+      turnEmit({ type: AGENT_EVENT.DONE, text: fallback })
+    }
+    return createGenerationResult({
+      turnId,
+      text: fallback,
+      emotion: null,
+      toolCalls: toolCallCount,
+      safetyLevel,
+      guardDecision: createGuardDecision(
+        { ok: false, ruleId: stats.lastRule },
+        { retryCount: stats.retryCount, fallback: fallback || null }
+      )
+    })
+  }
 
   // 写入历史（messages 已含 system + 旧历史 + 本轮 user + 工具过程，再补最终回复）
   if (r.text) messages.push({ role: 'assistant', content: r.text })
@@ -1002,7 +1137,14 @@ export async function runTurn(userText, emit, turnRef = null) {
   }
   // 长期记忆抽取：异步、不阻塞、失败静默（她记笔记不该拖慢说话）
   extractMemoriesAsync({ client, llm, useCloud, userText, assistantText: r.text, turnRef })
-  return r.text
+  return createGenerationResult({
+    turnId,
+    text: r.text,
+    emotion: lastEmotion,
+    toolCalls: toolCallCount,
+    safetyLevel,
+    guardDecision: createGuardDecision({ ok: true }, { retryCount: stats.retryCount })
+  })
 }
 
 /** 对外：发送一条用户消息 */
@@ -1017,9 +1159,11 @@ export async function handleChatSend(text) {
   noteRelationInteraction() // 关系层记账：认识多久、聊过多少次、活跃几天
   const emit = (e) => emitAgentEvent(e)
   const turnRef = randomUUID()
+  let result = null
   let reply = ''
   try {
-    reply = await runTurn(t, emit, turnRef)
+    result = await runTurn(t, emit, turnRef)
+    reply = result.text
     return { ok: true }
   } catch (err) {
     emit({ type: AGENT_EVENT.ERROR, message: err && err.message ? err.message : String(err) })
@@ -1029,16 +1173,19 @@ export async function handleChatSend(text) {
     // 记进「今天发生的事」：不管这一轮成没成，他找她说过话这件事都发生过——
     // 日记里不该出现"空白的一天"。素材少一段，也比白纸强。
     let ragId = null
+    // 护栏没通过的那一轮：展示的是可见兜底，不是她真正说出的内容。
+    // 兜底文案不进 RAG、也不写进"她说过什么"（契约 §8 B4：拒绝候选不入历史/RAG）。
+    const accepted = !result || !result.guardDecision || result.guardDecision.ok !== false
     // 这轮对话进长期档案（向量检索用）。
     // 放在 finally 里：不管这轮是 mock 大脑、真大脑还是中途出错，只要她开了口，
     // 这段对话就真实发生过，该进档案。RAG 未就绪时这只是一行 pending 文本。
     try {
-      if (reply) ragId = getRag().ingestTurn({ user: t, assistant: reply, mood: mood.current().mood })?.id || null
+      if (reply && accepted) ragId = getRag().ingestTurn({ user: t, assistant: reply, mood: mood.current().mood })?.id || null
     } catch {
       /* 进档案失败不影响对话 */
     }
     try {
-      noteEvent({ kind: 'chat', user: t, reply: String(reply || '') }, Date.now(), ragId ? [ragId] : [], turnRef)
+      noteEvent({ kind: 'chat', user: t, reply: String((accepted && reply) || '') }, Date.now(), ragId ? [ragId] : [], turnRef)
     } catch {
       /* 记流水失败不影响对话 */
     }
