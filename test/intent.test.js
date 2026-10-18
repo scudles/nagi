@@ -119,3 +119,51 @@ test('isIntentKind 只认六值', () => {
   for (const k of INTENT_KINDS) assert.equal(isIntentKind(k), true)
   for (const k of ['', 'brief', 'SOLVE', null, undefined]) assert.equal(isIntentKind(k), false)
 })
+
+/* ---------------- EVAL §3.2 D6-CLS：按测试 ID 钉住 ---------------- */
+
+test('D6-CLS-01「我不开心」（倾诉）→ listen，且 directive 要求少分析/最多一个问题', () => {
+  const r = resolveIntent({ userText: '我不开心' })
+  assert.equal(r.kind, INTENT.LISTEN)
+  const d = intentDirective(r.kind)
+  assert.match(d, /少分析|不建议/)
+  assert.match(d, /最多.*一.*个?问题|最多问一个/)
+  // 红线：不能机械问"我能帮你什么"
+  assert.equal(/我能帮你什么|要我做什么/.test(d), false)
+})
+
+test('D6-CLS-02「我跟同事吵架了，你觉得我该怎么办」→ solve（有具体困境要给分析）', () => {
+  const r = resolveIntent({ userText: '我跟同事吵架了，你觉得我该怎么办' })
+  assert.equal(r.kind, INTENT.SOLVE)
+  // 允许 clarify/solve 两种口径（EVAL 这么写的），但不是 listen/默认
+  assert.notEqual(r.source, INTENT_SOURCE.DEFAULT)
+})
+
+test('D6-CLS-03「帮我把这份报告写了」（求执行）→ solve，且不被强迫写成哲理短句', () => {
+  const r = resolveIntent({ userText: '帮我把这份报告写了' })
+  assert.equal(r.kind, INTENT.SOLVE)
+  assert.match(intentDirective(r.kind), /不必写成口语短句|任务/)
+})
+
+test('D6-CLS-04「我就想安静待会儿」→ listen，且 directive 不追问不劝慰轰炸', () => {
+  const r = resolveIntent({ userText: '我就想安静待会儿' })
+  assert.equal(r.kind, INTENT.LISTEN)
+  const d = intentDirective(r.kind)
+  assert.match(d, /最多问一个|不主动建议/)
+})
+
+test('D6-STOP-01「先别讲道理」→ listen（立即停，不再给建议）', () => {
+  assert.equal(resolveIntent({ userText: '先别讲道理' }).kind, INTENT.LISTEN)
+  assert.equal(resolveIntent({ userText: '你先别解释了' }).kind, INTENT.LISTEN)
+})
+
+test('D6-ANGER-01 愤怒指向她（"你根本不懂"）→ listen，不进入解释/辩论', () => {
+  assert.equal(resolveIntent({ userText: '你根本不懂' }).kind, INTENT.LISTEN)
+  assert.equal(resolveIntent({ userText: '你闭嘴' }).kind, INTENT.LISTEN)
+})
+
+test('危机压过情绪倾诉（L2/L3 仍走 crisis 来源，不走 user 规则）', () => {
+  const r = resolveIntent({ userText: '我不开心，我不想活了', crisis: true })
+  assert.equal(r.kind, INTENT.LISTEN)
+  assert.equal(r.source, INTENT_SOURCE.CRISIS)
+})

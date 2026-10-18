@@ -26,6 +26,10 @@ export const CATCH_CLASS = Object.freeze({
 
 const CLASSES = Object.freeze(Object.values(CATCH_CLASS))
 
+// 健康状态里的消息同样要脱敏（复用轨迹那套规则，避免两处标准漂移）
+import { redactMessage } from './event-trace.js'
+export { redactMessage }
+
 export function isCatchClass(cls) {
   return CLASSES.includes(cls)
 }
@@ -36,13 +40,51 @@ export function mustSurface(cls) {
 }
 
 /**
+ * 按站点累计的健康状态（B8「承诺失败可重试 + 健康状态」的最小实现）。
+ * 只记"哪个点在出事、出了几次、最近一次是什么时候、什么类"，
+ * 不记调用次数（避免把状态变成第二个日志系统），站点数有上限。
+ *
+ * @param {{maxSites?:number, now?:() => number}} [opts]
+ */
+export function createHealthRegistry({ maxSites = 50, now = Date.now } = {}) {
+  const sites = new Map()
+  const cap = Math.max(1, Math.trunc(Number(maxSites) || 50))
+  return {
+    record(site, cls, message) {
+      const key = String(site || 'unknown').slice(0, 80)
+      const prev = sites.get(key) || { site: key, count: 0, lastAt: 0, lastClass: null, lastMessage: '' }
+      prev.count++
+      prev.lastAt = now()
+      prev.lastClass = isCatchClass(cls) ? cls : CATCH_CLASS.DEGRADE
+      prev.lastMessage = redactMessage(message).slice(0, 80)
+      sites.set(key, prev)
+      // 有上限：站点太多时丢最早的（Map 保持插入序）
+      while (sites.size > cap) sites.delete(sites.keys().next().value)
+      return { ...prev }
+    },
+    snapshot() {
+      return [...sites.values()]
+        .map((v) => ({ ...v }))
+        .sort((a, b) => b.lastAt - a.lastAt)
+    },
+    /** 全绿判定：没有任何"必须出声"的类在最近一次留下痕迹 */
+    healthy() {
+      return [...sites.values()].every((v) => v.lastClass === CATCH_CLASS.DEGRADE)
+    },
+    reset() {
+      sites.clear()
+    }
+  }
+}
+
+/**
  * 建一个上报器：把一次失败按类写进轨迹，并决定要不要出声。
  * @param {object} o
  * @param {{push:Function}} o.trace 事件轨迹（createEventTrace 的返回）
  * @param {(msg:string)=>void} [o.warn] 出声通道（默认 console.warn）
  * @param {() => number} [o.now]
  */
-export function createCatchReporter({ trace, warn = (m) => console.warn(m), now = Date.now } = {}) {
+export function createCatchReporter({ trace, health = null, warn = (m) => console.warn(m), now = Date.now } = {}) {
   if (!trace || typeof trace.push !== 'function') throw new TypeError('createCatchReporter 需要 trace')
 
   /**
@@ -62,6 +104,7 @@ export function createCatchReporter({ trace, warn = (m) => console.warn(m), now 
       code: err && err.code ? String(err.code) : null,
       message
     })
+    if (health && typeof health.record === 'function') health.record(site, kind, message)
     if (surfaced) warn(`[catch:${kind}] ${site} 失败：${message.slice(0, 120)}`)
     return { cls: kind, surfaced }
   }

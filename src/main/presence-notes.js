@@ -105,6 +105,45 @@ function save() {
 }
 
 /**
+ * C5（CONTRACTS §11.1）：遗忘时清理**引用到被遗忘内容**的便签。
+ *
+ * 为什么必须做：便签是她留给用户的话，可能直接引用了那件事。
+ * 契约给的两个选项是"一并处理"或"标已删"——这里选**一并删除**，
+ * 因为"不可引用"是硬要求，留着一条「（已删除）」反而把原文的语境留在界面上。
+ *
+ * 匹配口径与 scrub() 对齐：用同一批"可识别片段"（整条正文 / 去前缀后的首句），
+ * 片段太短（<4 字）不参与匹配，避免"今天"这类词把无关便签误删。
+ *
+ * @param {string[]} fragments
+ * @returns {{removed:number, remaining:number}}
+ */
+export function pruneNotesReferencing(fragments = []) {
+  // 片段匹配要**容忍引用**：便签里常常只写原文的一截（"他上次说不喜欢香菜"），
+  // 而遗忘传入的是整句（"我不喜欢香菜，别给我点"）。所以除了整句，
+  // 还要按标点切成子句各自参与匹配，否则永远是"整句对不上 → 便签留着"。
+  const raw = (Array.isArray(fragments) ? fragments : []).map((s) => String(s || '').trim()).filter(Boolean)
+  const expanded = new Set()
+  for (const s of raw) {
+    expanded.add(s)
+    for (const piece of s.split(/[，,。.；;！!？?\s]+/)) {
+      const t = piece.trim()
+      if (t) expanded.add(t)
+    }
+  }
+  const needles = [...expanded].filter((s) => s.length >= 4).slice(0, 40)
+  if (!needles.length) return { removed: 0, remaining: (state.notes || []).length }
+  loadNotes()
+  const before = (state.notes || []).length
+  state.notes = (state.notes || []).filter((n) => {
+    const text = String(n?.text || '')
+    return !needles.some((needle) => text.includes(needle))
+  })
+  const removed = before - state.notes.length
+  if (removed > 0) save()
+  return { removed, remaining: state.notes.length }
+}
+
+/**
  * 与设置同步：开关全关 → 清内存 + 删文件（下次开启重新开始，不回填）。
  * 由记录路径与 IPC 读取路径调用（不新增周期 timer）。
  */

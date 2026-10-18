@@ -44,7 +44,7 @@ import { createThinkGate } from '../core/presence/reaction.js'
 import { createReactionEngine } from './reaction.js'
 import { modelsDir } from './paths.js'
 import { NagiPersona } from '../core/persona.js'
-import { buildContextBlock, buildSceneContext, recentAssistantReplies, timeSlot } from '../core/context.js'
+import { buildContextBlock, buildSceneContext, recentAssistantReplies, sceneFactsBlock, timeSlot } from '../core/context.js'
 import {
   buildDiaryMessages,
   formatMoodJourney,
@@ -992,7 +992,10 @@ async function buildMessages(userText, supportsNative, { turnId = '', crisis = f
   // 意图 → 一条**功能性约束**（不写台词，只写"做什么/不做什么"），随 system 一起下发。
   // 用模板字面量而不是转义：这里的换行是给模型看的段落分隔，写死成可见空行更不容易被改坏。
   const intentLine = intentDirective(intent.kind)
-  const system = buildSystemPrompt({ nativeTools: supportsNative, context }) + `
+  // 事实段与材料段分开（D2 不变量）：事实上限在白名单里，材料只作参考。
+  const facts = sceneFactsBlock(scene)
+  const system = buildSystemPrompt({ nativeTools: supportsNative, context }) +
+    (facts ? '\n\n' + facts : '') + `
 
 【本轮怎么回应】${intentLine}`
   console.log('[d2] intent=' + intent.kind + ' source=' + intent.source +

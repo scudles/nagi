@@ -10,7 +10,10 @@ import { join } from 'node:path'
 const userData = mkdtempSync(join(process.cwd(), '.nagi-la-flush-'))
 mock.module('electron', { exports: {
   app: { getPath: () => userData },
-  safeStorage: { isEncryptionAvailable: () => false }
+  safeStorage: { isEncryptionAvailable: () => false },
+  // ledger-actions 现在会经 presence-notes 清理便签，而 presence-notes → notes-file
+  // 在导入期就要 dialog。mock 必须补齐实际用到的导出，否则 ESM 链接期直接失败。
+  dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) }
 } })
 writeFileSync(join(userData, 'settings.json'), JSON.stringify({ rag: { enabled: true, provider: 'none' } }))
 

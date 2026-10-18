@@ -138,28 +138,38 @@
 
 ### 阶段2 蓝区骨架（D2 实现 / B8 / C5，2026-10-18）
 
-> 策略按作者指示「三张并行铺骨架」：先把三条链路的接口与纯逻辑立起来并接进主流程，
-> 再逐卡填实。三张卡**都还没到「完成」**，状态见 TASKS（都是 🔵 骨架已落地）。
+> 策略按作者指示「三张并行铺骨架」，本轮推进到**首批完成**：三条链路都已接进主流程并有
+> 按 EVAL ID 钉住的测试（D6-CLS-01..04、D6-STOP-01、D6-ANGER-01、C5-FORGET-01、
+> C5-RESTART-01、C5-BG-01）。三张卡仍**未到「完成」**，剩余项见每卡末尾。
 
 **改动文件**
 - 新增：`src/core/agent/intent.js`（六意图 + 规则层 + `resolveIntent` 优先级 + `intentDirective` + `parseIntentHint`）、`src/core/maintenance/event-trace.js`（有界/脱敏/可删）、`src/core/maintenance/catch-audit.js`（五类后果 + 上报器）、`src/main/maintenance.js`（单例装配）、`docs/遗忘数据地图.md`
 - 改动：`src/core/context.js`（`buildSceneContext` / `normalizeSceneActivity` / `normalizeMemoryRefs`）、`src/main/agent.js`（`buildMessages` 接场景与意图裁决、system 追加「本轮怎么回应」、`intentState()` 调试出口）、`src/main/rag/store-io.js` + `src/main/reminders.js`（两处空 catch → 分类上报）
 - 新增测试：`test/intent.test.js` 10 项、`test/scene.test.js` 7 项、`test/maintenance-trace.test.js` 7 项
 
-**已验证结果**
-- `npm test`：**882 项 / 881 通过 / 0 失败 / 1 skip，exit 0**
+**已验证结果**（首批完成时）
+- `npm test`：**898 项 / 897 通过 / 0 失败 / 1 skip，exit 0**
 - `npm run build`：**exit 0**
-- `npm run verify:title-outbound` **7/7**、`npm run verify:crisis-offline` **11/11**（回归，未受影响）
+- `npm run verify:title-outbound` **7/7**、`npm run verify:crisis-offline` **11/11**、`npm run verify:reminder` **14/14**（回归，未受影响）
 
-**D2 的三处真实缺口（不是待优化，是没做完）**
-1. **模型建议通道未接**：`resolveIntent` 已支持 `modelHint` 且优先级/回退都测了，但"模型在同一次回复里给意图"需要 `stream-normalize` 多带一个字段、`loop` 再透传一层——**本轮铁律不许动 loop.js**，所以 `modelHint` 目前恒为 `null`，实际生效的只有 crisis/用户/规则/默认四档。**请 Codex 定**：是给 loop 加一个透传字段（一行），还是把意图建议改成下一轮生效。
-2. **`activity` 白名单还没装配**：`buildSceneContext` 的 activity 目前固定 `null`（宁缺勿造），没有把 monitor 分类/媒体状态的授权快照接进去。这是 P2-01 二批的主要工作量。
-3. **`intentDirective` 只是功能性约束**，没有验证过"真能改变回答形态"——需要 EVAL 场景集对照（属绿区评测，不在我这层）。
+**首批新增/改动（相对骨架那一轮）**
+- D2：意图规则补齐 D6-CLS 六条（情绪倾诉、求安静、愤怒指向、"帮我把…写了"夹宾语、求建议、先别讲道理）；
+  新增 `sceneFactsBlock()` 做**事实 / 表达材料分离**（事实段只放白名单事实，并声明材料只能参考语气细节）。
+- B8：新增 `createHealthRegistry()` 站点健康状态（计数/最近类别/最近消息脱敏），上报器可挂载；
+  `maintenanceHealth()` 暴露只读快照；`clearMaintenanceTrace()` 同时清健康状态。
+- C5：`presence-notes.pruneNotesReferencing()` 接进 `scrub()`，**便签一跳补上了**；
+  片段匹配会按标点切子句（便签常只写原文一截，整句对不上会漏删）。
+
+**D2 剩下的缺口（不是待优化，是没做完）**
+1. **模型建议通道未接**：`resolveIntent` 支持 `modelHint` 且优先级/回退都测了，但"模型在同一次回复里给意图"需要 `stream-normalize` 多带字段 + `loop` 透传一行——**本轮铁律不许动 loop.js**，`modelHint` 恒为 `null`。**请 Codex 定**：给 loop 加一行透传，还是接受"次轮生效"。
+2. **`activity` 白名单还没装配**：`buildSceneContext` 的 activity 仍固定 `null`（宁缺勿造）；需要 monitor 分类 / 媒体状态的授权快照接入。
+3. **「按模型/用途存参数」未做**：现在只有 `llmProfiles`（按提供商存 baseURL/model/temperature），没有按**用途**（主对话/日记/抽取）的差异化参数。
+4. **行为层未验证**：`intentDirective` 是否真能改变回答形态，需要 EVAL 场景集对照（绿区评测）。
 
 **请豆包对账点**
-1. D2 的 `userNeed` 目前是**规则层**判出来的，规则是否覆盖 §5.1 六意图的典型说法，需要你按 EVAL 场景集核一遍；我只写了能想到的显式表达，漏词就是漏意图。
-2. C5 数据地图（`docs/遗忘数据地图.md`）里有两个缺口：**便签**属 §11.1 契约内要求（未实现），**承诺簿**属我自查出的超契约项。后者要不要处理请你定口径。
-3. B8 的"需可见状态"类我目前只做到"进轨迹 + warn"，**没有接任何 UI**。若 §3.7/§3.9 要求用户可见，请给具体位置（哪块界面、什么样算可见）。
+1. D2 的 `userNeed` 是**规则层**判的；D6-CLS 六条已按 ID 钉住，但场景集里其他的说法我未必覆盖。请按 EVAL 场景集核一遍：**漏词就是漏意图**，给我缺失的句式我补规则（不要我猜）。
+2. C5 数据地图里 **便签已实现**（`pruneNotesReferencing`，按标点切子句匹配）；还剩**承诺簿**（超契约自查项）和 **C5-EXPORT-01**——仓库目前**根本没有导出功能**，标注"主观/模拟/已删"需随导出一起做，请确认这条要不要单开卡。
+3. B8 的"需可见状态"仍只做到"进轨迹 + warn"，**没接 UI**；健康状态也只到 `maintenanceHealth()`（无 IPC）。若 §3.7/§3.9 要求用户可见，请给具体位置与判定标准。
 
 **请 Codex 复核点**
 1. `src/core/maintenance/*` 放在 core 是否合适（我按"纯逻辑可单测"放的）；`src/main/maintenance.js` 是单例装配，未接任何 IPC——如果你希望轨迹能被工作台读到，需要一个只读 IPC，我没擅自加。

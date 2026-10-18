@@ -1,6 +1,7 @@
 // 用户纠错/忘记的单一入口：先清所有可供提示词和检索读取的旧来源，再改账本状态。
 import { getLedger } from './ledger.js'
 import { getYearbook } from './yearbook.js'
+import { pruneNotesReferencing } from './presence-notes.js'
 import { getRag } from './rag/index.js'
 import { removeJournalEntry } from './journal.js'
 import { removeDiaryEntry } from './diary.js'
@@ -43,6 +44,11 @@ function scrub(entry) {
   if (entry.source.type.startsWith('diary') && !removeDiaryEntry(entry)) throw new Error('日记来源定位失败')
   const parts = fragments(entry).filter((part) => part !== entry.text)
   purgeHistoryFragments(parts.length ? parts : [entry.text])
+  // C5（§11.1「便签」）：引用了这件事的便签一并清掉。
+  // 便签是她留给用户的话，留着一条提到原文的便签等于原文还能被读到。
+  // 失败不阻断：便签是派生展示层，清不掉也不该让整次遗忘失败（与上面必须成功的六处不同）。
+  const notePruned = pruneNotesReferencing([entry.text, ...parts])
+  if (notePruned.removed > 0) console.log('[forget] 便签已清理 ' + notePruned.removed + ' 条')
   const memory = listMemories().filter((item) => item.text === entry.text ||
     (entry.source.type.startsWith('memory') && item.id === entry.source.ref))
   for (const item of memory) removeMemory({ id: item.id }, { updateLedger: false })

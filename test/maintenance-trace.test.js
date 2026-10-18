@@ -13,6 +13,7 @@ import { createEventTrace, redactMessage } from '../src/core/maintenance/event-t
 import {
   CATCH_CLASS,
   createCatchReporter,
+  createHealthRegistry,
   isCatchClass,
   mustSurface
 } from '../src/core/maintenance/catch-audit.js'
@@ -95,4 +96,45 @@ test('上报器：按类写轨迹并决定是否 warn；非法分类回退 degra
 
   assert.equal(trace.size(), 3)
   assert.throws(() => createCatchReporter({}), /trace/)
+})
+
+/* ---------------- B8：健康状态（承诺失败可重试 + 健康） ---------------- */
+
+test('健康状态：按站点累计，最近一次的类别决定是否健康', () => {
+  const health = createHealthRegistry({ maxSites: 3, now: () => 100 })
+  health.record('reminders.tick', CATCH_CLASS.PROMISE, 'boom')
+  health.record('reminders.tick', CATCH_CLASS.DEGRADE, 'warn only')
+  const snap = health.snapshot()
+  assert.equal(snap.length, 1)
+  assert.equal(snap[0].count, 2)
+  assert.equal(snap[0].lastClass, CATCH_CLASS.DEGRADE, '最后一次是降级 → 视为恢复')
+  assert.equal(health.healthy(), true)
+
+  // 用 String.raw：普通字面量里 '\a' '\b' 是 JS 转义，会把路径吃掉或变成退格符
+  health.record('rag.write', CATCH_CLASS.MUST_PERSIST, String.raw`E:\data\x.json 写不进`)
+  assert.equal(health.healthy(), false)
+  assert.equal(health.snapshot().find((s) => s.site === 'rag.write').lastMessage, '[path] 写不进', '健康状态也要脱敏')
+
+  health.reset()
+  assert.deepEqual(health.snapshot(), [])
+})
+
+test('健康状态：站点数有上限，未知分类回退 degrade', () => {
+  const health = createHealthRegistry({ maxSites: 2, now: () => 1 })
+  health.record('a', 'weird', 'x')
+  health.record('b', CATCH_CLASS.PROMISE, 'y')
+  health.record('c', CATCH_CLASS.PROMISE, 'z')
+  assert.equal(health.snapshot().length, 2)
+  assert.equal(health.healthy(), false)
+})
+
+test('上报器接健康状态：degrade 不出声但也要记录', () => {
+  const trace = createEventTrace({ limit: 5 })
+  const health = createHealthRegistry({ maxSites: 5 })
+  const warned = []
+  const report = createCatchReporter({ trace, health, warn: (m) => warned.push(m) })
+  report('cache.write', CATCH_CLASS.DEGRADE, new Error('miss'))
+  assert.equal(warned.length, 0)
+  assert.equal(health.snapshot()[0].count, 1)
+  assert.equal(trace.size(), 1)
 })

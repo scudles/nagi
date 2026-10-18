@@ -266,3 +266,41 @@ export function buildSceneContext({
     userNeed: userNeed && String(userNeed) ? String(userNeed) : null
   }
 }
+
+/**
+ * D2（§8）：**可证实的事实**与**表达材料**分开写。
+ *
+ * 为什么要单列一段：`buildContextBlock` 的【此刻】里同时混着"现在几点、关系怎样"这类事实，
+ * 和"她记得的事 / 召回的往事 / 她上次说过的话"这类材料。模型会把它们一视同仁地当事实引用，
+ * 于是"记得的事"会被说成"你上次就是这么说的"。
+ * 这一段只装**过了白名单的事实**，并明确声明材料的地位：
+ * 材料只能参考语气与细节，不能当成已验证的事实断言。
+ *
+ * @param {object|null} scene buildSceneContext 的返回值
+ * @returns {string} 空串表示没有可证实事实（调用方不要塞空段）
+ */
+export function sceneFactsBlock(scene) {
+  if (!scene || typeof scene !== 'object') return ''
+  const lines = []
+  if (scene.timeSlot) lines.push('- 时段：' + scene.timeSlot)
+  if (scene.relationship?.level?.label) {
+    const bits = [scene.relationship.level.label]
+    if (Number.isFinite(scene.relationship.daysKnown) && scene.relationship.daysKnown > 0) {
+      bits.push('认识 ' + scene.relationship.daysKnown + ' 天')
+    }
+    lines.push('- 关系：' + bits.join('，'))
+  }
+  if (scene.activity) {
+    const a = scene.activity
+    // 模拟/内部状态必须标源，不许被说成"他真实做过的事"
+    const tag = a.origin === 'simulated' ? '（模拟状态，不是他真实经历）' : `（来源：${a.origin}）`
+    lines.push(`- 活动：${a.value}${tag}`)
+  }
+  if (!lines.length && !scene.relevantMemoryRefs?.length) return ''
+  return [
+    '【可证实的事实】只可以断言这一段和【此刻】里的时间/情绪；下面【此刻】里的'
+    + '「记得的事 / 召回的往事 / 你最近说过的话」只是**表达材料**：可参考语气和细节，'
+    + '但不能当成已验证的事实反复强调。',
+    ...lines
+  ].join('\n')
+}

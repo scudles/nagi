@@ -96,3 +96,29 @@ test('buildSceneContext：授权且新鲜的活动才进上下文', () => {
   assert.equal(scene.activity.origin, 'monitor')
   assert.equal(scene.userNeed, null)
 })
+
+/* ---------------- D2：事实 / 表达材料分离 ---------------- */
+
+test('sceneFactsBlock：只写可证实事实，并声明材料只能参考', async () => {
+  const { sceneFactsBlock } = await import('../src/core/context.js')
+  const scene = buildSceneContext({
+    turnId: 't3',
+    activity: okActivity({ origin: 'simulated', value: '离开 12 分钟' }),
+    relationship: { level: { label: '熟悉' }, daysKnown: 12 },
+    relevantMemoryRefs: [{ id: 'm1', source: 'rag' }],
+    now: NOW
+  })
+  const block = sceneFactsBlock(scene)
+  assert.match(block, /【可证实的事实】/)
+  assert.match(block, /表达材料/)
+  assert.match(block, /模拟状态，不是他真实经历/, 'simulated 必须标源，不许说成真实经历')
+  assert.match(block, /认识 12 天/)
+  // 事实段里不许混进任何记忆正文
+  assert.equal(/他喜欢下雨天/.test(block), false)
+})
+
+test('sceneFactsBlock：没有事实时返回空串（调用方不要塞空段）', async () => {
+  const { sceneFactsBlock } = await import('../src/core/context.js')
+  assert.equal(sceneFactsBlock(null), '')
+  assert.equal(sceneFactsBlock({}), '')
+})
