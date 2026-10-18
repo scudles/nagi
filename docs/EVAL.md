@@ -161,4 +161,5 @@
 |---|---|---|---|---|---|
 | 2026-10-18 | 阶段1蓝区收口前对账（B4/B5/C4） | 全量 Node24 | ✅ 全量 824/823/0/1 | B5/C4 实现符合契约，测试全绿；B4 maxRetries 已按契约对齐 | 见 HANDOFF 对账栏 + PENDING-CODEX 升级单 1–3 |
 | 2026-10-18 | Codex 复判（B4/B5/C4 打回；verify:reminder 10/10） | 全量 Node24 | ⚠️ 三处打回 | B4 agent.js:832 crisis 硬编码 NORMAL；B5 lastTone 从不清除；C4 标题仍拼进 system 消息 | 分诊见 PENDING-CODEX 升级单 4；C4 已补 CONTRACTS §6.4 位置约束 + 本表 C4-AUTH-02；verify:reminder 更正为 10/10 |
+| 2026-10-18 | C5-EXPORT-01 依赖裁决 | — | ⏸ 待验 | 仓库尚无统一导出能力；该断言依赖阶段3 P3-08，不计作阶段2通过 | PENDING-CODEX 升级单5；TASKS P3-08 |
 | — | — | — | — | — | — |
