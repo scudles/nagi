@@ -82,13 +82,15 @@ export const DEFAULT_VOICE_SETTINGS = {
   maxRecordMs: 60000,
   /**
    * 非语言语气音（回合首尾的「嗯。」/「唉……」等，无语义）。
-   * **默认关闭**：enabled=false 且 probability=0 —— 不改这两项就一个字都不多念。
+   * **默认开启**（D49 决策变更，原为默认关闭）：enabled=true、probability=0.15。
+   * 变更理由：语气音是「活人感」的一环，出厂关着等于做了没人听得到；且它有四道硬约束兜底
+   * （概率上限 0.3、每天最多 4 次、最小间隔 3 分钟、深夜与勿扰一律不出声），不会变成口头禅。
    * 用现有 TTS 念极短文本实现，不引入新引擎、不引入音频素材。
    * probability 上限由 core/voice/backchannel.js 夹住（0.3），配再高也不会变口头禅。
    */
   backchannel: {
-    enabled: false,
-    probability: 0,
+    enabled: true,
+    probability: 0.15,
     /** 每天最多几次（0 = 不限次数，但仍受概率与间隔约束） */
     perDayMax: 4,
     /** 两次之间最小间隔（毫秒） */

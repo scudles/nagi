@@ -98,7 +98,8 @@ test('情绪节律注入不伪造互动、不覆盖强情绪；context/日记明
   mood.propose('joy',1);mood.applyRhythm({...r,period:'night',moodPush:{mood:'worry',weight:0.45}});mood.tick()
   assert.equal(mood.current().mood,'joy')
   const content=buildContextBlock({rhythm:r,activities:[{id:'x',type:'quiet-wait',startedAt:1,endedAt:2,provenance:'simulation',canReference:true}]})
-  assert.match(content,/仍清醒/);assert.match(content,/不是外界感知/)
+  // 2026-10-17 新人设：原措辞是「数字存在仍清醒」，改为「她清楚自己是程序」
+  assert.match(content,/清楚自己是程序/);assert.match(content,/不是外界感知/)
   assert.match(buildDiaryMessages({rhythm:r})[1].content,/没有生理困倦/)
 })
 test('M3 观察出口只带闲置秒数与活动分类，标题/应用名不外传',async()=>{

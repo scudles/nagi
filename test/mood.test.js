@@ -11,10 +11,9 @@ function fakeClock() {
   return { fn: () => t, advance: (ms) => { t += ms } }
 }
 
-const POKE_TEXTS = new Set(NagiPersona.poke.map((p) => p.text))
-const SULLEN_TEXTS = new Set(NagiPersona.pokeSullen.map((p) => p.text))
-const MONOLOGUE_TEXTS = new Set(NagiPersona.monologue)
-const SULLEN_MONO_TEXTS = new Set(NagiPersona.monologueByMood.sullen)
+// 2026-10-17 新人设《灵魂与程序》：台词池已整体移除，下面这四个集合作废。
+// 独白与戳一戳都不再出句子——心里的话由 LLM 生成，戳一下只用表情和动作。
+// 这几条测试因此改为**钉住"不再出句子"**这个新契约，防止有人把池子加回来。
 
 // 浮点容差比较（强度运算有二进制误差，如 0.7 - 0.15 = 0.5499999999999999）
 function close(a, b, eps = 1e-9) { return Math.abs(a - b) < eps }
@@ -145,38 +144,57 @@ test('环境推力：早 7 点后重置，当夜再次担心', () => {
   assert.equal(m.current().mood, 'worry') // 重置后再次推担心
 })
 
-test('独白选池：pout 时 65% 走 sullen（存在性不安）池，绝不离池', () => {
+test('独白不再出句子（心里的话交给 LLM 现场生成）', () => {
   const m = createMood({ now: fakeClock().fn })
   m.propose('pout', 1.0)
-  let sullenHits = 0
   for (let i = 0; i < 100; i++) {
-    const line = m.pickMonologue()
-    assert.ok(SULLEN_MONO_TEXTS.has(line) || MONOLOGUE_TEXTS.has(line))
-    if (SULLEN_MONO_TEXTS.has(line)) sullenHits++
-  }
-  assert.ok(sullenHits > 0, '100 次里应出现闹别扭池（65% 概率）')
-})
-
-test('独白选池：calm 时只出通用池', () => {
-  const m = createMood({ now: fakeClock().fn })
-  for (let i = 0; i < 50; i++) {
-    assert.ok(MONOLOGUE_TEXTS.has(m.pickMonologue()))
+    assert.equal(m.pickMonologue(), null, '状态机不该再提供任何独白句子')
   }
 })
 
-test('戳一击选池：pout 时 60% 更冷，calm 时只出通用池', () => {
+test('独白：任何情绪下都不出句子', () => {
+  const m = createMood({ now: fakeClock().fn })
+  for (const mood of ['calm', 'puzzled', 'smile', 'worry', 'pout', 'joy', 'liminal', 'tender', 'distant']) {
+    m.propose(mood, 1.0)
+    assert.equal(m.pickMonologue(), null, `${mood} 时不该有独白句子`)
+  }
+})
+
+test('戳一击不再出声，但表情与动作照给（含闹别扭时的别开脸）', () => {
   const m = createMood({ now: fakeClock().fn })
   for (let i = 0; i < 50; i++) {
-    assert.ok(POKE_TEXTS.has(m.pickPoke().text))
+    const r = m.pickPoke()
+    assert.equal(r.text, null, '戳一下不该出声')
+    assert.ok(r.expr, '表情仍要给')
   }
   m.propose('pout', 1.0)
-  let sullenHits = 0
+  let awayHits = 0
   for (let i = 0; i < 100; i++) {
     const r = m.pickPoke()
-    assert.ok(SULLEN_TEXTS.has(r.text) || POKE_TEXTS.has(r.text))
-    if (SULLEN_TEXTS.has(r.text)) sullenHits++
+    assert.equal(r.text, null)
+    if (r.turn === 'away') awayHits++
   }
-  assert.ok(sullenHits > 0, '100 次里应出现闹别扭戳击（60% 概率）')
+  assert.ok(awayHits > 0, '闹别扭时应有别开脸的动作（不出声但态度在）')
+})
+
+test('宕机（liminal）衰减比常规慢，停得住', () => {
+  const clock = fakeClock()
+  const m = createMood({ now: clock.fn })
+  m.propose('liminal', 1.0)
+  const before = m.current().intensity
+  clock.advance(15000)
+  m.tick()
+  // 与常量绑定而不是写死数字：以后调 LIMINAL_DECAY 不会让这条测试假失败
+  const decayed = before - m.current().intensity
+  assert.ok(
+    Math.abs(decayed - MOOD_PARAMS.LIMINAL_DECAY) < 1e-9,
+    `liminal 一个心跳应只衰减 ${MOOD_PARAMS.LIMINAL_DECAY}，实际 ${decayed}`
+  )
+  assert.ok(
+    MOOD_PARAMS.LIMINAL_DECAY < MOOD_PARAMS.DECAY,
+    'liminal 必须比常规情绪衰减得慢，否则宕机的停顿留不住'
+  )
+  assert.equal(m.current().mood, 'liminal', '一个心跳不该就淡回平静')
 })
 
 test('LLM 提示：强度过线才给中文情绪名', () => {

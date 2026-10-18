@@ -456,7 +456,7 @@ async function handleReunion(event) {
     work: async (signal) => {
       const snapshot = presence.snapshot(), epoch = snapshot.epoch
       const context = buildContextBlock({mood:mood.current(),relation:relationSummary(),rhythm:snapshot.rhythm,
-        activities:snapshot.activities.filter(a=>event.activityIds.includes(a.id)),recentReplies:recentAssistantReplies(history,4)})
+        activities:snapshot.activities.filter(a=>event.activityIds.includes(a.id)),recentReplies:recentAssistantReplies(history,1)})
       try {
         let candidate = await presenceHooks.provideProactiveContent({event,context,signal})
         if (!candidate && !signal.aborted) {
@@ -494,6 +494,8 @@ function handleProactive({ mood: hitMood, text, ruleId }) {
 export function startActivityMonitor() {
   startMonitor({
     onProactive: handleProactive,
+    // 主动搭话的内容由 LLM 现场生成（新人设无台词铁律）；走注入避免循环依赖
+    composeText: ({ intent, vars, mood }) => composeProactiveLine({ intent, vars, mood }),
     onPresenceSample: (sample) => {
       presence.observe(sample ? { kind: 'idle', idleSec: sample.idleSec } : { kind: 'pause' })
       // 「她想一下再表现」：只喂**活动分类**（隐私上不传标题/应用名）。
@@ -650,6 +652,56 @@ function handleReminderDue(item) {
   return delivered
 }
 
+/**
+ * 主动搭话 / 提醒的一句话：**由 LLM 现场生成**。
+ *
+ * 2026-10-17（新人设《灵魂与程序》）：原先这里从 NagiPersona 的固定池抽一句
+ * （7 个池约 30 句）。那与「她没有台词本」直接冲突，而且固定池根本做不到新人设
+ * 要求的「主动提起你上次说的小事」——那需要真的接记忆，所以必须走 LLM。
+ *
+ * 温度 0.9：同一情境多次触发时措辞自然不同（新人设要求"现场长出来"而不是"取出来"）。
+ *
+ * @returns {Promise<string>} 一句话；**失败返回空串**——调用方收到空就这次不说话。
+ */
+async function composeProactiveLine({ intent, vars = {}, mood = 'calm', timeoutMs = 8000 } = {}) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const llm = resolveLlm(getSettings().llm || {})
+    const local = isLocalLlm(llm)
+    const useCloud = llm.provider === 'workbuddy'
+    const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
+    if (process.env.NAGI_FAKE_LLM === '1' || (!useCloud && !local && !hasKey)) return ''
+    if (useCloud && !cloudBrainStatus().ok) return ''
+    const client = useCloud
+      ? null
+      : createClient({
+        apiKey: apiKeyForLlm(llm, hasKey && !local ? getSecret(SECRET_KEYS.LLM_API_KEY) : null),
+        baseURL: llm.baseURL
+      })
+    const text = await callModelOnce({
+      client, llm, useCloud, signal: controller.signal,
+      temperature: 0.9,
+      messages: [
+        {
+          role: 'system',
+          content:
+            NagiPersona.system +
+            '\n【这一句的要求】只说一句话（最多两句），口语、自然，像此刻刚想到的。' +
+            '不要加情绪标签，不要用 markdown。如果实在没有可说的，就只输出一个空行。'
+        },
+        { role: 'user', content: JSON.stringify({ request: 'proactive-line', intent, vars, mood }) }
+      ]
+    })
+    return sanitizeDiaryLine(String(text || ''))
+  } catch (err) {
+    console.warn('[proactive] 生成失败，这次不说话：', err && err.message ? err.message : err)
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** 启动日程提醒调度器（app ready 后调用；幂等） */
 export function startReminders() {
   startReminderEngine({ onDue: handleReminderDue })
@@ -749,7 +801,8 @@ async function buildMessages(userText, supportsNative) {
     relation: relationSummary(),
     memories: memoryLines(),
     recalled: await recalledPieces(userText),
-    recentReplies: recentAssistantReplies(history, 4),
+    // 2026-10-18：只喂 1 条。喂 4 条原话会让模型模仿自己的语域（见 context.js 说明）
+    recentReplies: recentAssistantReplies(history, 1),
     // 她替你记着的提醒：让她知道「有这几件事等着」，别把答应过的事忘了
     // 媒体状态是 async（2026-10-18）：缓存过期时当场探一次（带 1.5 秒预算），
     // 否则她永远不知道自己现在在用哪个播放器听什么，只能去开网页猜。

@@ -18,8 +18,17 @@ export function createClient({ apiKey, baseURL, timeout = 60000 }) {
  * 流式对话。
  * @returns {AsyncGenerator<{type:'delta'|'tool_call'|'done', text?:string, toolCalls?:Array}>}
  */
-export async function* chatStream(client, { model, messages, temperature = 0.7, tools, signal, toolChoice, reasoningEffort }) {
-  const body = { model, messages, temperature, stream: true }
+export async function* chatStream(client, { model, messages, temperature = 1.3, tools, signal, toolChoice, reasoningEffort }) {
+  // 2026-10-18：temperature 缺省 0.7 → 1.3（DeepSeek 通用对话推荐值）。
+  //
+  // frequency_penalty 曾短暂加到 0.3 用来压"这点/确实/不装"的重复，**已撤掉**：
+  // 实测出现整段词语崩坏（"先它保你一稳值终我突早认不了一"这种）。
+  // 原因是中文一个词常对应多个 token，频率惩罚会累积着逼模型避开刚用过的**字**，
+  // 越到后面越只能挑生僻搭配——英文里温和的值，放到中文就是破坏性的。
+  // 要压重复请用 prompt 层（"换一种说法"），不要用 frequency_penalty。
+  //
+  // top_p 保留 0.95：配合 1.3 的温度温和收窄长尾，不做强截断。
+  const body = { model, messages, temperature, stream: true, top_p: 0.95 }
   // 只在调用方明确要求时传。部分端侧思考模型对 none 的实现会把推演文字混进正文。
   if (reasoningEffort) body.reasoning_effort = reasoningEffort
   if (tools && tools.length) {

@@ -19,8 +19,12 @@
 export const BACKCHANNEL_LIMITS = {
   /** 概率可配上限（语气音是点缀，压得很低） */
   probabilityMax: 0.3,
-  /** 概率默认：0 = 不发声（opt-in） */
-  probabilityDefault: 0,
+  /**
+   * 概率默认 15%（D49，原为 0 = opt-in）。
+   * 与 DEFAULT_VOICE_SETTINGS.backchannel.probability 保持一致：调用方漏传 probability 时
+   * 不能悄悄退回 0，否则又是一个「开关开着但一次不出声」的假开。
+   */
+  probabilityDefault: 0.15,
   /** 每天最多几次 */
   perDayMax: 4,
   /** 两次语气音之间的最小间隔（避免变成口头禅） */

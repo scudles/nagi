@@ -61,8 +61,28 @@ test('长期记忆与「不要重复」约束会进上下文', () => {
     recentReplies: ['……人类真是不会照顾自己。']
   })
   assert.match(s, /你记得的关于他的事：在做一款叫凪的桌宠项目；习惯熬夜/)
-  assert.match(s, /不要重复这些句式/)
+  // 2026-10-18：措辞改为明确禁止沿用节奏（原来只说"不要重复这些句式"，
+  // 实测模型只换词不换调）。这条锁现在同时钉住"只喂 1 条"这个新约束。
+  assert.match(s, /不要重复/)
+  assert.match(s, /不要沿用它的节奏与断句/)
   assert.match(s, /「……人类真是不会照顾自己。」/)
+})
+
+test('只喂 1 条自己的原话，不再喂 4 条（防止语域自我锚定）', () => {
+  const history = [
+    { role: 'user', content: '一' },
+    { role: 'assistant', content: '第一条回复' },
+    { role: 'user', content: '二' },
+    { role: 'assistant', content: '第二条回复' },
+    { role: 'user', content: '三' },
+    { role: 'assistant', content: '第三条回复' },
+    { role: 'user', content: '四' },
+    { role: 'assistant', content: '第四条回复' }
+  ]
+  // 缺省值已改为 1：调用方不传条数时只取最近一句
+  assert.equal(recentAssistantReplies(history).length, 1)
+  assert.deepEqual(recentAssistantReplies(history), ['第四条回复'])
+  assert.equal(recentAssistantReplies(history, 4).length, 4, '显式指定条数仍然可用')
 })
 
 // RAG 召回的往事：为空时必须与「没开 RAG」逐字一致（这是容错底线——

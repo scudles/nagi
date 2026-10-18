@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- CSP：允许本地模型协议与开发期 vite。
+       注：script-src 必须留 'unsafe-eval' —— pixi.js v7 用 new Function 生成着色器，
+       收紧后 Live2D 模型会加载失败（2026-10-14 实测）。'unsafe-inline' 已移除。 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' data: blob: nagi-local: http://localhost:* ws://localhost:*; img-src 'self' data: blob: nagi-local:; connect-src 'self' data: blob: nagi-local: http://localhost:* ws://localhost:*; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'" />
+  <title>凪 Nagi</title>
+  <link rel="stylesheet" href="./css/base.css" />
+  <!-- Live2D Cubism Core 必须在 pixi-live2d-display 之前加载 -->
+  <script src="./vendor/live2dcubismcore.min.js"></script>
+</head>
+<body data-mode="pet">
+  <!-- ============ 桌宠形态 ============ -->
+  <div id="pet-root" class="mode-pet">
+    <div id="pet-stage">
+      <canvas id="live2d-canvas"></canvas>
+      <div id="pet-placeholder" class="placeholder">凪</div>
+    </div>
+    <div id="bubble" class="bubble hidden">
+      <div class="bubble-inner"></div>
+      <button id="bubble-ignore" class="hidden" title="这次先不聊，凪之后会少打扰">稍后</button>
+    </div>
+    <div id="pet-status" class="pet-status hidden"></div>
+    <!-- 归来便签入口（BLUE-2）：她回来过、留下东西时的提示；数据走 BLUE-3 -->
+    <button id="notes-entry" class="notes-entry hidden" title="点开看看她独自待着时留下的东西">📝 她留了张便签</button>
+    <!-- 语音提示：录音计时 / 没听清 等 -->
+    <div class="voice-hint hidden"></div>
+    <div class="pet-toolbar">
+      <button id="btn-pet-grow" title="放大（Ctrl+滚轮）">＋</button>
+      <button id="btn-pet-shrink" title="缩小（Ctrl+滚轮）">－</button>
+      <button id="btn-pet-action" title="随便动一下">✦</button>
+      <button id="btn-pet-mic" title="按住说话（松手识别）">🎙</button>
+      <button id="btn-open-workbench" title="打开工作台">▣</button>
+      <button id="btn-pet-settings" title="设置">⚙</button>
+      <button id="btn-pet-hide" title="隐藏">✕</button>
+    </div>
+    <!-- 右下角拖拽缩放（按住拖动即等比改变桌宠大小） -->
+    <div id="pet-resizer" title="拖动调整大小"></div>
+    <!-- 右键菜单：装束与互动（透明无边框窗用不了系统菜单，这里自己画一个） -->
+    <div id="pet-menu" class="pet-menu hidden"></div>
+  </div>
+
+  <!-- ============ 工作台形态 ============ -->
+  <div id="workbench-root" class="mode-workbench">
+    <header id="titlebar">
+      <div class="tb-title">凪 <span class="tb-sub">Nagi · 工作台</span></div>
+      <div class="tb-actions">
+        <button id="btn-wb-pet" title="回到桌宠">◱</button>
+        <button id="btn-wb-min" title="最小化">—</button>
+        <button id="btn-wb-close" title="关闭">✕</button>
+      </div>
+    </header>
+
+    <main id="wb-main">
+      <aside id="side-panel">
+        <div class="side-head">
+          <span id="mood-label">情绪：平静</span>
+          <span id="brain-label" class="dim">大脑：占位</span>
+        </div>
+        <div class="side-note">
+          <p class="dim">她的内心独白不实时显示在这里，而是安静地写进日记。</p>
+          <button id="btn-open-reminder">她的日程</button>
+          <button id="btn-open-relation">看看我们的关系</button>
+          <button id="btn-open-diary">看看她的日记</button>
+          <button id="btn-open-notes">她留的便签</button>
+        </div>
+        <div class="side-foot">
+          <button id="btn-open-settings">设置</button>
+        </div>
+      </aside>
+
+      <section id="chat-panel">
+        <div id="messages" class="messages"></div>
+        <div id="tool-log" class="tool-log"></div>
+        <div id="confirm-bar" class="confirm-bar hidden"></div>
+        <div id="composer">
+          <textarea id="input" rows="1" placeholder="和凪说点什么…（回车发送，Shift+回车换行）"></textarea>
+          <button id="btn-wb-mic" title="按住说话（松手识别）">🎙</button>
+          <button id="btn-new-chat" title="开始新对话：清空短期上下文，长期记忆与关系保留">新对话</button>
+          <button id="btn-send">发送</button>
+        </div>
+        <div class="voice-hint hidden"></div>
+      </section>
+
+      <!-- 拖动改宽（240–460） -->
+      <div id="wb-splitter" title="拖动调整凪面板宽度"></div>
+
+      <!-- ============ 凪面板：工作台里也看得见她 ============ -->
+      <aside id="nagi-panel">
+        <div class="np-head">
+          <span class="np-title">凪</span>
+          <span id="np-mood" class="dim">平静</span>
+          <button id="btn-nagi-panel-collapse" title="收起面板">›</button>
+        </div>
+        <div class="np-stage">
+          <canvas id="wb-live2d-canvas"></canvas>
+          <div id="wb-live2d-placeholder" class="placeholder">凪</div>
+        </div>
+        <div class="np-controls">
+          <div class="np-row">
+            <span class="np-label">尺寸</span>
+            <input id="wb-l2d-scale" type="range" min="0.4" max="2" step="0.05" value="1" />
+            <span id="wb-l2d-scale-val" class="dim">1.00</span>
+          </div>
+          <div class="np-label np-label-block">动作（点一下她就演）</div>
+          <div id="wb-motion-list" class="np-motions"></div>
+          <div class="np-row np-row-btns">
+            <button id="btn-wb-random-motion" title="随机播一个动作">随机动作</button>
+            <button id="btn-wb-stop-motion" title="停下，回待机">回待机</button>
+            <button id="btn-wb-mirror" title="水平镜像">镜像</button>
+          </div>
+        </div>
+      </aside>
+      <button id="btn-nagi-panel-expand" class="hidden" title="展开凪面板">‹</button>
+    </main>
+
+    <!-- ============ 关系页（S4：熟悉度 + 情绪时间线） ============ -->
+    <div id="relation-overlay" class="overlay hidden">
+      <div id="relation-panel">
+        <header class="sp-head">
+          <span>我们</span>
+          <button id="btn-close-relation">✕</button>
+        </header>
+        <div class="sp-body">
+          <div class="rel-head">
+            <div class="rel-level">
+              <span id="rel-level-label" class="dim">陌生</span>
+              <span id="rel-score" class="dim">0%</span>
+            </div>
+            <div class="rel-bar"><div id="rel-bar-fill" class="rel-bar-fill"></div></div>
+            <div id="rel-next" class="dim"></div>
+          </div>
+
+          <div class="rel-stats">
+            <div class="rel-stat"><b id="rel-days">0</b><span>认识（天）</span></div>
+            <div class="rel-stat"><b id="rel-inter">0</b><span>互动（次）</span></div>
+            <div class="rel-stat"><b id="rel-active">0</b><span>活跃（天）</span></div>
+            <div class="rel-stat"><b id="rel-mem">0</b><span>她记得（条）</span></div>
+          </div>
+
+          <h3>今天的心情</h3>
+          <div id="rel-today" class="rel-tl"></div>
+          <div class="rel-tl-axis"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+          <div id="rel-legend" class="rel-legend"></div>
+
+          <h3>最近 7 天</h3>
+          <div id="rel-week" class="rel-week"></div>
+
+          <p class="dim" id="rel-hint" style="margin:12px 0 0;line-height:1.7"></p>
+
+          <div class="sp-row" style="margin-top:14px">
+            <button id="btn-rel-diary">她的日记</button>
+            <button id="btn-rel-settings">设置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 她的日程（M4：日程提醒） ============ -->
+    <div id="reminder-overlay" class="overlay hidden">
+      <div id="reminder-panel">
+        <header class="sp-head">
+          <span>她的日程</span>
+          <button id="btn-close-reminder">✕</button>
+        </header>
+        <div class="sp-body">
+          <p class="dim" style="margin:0 0 10px;line-height:1.7">
+            她替你记着的事。到点她会自己开口提醒你——桌宠形态弹气泡，工作台里进对话流，也会写进她的日记。
+            最快的方式是直接对她说「10 分钟后提醒我喝水」。
+          </p>
+          <div id="reminder-list" class="rm-list"></div>
+          <div id="reminder-empty" class="dim hidden">还没有日程。对她说一声，或在下面手动加一条。</div>
+          <details class="promise-details">
+            <summary>承诺簿：查看尝试、提醒和结果证据</summary>
+            <div id="promise-list" class="rm-list"></div>
+          </details>
+
+          <h3>手动加一条</h3>
+          <label>提醒内容 <input id="rm-text" type="text" placeholder="例如：开会 / 吃药 / 交作业" /></label>
+          <label>什么时候 <input id="rm-when" type="text" placeholder="例如：10分钟后 / 明天9:00 / 下午3点半" /></label>
+          <label>重复
+            <select id="rm-repeat">
+              <option value="none">不重复</option>
+              <option value="daily">每天</option>
+              <option value="weekly">每周</option>
+            </select>
+          </label>
+          <div class="sp-row">
+            <button id="btn-rm-add">记下</button>
+          </div>
+          <div id="rm-result" class="dim"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 日记查看器形态（独立小窗，D2：内心独白按需查看） ============ -->
+  <div id="diary-root" class="mode-diary">
+    <header id="diary-titlebar">
+      <div class="tb-title">凪的日记</div>
+      <div class="tb-actions">
+        <button id="btn-diary-refresh" title="刷新">↻</button>
+        <button id="btn-diary-close" title="关闭">✕</button>
+      </div>
+    </header>
+    <main id="diary-main">
+      <div id="diary-empty" class="dim hidden">还没有日记。她独白的时候，会写下来。</div>
+      <div id="diary-list"></div>
+      <article id="diary-content"></article>
+    </main>
+  </div>
+
+  <!-- ============ 设置页 ============
+       注意：必须放在 body 直下。桌宠模式下 #workbench-root 整体 display:none，
+       放在里面的话桌宠窗点「⚙ 设置」会什么都看不见（2026-10-15 实测修复）。 -->
+  <div id="settings-overlay" class="overlay hidden">
+    <div id="settings-panel">
+      <header class="sp-head">
+        <span>设置</span>
+        <button id="btn-close-settings">✕</button>
+      </header>
+      <div class="sp-body">
+        <h3>大脑（LLM）</h3>
+        <label>提供商
+          <select id="set-provider"></select>
+        </label>
+        <label>Base URL <input id="set-baseurl" type="text" /></label>
+        <label>模型 <input id="set-model" type="text" /></label>
+        <label>Temperature <input id="set-temp" type="number" step="0.1" min="0" max="2" /></label>
+        <div id="set-local-llm" class="llm-local hidden">
+          <div class="sp-row"><button id="btn-check-local-llm">检测本地服务</button><span id="set-local-llm-status" class="dim"></span></div>
+          <label>已安装模型 <select id="set-local-model-list"><option value="">（检测后列出）</option></select></label>
+          <p class="dim">本机 Ollama 无需 API Key。选择模型后请保存大脑设置。语音与记忆检索是否联网由各自设置决定。</p>
+        </div>
+        <div id="set-cloud-key-wrap">
+          <label>API Key <span id="set-key-status" class="dim">未配置</span>
+            <input id="set-apikey" type="password" placeholder="粘贴后点保存" />
+          </label>
+          <div class="sp-row">
+            <button id="btn-save-key">保存 Key</button>
+            <button id="btn-del-key" class="danger">删除 Key</button>
+          </div>
+        </div>
+        <div class="sp-row"><button id="btn-save-llm">保存大脑设置</button></div>
+
+        <h3>Live2D</h3>
+        <label>模型
+          <select id="set-model-path"></select>
+        </label>
+        <label>缩放 <input id="set-l2d-scale" type="number" step="0.05" min="0.3" max="2" /></label>
+        <label>桌宠大小 <span id="set-pet-size-val" class="dim">400 × 600</span>
+          <input id="set-pet-size" type="range" min="240" max="760" step="10" />
+        </label>
+        <label class="check"><input id="set-idle-boost" type="checkbox" /> 待机时放大一点、换个姿势（更醒目）</label>
+        <div class="sp-row">
+          <button id="btn-refresh-models">刷新模型列表</button>
+          <button id="btn-save-l2d">保存 Live2D 设置</button>
+        </div>
+
+        <h3>装束</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          换一身打扮（发型、眼镜、兽耳、蝴蝶结、披肩、尾巴）。点一下当场就换，
+          切换时会眨个眼把变化盖过去，不会"啪"地一下变样。
+          也可以在<b>桌宠上按右键</b>，或用全局热键 <code>Ctrl + Alt + O</code> 循环换。
+        </p>
+        <div id="set-outfit-list" class="outfit-list"></div>
+        <div class="sp-row">
+          <button id="btn-outfit-random">随便换一身</button>
+          <span id="set-outfit-current" class="dim"></span>
+        </div>
+
+        <h3>她自己待着的时候</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          没人在跟她说话时，她会自己待着：偶尔顺着你在的方向看一眼（<b>只看一眼就移开</b>，
+          不是一直盯着鼠标）、偶尔换个站姿、偶尔自己换身衣服。
+          所有判断都遵守勿扰开关与夜间静默。
+        </p>
+        <label class="check"><input id="set-ambient-enabled" type="checkbox" /> 启用待机行为</label>
+        <label class="check"><input id="set-ambient-gaze" type="checkbox" /> 微注视（鼠标在动时她会看一眼）</label>
+        <label class="check"><input id="set-ambient-autonomous" type="checkbox" /> 允许她自己做动作、自己换装束</label>
+        <label>活跃程度
+          <select id="set-ambient-level">
+            <option value="conservative">保守（默认：小动作 5~10 分钟一次，换装一天最多 3 次）</option>
+            <option value="medium">中等（小动作 3~6 分钟一次，换装一天最多 4 次）</option>
+            <option value="lively">活泼（小动作 2~4 分钟一次，换装一天最多 6 次）</option>
+          </select>
+        </label>
+        <label class="check"><input id="set-ambient-hotkeys" type="checkbox" /> 启用全局热键（Ctrl+Alt+O 换装束 / Ctrl+Alt+Shift+O 上一个 / Ctrl+Alt+E 让她动一下）</label>
+        <p class="dim" id="set-hotkey-status" style="margin:4px 0 0"></p>
+        <div class="sp-row">
+          <button id="btn-save-ambient">保存待机行为设置</button>
+        </div>
+
+        <h3>她会不会「想一下再表现」</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          打开后，她在关键时机（你换了在做什么的事 / 同一件事做了很久 / 很久没动）会先想一下：
+          「我注意到他在做什么 → 我该不该有反应 → 为什么」。
+          想清楚了才会表现：多数时候是<b>什么都不做</b>；有时持续一阵（会自己淡下去），有时只闪一个微表情。
+          关掉就退回原来那套固定规则，行为与以前一模一样。
+          <br />
+          交给模型看的只有<b>活动分类</b>（在工作 / 看视频 / 打游戏…），不包含窗口标题、文件名或聊天对象。
+        </p>
+        <label class="check"><input id="set-reaction-enabled" type="checkbox" /> 启用「想一下再表现」</label>
+        <label>两次思考至少间隔 <input id="set-reaction-gap" type="number" min="1" max="120" step="1" /> 分钟</label>
+        <label>每小时最多 <input id="set-reaction-hour" type="number" min="1" max="30" step="1" /> 次</label>
+        <label>每天最多 <input id="set-reaction-day" type="number" min="1" max="200" step="1" /> 次</label>
+        <div class="sp-row">
+          <button id="btn-save-reaction">保存思考设置</button>
+        </div>
+
+        <h3>她的声音（语音输出）</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          让她真的开口说话。音频只在本机播放；只有在线音色需要联网，断网时会自动回退本机语音。
+        </p>
+        <label class="check"><input id="set-voice-enabled" type="checkbox" /> 让她开口说话（关掉就完全静音）</label>
+        <label>说话引擎
+          <select id="set-tts-engine"></select>
+        </label>
+        <div id="set-tts-engine-note" class="dim voice-note"></div>
+        <label>音色
+          <select id="set-tts-voice"></select>
+        </label>
+        <label>语速 <span id="set-voice-rate-val" class="dim">0</span>
+          <input id="set-voice-rate" type="range" min="-50" max="50" step="5" />
+        </label>
+        <label>音量 <span id="set-voice-volume-val" class="dim">100</span>
+          <input id="set-voice-volume" type="range" min="0" max="100" step="5" />
+        </label>
+        <label class="check"><input id="set-speak-reply" type="checkbox" /> 她说完话自动念出来</label>
+        <label class="check"><input id="set-speak-proactive" type="checkbox" /> 主动搭话、日程提醒也念出来</label>
+        <label class="check"><input id="set-voice-profile" type="checkbox" /> 语音情绪映射（语速、音高、音量随她的情绪与昼夜时段微调）</label>
+        <label class="check"><input id="set-backchannel" type="checkbox" /> 回合首尾的语气音（「嗯。」「唉……」这类没有语义的短音；默认关闭）</label>
+        <label>语气音出现概率 <span id="set-backchannel-prob-val" class="dim">0%</span>
+          <input id="set-backchannel-prob" type="range" min="0" max="30" step="5" />
+        </label>
+        <div class="dim voice-note">语气音只在她开口前/说完后来一声，深夜与勿扰时一律不出声；概率上限 30%，每天最多 4 次。</div>
+        <label class="check"><input id="set-lipsync" type="checkbox" /> 说话时同步口型</label>
+        <label>试听文本 <input id="set-preview-text" type="text" /></label>
+        <div class="sp-row">
+          <button id="btn-tts-preview">试听这段</button>
+          <button id="btn-save-voice">保存语音设置</button>
+        </div>
+        <div id="voice-preview-result" class="dim"></div>
+
+        <h3>听你说话（语音输入）</h3>
+        <label>识别引擎
+          <select id="set-asr-engine"></select>
+        </label>
+        <div id="set-asr-engine-note" class="dim voice-note"></div>
+        <div id="set-asr-model-wrap" class="voice-model">
+          <div id="set-asr-model-status" class="dim">离线模型状态：检查中…</div>
+          <div id="asr-progress" class="voice-progress hidden">
+            <div id="asr-progress-bar" class="voice-progress-bar"></div>
+          </div>
+          <div class="sp-row">
+            <button id="btn-asr-download">下载离线识别（约 98MB）</button>
+            <button id="btn-asr-server-stop">停掉离线服务（省内存）</button>
+          </div>
+        </div>
+        <p class="dim voice-note" style="margin:0">
+          按住桌宠上的 🎙 或工作台输入框旁的 🎙 说话，松手即识别。没装离线模型时会自动用系统自带识别，不下载也能用。
+        </p>
+
+        <h3>她的记忆</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          这些是她跨会话记得的、关于你的事，会写进每轮对话的上下文。删掉的她会忘掉。
+        </p>
+        <div id="memory-list" class="memory-list"></div>
+        <div class="sp-row">
+          <input id="memory-new" type="text" placeholder="手动加一条，例如：在做一个桌宠项目" style="flex:1;min-width:180px" />
+          <button id="btn-memory-add">记住</button>
+          <button id="btn-history-clear" class="danger">清空对话历史</button>
+        </div>
+
+        <h3>共同经历账本</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">真实记录、未经核实的模型摘录、凪的主观日记分别标注。点开来源可看时间与原始出处；更正或忘记会清理相关检索内容。</p>
+        <div id="ledger-list" class="ledger-list"></div>
+        <div class="sp-row">
+          <button id="btn-ledger-more">加载更多</button>
+          <button id="btn-ledger-export">导出共同记忆 JSON</button>
+        </div>
+        <div id="ledger-status" class="dim" aria-live="polite"></div>
+
+        <h3>双人年鉴</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">从上方带来源的真实经历选择“收进年鉴”。每页分开显示事实、凪的主观日记和你编辑的文字；身世碎片标为创作设定，不作为共同经历。</p>
+        <div id="yearbook-list" class="ledger-list"></div>
+        <div id="yearbook-fragments" class="ledger-list"></div>
+        <div class="sp-row"><button id="btn-yearbook-export">导出双人年鉴 Markdown</button></div>
+        <div id="yearbook-status" class="dim" aria-live="polite"></div>
+
+        <h3>记忆档案（长期记忆检索）</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          上面那几条是她挑出来的「重点笔记」；这里是她全部的对话档案——按意思检索，条数没有上限。
+          每轮她会自动想起相关的往事；时间久了会慢慢沉下去，但不会消失。全部存在本机。
+        </p>
+        <label class="check"><input id="set-rag-enabled" type="checkbox" /> 开启记忆档案（关掉就只靠上面那几条笔记）</label>
+        <label>检索方式
+          <select id="set-rag-provider">
+            <option value="local">本机模型（离线、不外发，推荐）</option>
+            <option value="openai">云端接口（复用大脑的 Key，文本会外发）</option>
+            <option value="none">只记录不检索</option>
+          </select>
+        </label>
+        <div id="set-rag-provider-note" class="dim voice-note"></div>
+        <div id="set-rag-model-wrap" class="voice-model">
+          <div id="set-rag-model-status" class="dim">本机模型状态：检查中…</div>
+          <div id="rag-progress" class="voice-progress hidden">
+            <div id="rag-progress-bar" class="voice-progress-bar"></div>
+          </div>
+          <div class="sp-row">
+            <button id="btn-rag-download">下载本机模型（约 25MB）</button>
+          </div>
+        </div>
+        <label>想得起多少 <span id="set-rag-threshold-val" class="dim">0.32</span>
+          <input id="set-rag-threshold" type="range" min="0.10" max="0.90" step="0.01" />
+        </label>
+        <label>旧事沉下去的速度（半衰期） <span id="set-rag-halflife-val" class="dim">45 天</span>
+          <input id="set-rag-halflife" type="range" min="7" max="365" step="1" />
+        </label>
+        <label class="check"><input id="set-rag-autosummary" type="checkbox" /> 攒够一定轮次后自动压缩成摘要</label>
+        <label>每多少轮压一次 <input id="set-rag-summary-every" type="number" min="5" max="200" step="1" /></label>
+        <div class="sp-row">
+          <button id="btn-save-rag">保存记忆设置</button>
+          <button id="btn-rag-rebuild">重建索引</button>
+          <button id="btn-rag-clear" class="danger">清空档案</button>
+        </div>
+        <div id="rag-status" class="dim"></div>
+        <div class="sp-row">
+          <input id="rag-query" type="text" placeholder="写一句话，看她能从档案里想起什么" style="flex:1;min-width:180px" />
+          <button id="btn-rag-test">试一下</button>
+        </div>
+        <div id="rag-test-result" class="dim" style="max-height:200px;overflow:auto;white-space:pre-wrap"></div>
+
+        <h3>工具与隐私</h3>
+        <label>文件工具授权目录 <input id="set-fileroot" type="text" placeholder="未授权；文件工具不可用" readonly /></label>
+        <div class="sp-row"><button id="btn-pick-fileroot">选择目录并授权</button><button id="btn-revoke-fileroot">撤销目录授权</button></div>
+        <label>Chrome 调试端口（CDP） <input id="set-cdp" type="number" /></label>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          她独处时的模拟活动默认只留在内存里，不落盘。开启保存后，只保存<strong>开启之后</strong>新产生的活动，
+          随时可以在这里关掉（关掉即删除已保存的文件并清空内存）。
+        </p>
+        <label class="check"><input id="set-presence-persist" type="checkbox" /> 保存她独处时的模拟活动</label>
+        <label>活动保留天数（1–7） <input id="set-presence-retain" type="number" min="1" max="7" step="1" /></label>
+        <label>活动条数上限（1–96） <input id="set-presence-maxacts" type="number" min="1" max="96" step="1" /></label>
+        <div class="sp-row">
+          <button id="btn-save-presence-privacy">保存隐私设置</button>
+        </div>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          写入、外部控制与敏感读取逐次确认。仅受控只读命令可直接执行：
+          dir / ipconfig / tasklist / systeminfo / where / ver / node -v / npm -v / git status。
+        </p>
+        <div class="sp-row">
+          <button id="btn-save-tools">保存工具设置</button>
+        </div>
+
+        <h3>陪伴 · 时间感</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          她会感受时间的流逝：跟着昼夜调整状态、你离开时安静地做自己的事、回来时根据离开了多久说一句话。
+          全部默认开启，可以逐项关掉。关掉总开关就回到「没有昼夜、没有离开归来」的旧行为。
+        </p>
+        <label class="check"><input id="set-presence-enabled" type="checkbox" /> 时间感总开关</label>
+        <label class="check"><input id="set-presence-rhythm" type="checkbox" /> 昼夜节律（深夜安静、午后慵懒；语音的语速/音量也随时段微调，见「她的声音」里的情绪映射开关）</label>
+        <label class="check"><input id="set-presence-away" type="checkbox" /> 离开时的独处（你长时间没互动，她安静地做自己的事）</label>
+        <label class="check"><input id="set-presence-reunion" type="checkbox" /> 归来汇报（你回来时，根据离开了多久说一句话）</label>
+        <div class="sp-row">
+          <button id="btn-save-presence">保存时间感设置</button>
+        </div>
+        <div id="presence-status" class="dim" aria-live="polite"></div>
+
+        <h3>时间感 · 高级</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          一般不用动。改了不合适也没关系——超出范围的值会被自动退回默认。
+        </p>
+        <label>多久没互动算离开（分钟，2–60） <input id="set-presence-idle" type="number" min="2" max="60" step="1" /></label>
+        <label>独处活动的时间片（分钟，5–60） <input id="set-presence-slice" type="number" min="5" max="60" step="1" /></label>
+        <label>离开多久算一次「归来」（分钟，5–30；比这更短的不汇报） <input id="set-presence-reunion-min" type="number" min="5" max="30" step="1" /></label>
+        <label>离开多久算「一会儿」（分钟，30–90） <input id="set-presence-reunion-long" type="number" min="30" max="90" step="5" /></label>
+        <label>离开多久算「很久」（分钟，90–1440） <input id="set-presence-reunion-hours" type="number" min="90" max="1440" step="30" /></label>
+        <div class="dim" style="margin:8px 0 4px;line-height:1.7">
+          工作日时段表（只填每段结束时间；依次为 夜 → 早 → 午 → 午后 → 晚，末段自动回到夜）：
+        </div>
+        <div id="presence-sched-weekday" class="sched-editor"></div>
+        <div class="dim" style="margin:8px 0 4px;line-height:1.7">
+          周末时段表（默认把早晨起点延后一小时——「周末晚点起」）：
+        </div>
+        <div id="presence-sched-weekend" class="sched-editor"></div>
+        <div id="presence-sched-status" class="dim" aria-live="polite"></div>
+
+        <h3>打扰控制</h3>
+        <label>两次归来汇报至少间隔（分钟，30–1440） <input id="set-presence-cooldown" type="number" min="30" max="1440" step="10" /></label>
+        <label>每天最多归来汇报几次（0–3） <input id="set-presence-daily" type="number" min="0" max="3" step="1" /></label>
+
+        <h3>她留下的东西</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          她会把独处时的点滴、帮你做过的事安静地记下来，只存在本机这份应用数据里。<strong>默认关闭</strong>；
+          打开后只从打开之后开始记，关掉即清空并删除文件（不回填、不补造）。
+        </p>
+        <label class="check"><input id="set-notes-enabled" type="checkbox" /> 记下她想留下的便签（每天最多 3 条，间隔至少 30 分钟；勿扰/只陪着时不展示）</label>
+        <label class="check"><input id="set-traces-enabled" type="checkbox" /> 记下帮你做过的事（只记工具名与是否返回，不含命令正文、文件内容）</label>
+        <label class="check"><input id="set-anchors-enabled" type="checkbox" /> 允许她偶尔想起共同经历（每次不超过 5%，每天最多 1 次；来源被忘记就不再提起）</label>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          写到桌面或授权目录：<strong>默认关闭</strong>。打开后要先由你亲自选一个文件夹（不能手填路径），
+          之后每张便签下面会出现「写到文件夹里」，<strong>每写一张都会先问你一次</strong>（没有"以后都不问"），
+          且不会覆盖你已有的同名文件。写失败就如实说没写成，绝不显示成"已保存"。
+        </p>
+        <div class="sp-row">
+          <button id="btn-save-notes">保存「她留下的东西」</button>
+          <button id="btn-open-notes-from-settings">现在看看</button>
+        </div>
+        <div id="notes-status" class="dim" aria-live="polite"></div>
+
+        <h3>陪伴 · 可选表达（不完美机制）</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          让她偶尔「没接上那句可说可不说的话」——比如你回来时她偶尔没开口。<strong>默认关闭</strong>；
+          <strong>提醒、日程、有截止时间或涉及文件/设备/钱/健康安全的事一律不会被延迟</strong>，
+          概率只作用在归来开口这类可选表达上，且每天最多延迟 1 次、同一个候选只判一次。
+          延迟只是「这次没说」，她不会谎称忘了，也不会忘记任何重要的事。
+        </p>
+        <label class="check"><input id="set-imperf-enabled" type="checkbox" /> 开启可选表达延迟</label>
+        <label>延迟概率（0–10%；0 = 从不延迟） <input id="set-imperf-prob" type="number" min="0" max="10" step="1" /></label>
+        <label class="check"><input id="set-imperf-low" type="checkbox" /> 允许低气压（每天最多一次，10–30 分钟自然恢复；不是困倦）</label>
+        <label class="check"><input id="set-imperf-repair" type="checkbox" /> 说过头时给一句简短修复（每天最多一次；不会辩解或求原谅）</label>
+        <div class="sp-row">
+          <button id="btn-save-imperf">保存可选表达设置</button>
+        </div>
+        <div id="imperf-status" class="dim" aria-live="polite"></div>
+
+        <h3>主动陪伴</h3>
+        <label class="check"><input id="set-only-presence" type="checkbox" /> 只陪着（不监测活动、不主动开口；手动聊天仍可用）</label>
+        <label>每天最多主动搭话 <input id="set-companion-max" type="number" min="0" max="10" step="1" /></label>
+        <label>两次主动搭话至少间隔（分钟） <input id="set-companion-gap" type="number" min="15" max="720" step="15" /></label>
+        <div id="companion-status" class="dim" aria-live="polite"></div>
+
+        <h3>活动监测</h3>
+        <p class="dim" style="margin:0 0 8px;line-height:1.7">
+          开启后，凪 会在本机偶尔看一眼你正在用什么程序（只看类别，不保存窗口标题原文），
+          好在合适的时候主动关心你——坐太久、深夜还在忙、玩得太久。命中黑名单的窗口一律不采集。
+        </p>
+        <label class="check"><input id="set-monitor" type="checkbox" /> 开启活动监测</label>
+        <label class="check"><input id="set-dnd" type="checkbox" /> 勿扰模式（暂停采集，也不主动开口）</label>
+        <label>黑名单（每行一条，支持 * 通配）
+          <textarea id="set-blacklist" rows="4" placeholder="例如：&#10;*密码*&#10;*银行*&#10;*1password*"></textarea>
+        </label>
+        <div class="sp-row">
+          <button id="btn-save-monitor">保存陪伴与监测设置</button>
+        </div>
+
+        <h3>日历信号（只读）</h3>
+        <p class="dim">选择一份 .ics 日历文件后，凪只保存本机快照，并在聊天时参考未来 48 小时的计划。计划不等于已经发生的经历。撤销会删除快照；更新日历需重新选择文件。</p>
+        <div class="sp-row">
+          <button id="btn-calendar-import">选择 .ics 文件</button>
+          <button id="btn-calendar-revoke" class="danger">撤销并删除快照</button>
+        </div>
+        <div id="calendar-status" class="dim" aria-live="polite"></div>
+        <div id="calendar-events" class="dim" style="max-height:180px;overflow:auto;white-space:pre-wrap"></div>
+
+        <h3>音乐信号（只读）</h3>
+        <p class="dim">单独授权后，凪可读取 Windows 当前媒体会话的曲名、歌手和播放状态。对网易云音乐等不向系统报告会话的播放器，会兜底读取其窗口标题（仅限已知播放器进程，状态未知时如实说明）。不控制播放器，不把曲目自动写进共同记忆。勿扰和“只陪着”期间暂停读取。</p>
+        <div class="sp-row">
+          <button id="btn-music-enable">授权读取</button>
+          <button id="btn-music-refresh">查看当前媒体</button>
+          <button id="btn-music-revoke" class="danger">撤销音乐授权</button>
+        </div>
+        <div id="music-status" class="dim" aria-live="polite"></div>
+
+        <h3>位置信号（只读）</h3>
+        <p class="dim">单独授权后，凪可获取你的大致位置（城市与坐标）。优先用 Windows 系统定位，失败时回退 IP 定位（更粗）。30 分钟内只读一次，不追踪移动轨迹，不把位置写进共同记忆。勿扰和“只陪着”期间暂停读取。</p>
+        <div class="sp-row">
+          <button id="btn-geo-enable">授权读取</button>
+          <button id="btn-geo-refresh">查看当前位置</button>
+          <button id="btn-geo-revoke" class="danger">撤销位置授权</button>
+        </div>
+        <div id="geo-status" class="dim" aria-live="polite"></div>
+
+        <h3>智能家居（Home Assistant）</h3>
+        <p class="dim">先单独授权只读设备状态，再按需授权控制。每次控制仍需确认具体设备与动作；服务请求成功只说明已尝试，不证明设备已达到目标状态。撤销信号会断开订阅并删除 Token。</p>
+        <label>地址 <input id="set-ha-url" type="text" /></label>
+        <label>Token <span id="set-ha-status" class="dim">未配置</span>
+          <input id="set-ha-token" type="password" placeholder="Long-Lived Access Token" />
+        </label>
+        <div class="sp-row">
+          <button id="btn-save-ha">保存</button>
+          <button id="btn-test-ha">测试连接</button>
+        </div>
+        <div id="ha-result" class="dim"></div>
+        <div class="sp-row">
+          <button id="btn-ha-read-enable">授权只读设备状态</button>
+          <button id="btn-ha-control-enable">授权逐次确认的控制</button>
+        </div>
+        <div class="sp-row">
+          <button id="btn-ha-control-revoke" class="danger">撤销控制</button>
+          <button id="btn-ha-signal-revoke" class="danger">撤销 HA 并删除 Token</button>
+        </div>
+        <div id="ha-signal-status" class="dim" aria-live="polite"></div>
+        <div class="sp-row">
+          <button id="btn-ha-list">列设备（前100）</button>
+        </div>
+        <div id="ha-list" class="dim" style="max-height:180px;overflow:auto;white-space:pre-wrap"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 首次启动：活动监测告知（仅桌宠形态弹一次） ============ -->
+  <div id="notice-overlay" class="overlay hidden">
+    <div id="notice-panel">
+      <h3>关于「活动监测」</h3>
+      <p>凪 会偶尔看一眼你正在用什么程序，好在合适的时候主动关心你。</p>
+      <ul>
+        <li>只在本机判断，窗口标题原文不会保存、不会上传；</li>
+        <li>密码、银行等敏感窗口默认在黑名单里，一律不采集；</li>
+        <li>随时可在「设置 → 活动监测」里关闭，或临时开「勿扰」。</li>
+      </ul>
+      <div class="sp-row">
+        <button id="btn-notice-ok">知道了</button>
+        <button id="btn-notice-off" class="danger">先关掉监测</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

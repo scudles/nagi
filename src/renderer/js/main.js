@@ -1232,7 +1232,8 @@ function readLlmForm() {
   return {
     baseURL: document.getElementById('set-baseurl').value.trim(),
     model: document.getElementById('set-model').value.trim(),
-    temperature: rawTemperature && Number.isFinite(parsedTemperature) ? parsedTemperature : 0.7
+    // 2026-10-18：缺省 0.7 → 1.3（DeepSeek 通用对话推荐值；低温度是金句感的放大器）
+    temperature: rawTemperature && Number.isFinite(parsedTemperature) ? parsedTemperature : 1.3
   }
 }
 
@@ -1240,7 +1241,7 @@ function showLlmProfile(provider) {
   const profile = llmDraftProfiles[provider] || PROVIDER_PRESETS[provider] || {}
   document.getElementById('set-baseurl').value = profile.baseURL || ''
   document.getElementById('set-model').value = profile.model || ''
-  document.getElementById('set-temp').value = profile.temperature ?? 0.7
+  document.getElementById('set-temp').value = profile.temperature ?? 1.3
 }
 
 /** 装束面板：按模型当前拥有的装束渲染一排按钮（模型没配 nagi-outfit.json 就说明情况） */
@@ -1289,7 +1290,7 @@ function fillOutfitAndAmbient() {
     if (el) el.checked = v
   }
   set('set-ambient-enabled', a.enabled !== false)
-  set('set-ambient-gaze', a.gaze !== false)
+  // set-ambient-gaze 已移除（D51）：微注视「看一眼就移开」是加分项，常开
   set('set-ambient-autonomous', a.autonomous !== false)
   set('set-ambient-hotkeys', a.hotkeys !== false)
   const lvl = document.getElementById('set-ambient-level')
@@ -1348,7 +1349,7 @@ function fillSettingsForm() {
   llmDraftProfiles[llmDraftProvider] = {
     baseURL: llm.baseURL || '',
     model: llm.model || '',
-    temperature: llm.temperature ?? 0.7
+    temperature: llm.temperature ?? 1.3
   }
   if (sel) sel.value = llmDraftProvider
   showLlmProfile(llmDraftProvider)
@@ -1867,8 +1868,15 @@ async function refreshVoice() {
   set('set-voice-enabled', cfg.ttsEnabled)
   set('set-speak-reply', cfg.speakOnReply)
   set('set-speak-proactive', cfg.speakOnProactive)
+  // 「让她念出来」（D51）：主级只是两个细分项的快捷方式，真实数据源仍是细分项。
+  // 两项不一致时用 indeterminate 显示半勾，不假装它们一样。
+  const both = document.getElementById('set-speak-both')
+  if (both) {
+    both.checked = cfg.speakOnReply === true && cfg.speakOnProactive === true
+    both.indeterminate = cfg.speakOnReply !== cfg.speakOnProactive
+  }
   set('set-voice-profile', settings?.presence?.voiceProfileEnabled === true)
-  set('set-lipsync', cfg.lipSync)
+  // set-lipsync 已移除（D51）：口型同步常开，关掉只有坏处（说话不动嘴）
 
   const rate = document.getElementById('set-voice-rate')
   if (rate) rate.value = String(cfg.rate)
@@ -1877,13 +1885,9 @@ async function refreshVoice() {
   if (vol) vol.value = String(cfg.volume)
   document.getElementById('set-voice-volume-val').textContent = String(cfg.volume)
 
-  // 语气音：默认关闭；概率填的是百分比（上限 30% 与 core 侧上限一致）
+  // 语气音概率滑块已移除（D51）：写死 15%，用户拖不出有意义的区别，
+  // 上限 30% / 每天 4 次 / 深夜不出声由 core 侧夹着。
   set('set-backchannel', cfg.backchannel?.enabled === true)
-  const bcProb = document.getElementById('set-backchannel-prob')
-  const bcPct = Math.round((Number(cfg.backchannel?.probability) || 0) * 100)
-  if (bcProb) bcProb.value = String(Math.min(30, Math.max(0, bcPct)))
-  const bcProbVal = document.getElementById('set-backchannel-prob-val')
-  if (bcProbVal) bcProbVal.textContent = `${bcProb ? Number(bcProb.value) : 0}%`
 
   const pt = document.getElementById('set-preview-text')
   if (pt && !pt.value) pt.value = VOICE_PREVIEW_TEXT
@@ -1946,6 +1950,56 @@ function playPreviewBytes(bytes, format) {
   })
 }
 
+/**
+ * D51 取消冗余开关后，这几个值不再有界面控件，行为写死在这里。
+ * 改这里等于改所有人的默认行为，请连同 docs/DECISIONS.md 一起记。
+ */
+/** 语气音出现概率：15%。上限 30%、每天 4 次、深夜不出声由 core 侧夹住，UI 不再暴露滑块 */
+const BACKCHANNEL_PROBABILITY = 0.15
+/** 可选表达延迟概率：2%。曾为可填的 0–10% 输入框，但概率是工程参数，用户无法理性选择 */
+const IMPERFECTION_PROBABILITY = 0.02
+
+/**
+ * 按钮就地反馈（D49）。
+ *
+ * 以前点「保存」只有段落末尾那行 .dim（灰色 12px）会变，手指按的地方毫无反应 ——
+ * 用户根本不确定到底执行了没有。现在反馈长在按钮自己身上：
+ * 按下 → 「处理中…」并禁用 → 结束 → 「已保存」/「没成功」→ 约 1.8 秒后复原。
+ *
+ * 约定（重要）：handler 返回 false = 没成功。所有保存分支的失败/中止路径都必须
+ * `return false`，不能只写 `return`，否则按钮显示「已保存」而下面那行却写着失败 ——
+ * 那是新的谎言，比没有反馈更糟。handler 抛错同样记为没成功。
+ */
+function bindSaveButton(id, handler, opts = {}) {
+  const el = document.getElementById(id)
+  if (!el) return
+  el.addEventListener('click', async () => {
+    if (el.classList.contains('is-busy')) return
+    if (!el.dataset.label) el.dataset.label = el.textContent
+    const label = el.dataset.label
+    el.disabled = true
+    el.classList.remove('is-ok', 'is-fail')
+    el.classList.add('is-busy')
+    el.textContent = opts.busy || '处理中…'
+    let ok = false
+    try {
+      ok = (await handler()) !== false
+    } catch (err) {
+      ok = false
+      console.error('[settings] 按钮执行失败', id, err)
+    }
+    el.disabled = false
+    el.classList.remove('is-busy')
+    el.textContent = ok ? (opts.ok || '已保存') : (opts.fail || '没成功')
+    el.classList.add(ok ? 'is-ok' : 'is-fail')
+    clearTimeout(el.__flashTimer)
+    el.__flashTimer = setTimeout(() => {
+      el.classList.remove('is-ok', 'is-fail')
+      el.textContent = label
+    }, opts.ms || 1800)
+  })
+}
+
 function wireVoiceSettings(on) {
   const rate = document.getElementById('set-voice-rate')
   rate?.addEventListener('input', () => {
@@ -1955,10 +2009,28 @@ function wireVoiceSettings(on) {
   vol?.addEventListener('input', () => {
     document.getElementById('set-voice-volume-val').textContent = String(Number(vol.value))
   })
-  const bcProb = document.getElementById('set-backchannel-prob')
-  bcProb?.addEventListener('input', () => {
-    document.getElementById('set-backchannel-prob-val').textContent = `${Number(bcProb.value)}%`
+  // 语气音概率滑块已移除（D51），对应的 input 监听一并删除
+
+  // 「让她念出来」：勾一次把两个细分项一起开/关（细分项仍可在高级里单独调）
+  const speakBoth = document.getElementById('set-speak-both')
+  speakBoth?.addEventListener('change', () => {
+    const v = speakBoth.checked
+    const a = document.getElementById('set-speak-reply')
+    const b = document.getElementById('set-speak-proactive')
+    if (a) a.checked = v
+    if (b) b.checked = v
+    speakBoth.indeterminate = false
   })
+  // 细分项被单独改动时，主级要如实反映（两个都开才显示全勾，否则半勾）
+  const syncBoth = () => {
+    const a = document.getElementById('set-speak-reply')
+    const b = document.getElementById('set-speak-proactive')
+    if (!speakBoth || !a || !b) return
+    speakBoth.checked = a.checked && b.checked
+    speakBoth.indeterminate = a.checked !== b.checked
+  }
+  document.getElementById('set-speak-reply')?.addEventListener('change', syncBoth)
+  document.getElementById('set-speak-proactive')?.addEventListener('change', syncBoth)
 
   // 换引擎 → 音色下拉跟着换数据源
   document.getElementById('set-tts-engine')?.addEventListener('change', () => fillTtsVoices(voiceSnapshot))
@@ -1966,7 +2038,7 @@ function wireVoiceSettings(on) {
 
   on('btn-tts-preview', previewVoice)
 
-  on('btn-save-voice', async () => {
+  bindSaveButton('btn-save-voice', async () => {
     const engine = document.getElementById('set-tts-engine').value
     const voice = document.getElementById('set-tts-voice').value
     // 语气音里未在界面暴露的字段（perDayMax / 间隔 / 深夜开关）要从快照带上，
@@ -1983,14 +2055,14 @@ function wireVoiceSettings(on) {
         // 语气音：整块写回（保留未在界面上暴露的 perDayMax / 间隔 / 深夜开关）
         backchannel: {
           enabled: document.getElementById('set-backchannel')?.checked === true,
-          probability: Number(document.getElementById('set-backchannel-prob')?.value || 0) / 100,
+          probability: BACKCHANNEL_PROBABILITY,
           perDayMax: Number.isFinite(bcPrev.perDayMax) ? bcPrev.perDayMax : 4,
           minIntervalMs: Number.isFinite(bcPrev.minIntervalMs) ? bcPrev.minIntervalMs : 180000,
           allowAtNight: bcPrev.allowAtNight === true
         },
         speakOnReply: document.getElementById('set-speak-reply').checked,
         speakOnProactive: document.getElementById('set-speak-proactive').checked,
-        lipSync: document.getElementById('set-lipsync').checked,
+        lipSync: true, // D51：取消开关，常开
         asrEngine: document.getElementById('set-asr-engine').value
       },
       presence: {
@@ -2143,8 +2215,8 @@ function refreshPresenceSection() {
     const el = document.getElementById(id)
     if (el) el.checked = v
   }
-  set('set-presence-enabled', cfg.enabled)
-  set('set-presence-rhythm', cfg.rhythmEnabled)
+  // set-presence-enabled / set-presence-rhythm 已移除（D51）：
+  // 时间感与昼夜节律是「活人感」的地基，没有真实使用场景，常开。
   set('set-presence-away', cfg.awayEnabled)
   set('set-presence-reunion', cfg.reunionEnabled)
   set('set-presence-persist', cfg.persistActivities)
@@ -2157,8 +2229,7 @@ function refreshPresenceSection() {
   set('set-imperf-enabled', imp.enabled === true)
   set('set-imperf-low', imp.lowPressureEnabled === true)
   set('set-imperf-repair', imp.repairEnabled === true)
-  const prob = document.getElementById('set-imperf-prob')
-  if (prob) prob.value = String(Math.max(0, Math.min(10, Math.round((Number(imp.forgetProbability) || 0) * 100))))
+  // set-imperf-prob 已移除（D51）：概率写死 2%，不再回显到界面
 
   const num = (id, minutes) => {
     const el = document.getElementById(id)
@@ -2191,7 +2262,7 @@ function wirePresenceSettings(on) {
     return Math.max(min, Math.min(max, Math.floor(v)))
   }
 
-  on('btn-save-presence', async () => {
+  bindSaveButton('btn-save-presence', async () => {
     const status = document.getElementById('presence-status')
     const cfg = presenceConfig(settings?.presence)
     const minMs = numField('set-presence-reunion-min', 5, 30, cfg.reunionMinMs / 60000) * 60000
@@ -2199,7 +2270,7 @@ function wirePresenceSettings(on) {
     const hoursMs = numField('set-presence-reunion-hours', 90, 1440, cfg.reunionHoursMs / 60000) * 60000
     if (!(minMs < longMs && longMs < hoursMs)) {
       if (status) status.textContent = '离开阈值必须从小到大（「一会儿」小于「很久」），已中止保存'
-      return
+      return false
     }
 
     // 时段表：渲染了编辑器却读不出合法表 = 用户填的边界非法 → 拦下并说明；
@@ -2213,23 +2284,24 @@ function wirePresenceSettings(on) {
     const wd = readSched('presence-sched-weekday')
     const we = readSched('presence-sched-weekend')
     if (wd.invalid || we.invalid) {
-      if (schedStatus) schedStatus.textContent = '时段表边界不合法（各段结束时间需依次递增，且在 00:01–23:59 之间），已中止保存'
-      return
+        if (schedStatus) schedStatus.textContent = '时段表边界不合法（各段结束时间需依次递增，且在 00:01–23:59 之间），已中止保存'
+        return false
     }
     if (wd.table && we.table) {
       const merged = presenceConfig({ weekdaySchedule: wd.table, weekendSchedule: we.table })
       if (JSON.stringify(merged.weekdaySchedule) !== JSON.stringify(wd.table) ||
           JSON.stringify(merged.weekendSchedule) !== JSON.stringify(we.table)) {
         if (schedStatus) schedStatus.textContent = '时段表没有通过校验，已中止保存（边界需递增且在 00:01–23:59 之间）'
-        return
+        return false
       }
     }
     const weekday = wd.table
     const weekend = we.table
 
     const patch = {
-      enabled: document.getElementById('set-presence-enabled').checked,
-      rhythmEnabled: document.getElementById('set-presence-rhythm').checked,
+      // D51：时间感总开关与昼夜节律常开，不再读界面
+      enabled: true,
+      rhythmEnabled: true,
       awayEnabled: document.getElementById('set-presence-away').checked,
       reunionEnabled: document.getElementById('set-presence-reunion').checked,
       idleAfterMs: numField('set-presence-idle', 2, 60, cfg.idleAfterMs / 60000) * 60000,
@@ -2247,14 +2319,14 @@ function wirePresenceSettings(on) {
       settings = await window.nagi.settings.get()
     } catch (err) {
       if (status) status.textContent = '保存失败：' + err.message
-      return
+      return false
     }
     refreshPresenceSection()
     if (status) status.textContent = '已保存，即时生效'
     ui.addToolLog('时间感设置已保存')
   })
 
-  on('btn-save-presence-privacy', async () => {
+  bindSaveButton('btn-save-presence-privacy', async () => {
     const status = document.getElementById('presence-status')
     const cfg = presenceConfig(settings?.presence)
     try {
@@ -2268,7 +2340,7 @@ function wirePresenceSettings(on) {
       settings = await window.nagi.settings.get()
     } catch (err) {
       if (status) status.textContent = '保存失败：' + err.message
-      return
+      return false
     }
     refreshPresenceSection()
     if (status) status.textContent = '隐私设置已保存，即时生效'
@@ -2276,7 +2348,7 @@ function wirePresenceSettings(on) {
   })
 
   // 「她留下的东西」（BLUE-3）：三个业务开关一起写；关掉全部时主进程会连文件一起清掉
-  on('btn-save-notes', async () => {
+  bindSaveButton('btn-save-notes', async () => {
     const status = document.getElementById('notes-status')
     const notesEnabled = document.getElementById('set-notes-enabled').checked
     const tracesEnabled = document.getElementById('set-traces-enabled').checked
@@ -2288,7 +2360,7 @@ function wirePresenceSettings(on) {
       await window.nagi.notes.list()
     } catch (err) {
       if (status) status.textContent = '保存失败：' + err.message
-      return
+      return false
     }
     refreshPresenceSection()
     if (status) {
@@ -2304,18 +2376,17 @@ function wirePresenceSettings(on) {
   })
 
   // 「陪伴 · 可选表达」（BLUE-4）：概率按 0–10% 存成 0–0.1
-  on('btn-save-imperf', async () => {
+  bindSaveButton('btn-save-imperf', async () => {
     const status = document.getElementById('imperf-status')
-    const raw = Number(document.getElementById('set-imperf-prob').value)
-    const pct = Number.isFinite(raw) ? Math.max(0, Math.min(10, Math.round(raw))) : 0
     const enabled = document.getElementById('set-imperf-enabled').checked
     try {
       await window.nagi.settings.set({
         presence: {
           imperfection: {
             enabled,
-            // 总开关关着时概率归零：不会出现「关了还偶尔延迟」的错觉
-            forgetProbability: enabled ? pct / 100 : 0,
+            // 总开关关着时概率归零：不会出现「关了还偶尔延迟」的错觉。
+            // D51：概率不再由界面填写，写死 2%（工程参数，用户无法理性选择）
+            forgetProbability: enabled ? IMPERFECTION_PROBABILITY : 0,
             lowPressureEnabled: document.getElementById('set-imperf-low').checked,
             repairEnabled: document.getElementById('set-imperf-repair').checked
           }
@@ -2324,12 +2395,12 @@ function wirePresenceSettings(on) {
       settings = await window.nagi.settings.get()
     } catch (err) {
       if (status) status.textContent = '保存失败：' + err.message
-      return
+      return false
     }
     refreshPresenceSection()
     if (status) {
       status.textContent = enabled
-        ? `已保存：可选表达延迟概率 ${pct}%，每天最多 1 次；重要事项不受影响。`
+        ? `已保存：可选表达延迟概率 ${Math.round(IMPERFECTION_PROBABILITY * 100)}%，每天最多 1 次；重要事项不受影响。`
         : '已关闭：所有可选表达照常说，重要事项本来就不受影响。'
     }
     ui.addToolLog('可选表达设置已保存')
@@ -2441,7 +2512,7 @@ function wireRagSettings(on) {
     document.getElementById('set-rag-model-wrap')?.classList.toggle('hidden', v !== 'local')
   })
 
-  on('btn-save-rag', async () => {
+  bindSaveButton('btn-save-rag', async () => {
     await window.nagi.settings.set({
       rag: {
         enabled: document.getElementById('set-rag-enabled').checked,
@@ -2544,6 +2615,19 @@ function wireRagSettings(on) {
 function wireSettingsPage() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn)
 
+  // 设置页分组导航（D49）：一次只显示一组，组内「高级」由原生 <details> 折叠。
+  // 切组只是切 class，不重建 DOM —— 所有控件 id 与已绑定的事件都保持原样，
+  // 这也是这次重构没碰任何取值逻辑的前提。
+  const navItems = Array.from(document.querySelectorAll('.sp-nav-item'))
+  const showGroup = (name) => {
+    for (const b of navItems) b.classList.toggle('is-active', b.dataset.group === name)
+    for (const s of document.querySelectorAll('.sp-group')) {
+      s.classList.toggle('is-active', s.dataset.group === name)
+    }
+  }
+  for (const b of navItems) b.addEventListener('click', () => showGroup(b.dataset.group))
+  showGroup(navItems[0]?.dataset.group || 'person')
+
   on('btn-calendar-import', async () => {
     const result = await window.nagi.calendar.import()
     if (!result.ok && !result.canceled) document.getElementById('calendar-status').textContent = `导入失败：${result.error}`
@@ -2593,13 +2677,13 @@ function wireSettingsPage() {
     document.getElementById('ha-list').textContent = ''
   })
 
-  on('btn-save-llm', async () => {
+  bindSaveButton('btn-save-llm', async () => {
     const provider = document.getElementById('set-provider').value
     const profile = readLlmForm()
     const baseURL = profile.baseURL
     if (provider === 'ollama' && !ollamaTagsUrl(baseURL)) {
       document.getElementById('set-local-llm-status').textContent = 'Ollama 地址必须是本机 http://localhost:端口/v1'
-      return
+      return false
     }
     await window.nagi.settings.set({
       llm: {
@@ -2621,9 +2705,12 @@ function wireSettingsPage() {
     void refreshLocalLlmStatus()
   })
 
-  on('btn-save-key', async () => {
+  bindSaveButton('btn-save-key', async () => {
     const v = document.getElementById('set-apikey').value.trim()
-    if (!v) return ui.addToolLog('API Key 为空，未保存')
+    if (!v) {
+      ui.addToolLog('API Key 为空，未保存')
+      return false
+    }
     await window.nagi.secrets.set(SECRET_KEYS.LLM_API_KEY, v)
     document.getElementById('set-apikey').value = ''
     await refreshSecretStatus()
@@ -2658,7 +2745,7 @@ function wireSettingsPage() {
   })
 
   on('btn-refresh-models', refreshModels)
-  on('btn-save-l2d', async () => {
+  bindSaveButton('btn-save-l2d', async () => {
     const depthAmt = Number(document.getElementById('set-depth-amount')?.value) || 1
     await window.nagi.settings.set({
       live2d: {
@@ -2687,11 +2774,11 @@ function wireSettingsPage() {
   })
 
   // 待机行为设置（热键开关会即时重注册，不必重启）
-  on('btn-save-ambient', async () => {
+  bindSaveButton('btn-save-ambient', async () => {
     await window.nagi.settings.set({
       ambient: {
         enabled: document.getElementById('set-ambient-enabled')?.checked !== false,
-        gaze: document.getElementById('set-ambient-gaze')?.checked !== false,
+        gaze: true, // D51：取消开关，常开
         autonomous: document.getElementById('set-ambient-autonomous')?.checked !== false,
         hotkeys: document.getElementById('set-ambient-hotkeys')?.checked !== false,
         level: document.getElementById('set-ambient-level')?.value || 'conservative'
@@ -2704,7 +2791,7 @@ function wireSettingsPage() {
   })
 
   // 「她想一下再表现」的设置（改完需要重启凪才生效：那层跑在主进程里）
-  on('btn-save-reaction', async () => {
+  bindSaveButton('btn-save-reaction', async () => {
     const num = (id, d) => {
       const v = Number(document.getElementById(id)?.value)
       return Number.isFinite(v) && v > 0 ? Math.round(v) : d
@@ -2764,7 +2851,7 @@ function wireSettingsPage() {
     settings = await window.nagi.settings.get()
     ui.addToolLog('已撤销文件目录授权')
   })
-  on('btn-save-tools', async () => {
+  bindSaveButton('btn-save-tools', async () => {
     await window.nagi.settings.set({
       tools: {
         cdpPort: Number(document.getElementById('set-cdp').value) || 9222
@@ -2775,7 +2862,7 @@ function wireSettingsPage() {
   })
 
   // 活动监测：开关 / 勿扰 / 黑名单
-  on('btn-save-monitor', async () => {
+  bindSaveButton('btn-save-monitor', async () => {
     const blacklist = (document.getElementById('set-blacklist')?.value || '')
       .split('\n')
       .map((s) => s.trim())
@@ -2797,7 +2884,7 @@ function wireSettingsPage() {
     ui.addToolLog('陪伴与监测设置已保存')
   })
 
-  on('btn-save-ha', async () => {
+  bindSaveButton('btn-save-ha', async () => {
     await window.nagi.settings.set({
       homeassistant: {
         baseURL: document.getElementById('set-ha-url').value.trim(),

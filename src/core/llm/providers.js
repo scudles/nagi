@@ -32,7 +32,10 @@ export function resolveLlm(cfg = {}) {
     label: preset.label,
     baseURL: (cfg.baseURL || preset.baseURL || '').replace(/\/+$/, ''),
     model: cfg.model || preset.model || '',
-    temperature: typeof cfg.temperature === 'number' ? cfg.temperature : 0.7
+    // 2026-10-18：0.7 → 1.3。DeepSeek 官方对「通用对话」推荐 1.3；
+    // 0.7 会让输出偏向"最稳、最像格言"的表达，是电报体与金句感的放大器。
+    // 已写入设置的用户显式值仍然优先（这里只是缺省值）。
+    temperature: typeof cfg.temperature === 'number' ? cfg.temperature : 1.3
   }
 }
 

@@ -112,7 +112,8 @@ export const OUTFIT_IPC = {
 }
 
 /** 6 种离散情绪（与旧情感系统一致） */
-export const EMOTIONS = ['calm', 'puzzled', 'smile', 'worry', 'pout', 'joy']
+// 2026-10-17 新人设：后三个是「存在主义层」——只在真正深刻的时刻出现，日常不用。
+export const EMOTIONS = ['calm', 'puzzled', 'smile', 'worry', 'pout', 'joy', 'liminal', 'tender', 'distant']
 
 /** Agent Loop 向前端广播的事件类型 */
 export const AGENT_EVENT = {

@@ -158,7 +158,9 @@ test('shouldOfferCache：只深夜放行，且每周有上限', () => {
 
 /* ---------------- 离线兜底也不能复读 ---------------- */
 
-test('pickFallbackDiary 避开最近写过的话', () => {
+test('pickFallbackDiary 恒返回空：模型不可用时就不写（新人设无台词铁律）', () => {
+  // 2026-10-17：内心独白池已随新人设移除。"心里话"只能由模型现场生成，
+  // 生成不了就不写——与其从池里抽一句像模像样的话，不如让她安静。
   const recent = [
     '……今天他给我讲了一个很长的故事，我听到一半就困了。',
     '……咖啡洒在键盘上了。',
@@ -166,7 +168,8 @@ test('pickFallbackDiary 避开最近写过的话', () => {
   ]
   for (let i = 0; i < 20; i++) {
     const got = pickFallbackDiary({ mood: { mood: 'worry' }, recent })
-    assert.ok(got, '不该返回空')
-    assert.ok(!recent.includes(got), '不该挑中最近写过的那几句：' + got)
+    assert.equal(got, '', '离线兜底不该再产出任何句子')
   }
+  // 无 recent、无 mood 时同样为空
+  assert.equal(pickFallbackDiary({}), '')
 })

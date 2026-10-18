@@ -34,7 +34,16 @@ function createFakeSampler() {
  * 启动监测（幂等）。
  * @param {{onProactive:(payload:object)=>void, log?:Function}} deps
  */
-export function startMonitor({ onProactive, onPresenceSample, log = console.log } = {}) {
+/**
+ * @param {{onProactive:Function, onPresenceSample?:Function, log?:Function,
+ *          composeText?: (args:{intent:string, vars:object, mood:string}) => Promise<string>}} opts
+ *
+ * composeText：2026-10-17 新增。主动搭话的内容原先从 persona 的固定池抽取，
+ * 现在改由 LLM 现场生成（新人设的无台词铁律），走依赖注入是因为
+ * **agent.js 已经 import 了本模块**，反向 import 会造成循环依赖。
+ * 不传或生成失败都返回空串 → 引擎跳过、她这次不开口（不回退到任何预设句子）。
+ */
+export function startMonitor({ onProactive, onPresenceSample, log = console.log, composeText = null } = {}) {
   if (timer) return
   const selftest = process.env.NAGI_SELFTEST_MONITOR === '1'
   const cfg = getSettings().privacy || {}
@@ -82,7 +91,10 @@ export function startMonitor({ onProactive, onPresenceSample, log = console.log 
   engine = createMonitorEngine({
     sampler,
     getPrivacy: () => getSettings().privacy || {},
-    pickText: (pool, vars) => NagiPersona.pickProactive(pool, vars),
+    pickText: async (pool, vars, rule) =>
+      composeText
+        ? await composeText({ intent: pool, vars: vars || {}, mood: rule?.mood || 'calm' })
+        : '',
     onProactive,
     onPresenceSample,
     log

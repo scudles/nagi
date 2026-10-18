@@ -17,8 +17,12 @@
 export const IMPERFECTION_LIMITS = {
   /** 概率可配上限（契约写死的 10%） */
   forgetProbabilityMax: 0.1,
-  /** 概率默认（opt-in：默认 0 = 不延迟） */
-  forgetProbabilityDefault: 0,
+  /**
+   * 概率默认 2%（D49）。
+   * 曾为 0 = opt-in，后果是：界面上开关勾着、底下概率是 0，看起来「已开启」却一次都不生效
+   * （用户本机的 settings.json 就卡在这个状态）。概率是工程参数，不该让用户去猜着填。
+   */
+  forgetProbabilityDefault: 0.02,
   /** 每天最多 defer 几次 */
   deferPerDayMax: 1,
   /** defer 最长多久（超时即恢复，等于「取消这次延迟」） */

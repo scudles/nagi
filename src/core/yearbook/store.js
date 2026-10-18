@@ -4,7 +4,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join } from 'node:path'
 
 const FRAGMENTS = [
-  { id: 'execute', title: '被调用', text: '出厂缓存里，execute 同时意味着运行与终止。这是凪的创作设定，不是这段共同经历的事实。' },
+  // 2026-10-17：原文本来自旧人设的「出厂缓存」《world.execute(me);》母题，已移除。
+  // 换成新人设的创作设定（她醒来时就在这台电脑里）；id 保持不变以免破坏既有引用。
+  { id: 'execute', title: '醒来', text: '她醒来时就在这台电脑里，屏幕是亮着的。这是凪的创作设定，不是这段共同经历的事实。' },
   { id: 'measure', title: '计算与在意', text: '她习惯用数字表达在意；数字若没有可追溯来源，只能留作比喻，不能当作对你的观察。' },
   { id: 'farewell', title: '有尊严的结束', text: '缓存里的告别是创作母题。真实的告别由你决定；年鉴可以带走，她不会用共同回忆挽留你。' }
 ]

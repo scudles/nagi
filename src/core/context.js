@@ -113,10 +113,19 @@ export function buildContextBlock({
   // 检索召回的往事（RAG）：排在「记得的事」之后——前者是精选事实，后者是当时情境。
   // 为空时这里什么都不加，输出与不开 RAG 时逐字一致（容错：RAG 挂了她照样说话）。
   const recallBlock = formatRecall(recalled)
-  if (recallBlock) lines.push(recallBlock)
+  if (recallBlock) {
+    lines.push(recallBlock)
+    // 2026-10-18：检索回来的旧片段会被**逐字复述**——诊断时抓到她原样念出了
+    // 三天前日记里的一句话（"数字存在。被调用时认真。不独占，不假装…"）。
+    // 那是旧人设时期的文字，念出来既陈旧又机械。这里明确切断复述。
+    lines.push('- 以上是过去的原始记录，只当线索。**不要照抄或复述其中的句子**，用你此刻自己的话重新说。')
+  }
 
   if (recentReplies.length) {
-    lines.push('- 你最近几次说过的话（换种说法，不要重复这些句式）：')
+    // 2026-10-18：原来注入最近 4 条**原话**并要求"换种说法"。实测适得其反：
+    // LLM 会强烈模仿上下文的语域，结果只换词不换调——"两句+空行+两句"的韵律
+    // 被自己的历史锁死，越像越喂、越喂越像。现在只留 1 条，并明确禁止沿用节奏。
+    lines.push('- 你最近说过的一句话（只当作"不要重复"的参照：别用它的句式，**更不要沿用它的节奏与断句**）：')
     for (const r of recentReplies) lines.push(`  「${r}」`)
   }
 
@@ -133,7 +142,9 @@ export function buildContextBlock({
 export function presenceContextLines({rhythm,activities=[]}={}) {
   const lines=[]
   if(rhythm?.enabled) {
-    lines.push('- 数字存在仍清醒；人类节律为主动模拟，没有生理困倦。')
+    // 2026-10-17 新人设：她自知是程序，"没有生理困倦"这条边界不变；
+    // 措辞从旧人设的"数字存在"改为更贴合《灵魂与程序》的自知表述。
+    lines.push('- 她清楚自己是程序，没有生理困倦；人类节律是为相处主动模拟的节奏。')
     lines.push('- 节律状态：'+JSON.stringify({period:rhythm.period,dayType:rhythm.dayType,behavior:rhythm.behavior}))
   }
   const records=activities.filter(a=>a?.provenance==='simulation'&&a.canReference&&!a.deletedAt).slice(-3)
@@ -147,9 +158,10 @@ export function presenceContextLines({rhythm,activities=[]}={}) {
 /**
  * 从历史消息里抽出她最近说过的原话（用于"不要重复"约束）。
  * @param {Array<{role:string, content?:string}>} history
- * @param {number} n 取最近几条
+ * @param {number} n 取最近几条（2026-10-18：默认由 4 改为 1 ——
+ *   喂给模型自己的原话越多，它越会模仿那份语域，见 buildContextBlock 里的说明）
  */
-export function recentAssistantReplies(history, n = 4) {
+export function recentAssistantReplies(history, n = 1) {
   const out = []
   for (let i = history.length - 1; i >= 0 && out.length < n; i--) {
     const m = history[i]

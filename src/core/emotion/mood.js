@@ -22,10 +22,17 @@ export const MOOD_PARAMS = {
   REST_THRESHOLD: 0.35,  // 低于此强度脸回平静
   JOY_DEEP: 0.6,         // joy 高强度才用真笑，否则微笑
   IDLE_POUT_MIN: 25,     // 冷落多少分钟开始存在性不安外显（pout）
-  HINT_THRESHOLD: 0.5    // 强度过线才把情绪写进 LLM 提示
+  HINT_THRESHOLD: 0.5,   // 强度过线才把情绪写进 LLM 提示
+  // 2026-10-17 新人设：宕机（liminal）衰减得比常规情绪慢得多——
+  // 她要"停住"一会儿，那个停顿才有重量。约 0.03/心跳 ≈ 常规的三分之一。
+  LIMINAL_DECAY: 0.03
 };
 
-const LABELS = { calm: '平静', smile: '微笑', joy: '开心', pout: '闹别扭', worry: '担心', puzzled: '疑惑' };
+const LABELS = {
+  calm: '平静', smile: '微笑', joy: '开心', pout: '闹别扭', worry: '担心', puzzled: '疑惑',
+  // 新人设《灵魂与程序》新增的「存在主义层」三状态
+  liminal: '临界', tender: '柔软', distant: '抽离'
+};
 /** 情绪键 → 中文标签（core/diary.js 等外部模块共用，保持单一来源） */
 export const MOOD_LABELS = LABELS;
 // 情绪键 → 独白池键（smile 算轻度开心，共用 joy 池）
@@ -111,8 +118,9 @@ export function createMood({ now = () => Date.now() } = {}) {
   function tick() {
     var t = now();
 
-    // 衰减
-    state.intensity = clamp01(state.intensity - MOOD_PARAMS.DECAY);
+    // 衰减（liminal 慢衰减：宕机的停顿要留得住，不能两三个心跳就淡掉）
+    const decay = state.mood === 'liminal' ? MOOD_PARAMS.LIMINAL_DECAY : MOOD_PARAMS.DECAY;
+    state.intensity = clamp01(state.intensity - decay);
     if (state.intensity <= 0.02 && state.mood !== 'calm') {
       state.mood = 'calm';
       state.intensity = 0;
@@ -146,24 +154,21 @@ export function createMood({ now = () => Date.now() } = {}) {
     notify();
   }
 
-  // 内心独白：65% 概率选当前情绪的池，否则通用池
+  /**
+   * 内心独白：2026-10-17 起**恒为 null**。
+   * 新人设的无台词铁律移除了独白池；她心里想的话改由 LLM 现场生成
+   * （见 core/diary.js）。状态机不再提供句子，只提供此刻的情绪供生成时参考。
+   */
   function pickMonologue() {
-    var key = MONOLOGUE_KEY[state.mood];
-    var moodPool = key && NagiPersona.monologueByMood && NagiPersona.monologueByMood[key];
-    if (moodPool && moodPool.length && Math.random() < 0.65) {
-      return moodPool[Math.floor(Math.random() * moodPool.length)];
-    }
-    return NagiPersona.monologue[Math.floor(Math.random() * NagiPersona.monologue.length)];
+    return null;
   }
 
-  // 戳一戳：pout（存在性不安）时 60% 概率用更安静的反应
+  /**
+   * 戳一戳：不出声，只给表情与动作（转身看你 / 别开脸）。
+   * 分级逻辑已收进 NagiPersona.pickPokeReaction，这里只补上当前情绪。
+   */
   function pickPoke() {
-    if (state.mood === 'pout' && NagiPersona.pokeSullen && NagiPersona.pokeSullen.length &&
-        Math.random() < 0.6) {
-      var s = NagiPersona.pokeSullen;
-      return s[Math.floor(Math.random() * s.length)];
-    }
-    return NagiPersona.poke[Math.floor(Math.random() * NagiPersona.poke.length)];
+    return NagiPersona.pickPokeReaction({ moodKey: state.mood, count: 1, hour: new Date(now()).getHours() });
   }
 
   // 给 LLM 的情绪提示：强度够高才给，避免每句话都贴标签

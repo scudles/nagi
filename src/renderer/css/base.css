@@ -8,6 +8,7 @@
   --accent: #8fa7ff;
   --accent-soft: rgba(143, 167, 255, 0.12);
   --danger: #ff6b6b;
+  --ok: #6ee7a8;
   --radius: 12px;
   --font: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
 }
@@ -597,7 +598,7 @@ body[data-mode="workbench"] {
 }
 .overlay.hidden { display: none; }
 #settings-panel {
-  width: 560px;
+  width: 680px;
   max-width: 92vw;
   max-height: 88vh;
   background: var(--bg-panel);
@@ -612,7 +613,47 @@ body[data-mode="workbench"] {
   padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px;
 }
 .sp-head button { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 15px; }
-.sp-body { padding: 16px; overflow-y: auto; font-size: 13px; }
+/* 二级菜单（D49）：左侧六组导航 + 右侧单组内容；组内「高级」用原生 details 折叠。
+   原来是一页 20 个 h3 连续滚动，找个「语气音」要滚 300 多行。 */
+.sp-body { display: flex; padding: 0; overflow: hidden; font-size: 13px; }
+.sp-nav {
+  flex: 0 0 128px; padding: 10px 8px; overflow-y: auto;
+  border-right: 1px solid var(--line); background: var(--bg-soft);
+}
+.sp-nav-item {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 10px; margin-bottom: 2px;
+  border: none; border-radius: 8px; background: transparent;
+  color: var(--text-dim); font-size: 12px; font-family: var(--font); cursor: pointer;
+}
+.sp-nav-item:hover { color: var(--text); background: var(--bg-panel); }
+.sp-nav-item.is-active { color: var(--accent); background: var(--accent-soft); }
+.sp-group { display: none; flex: 1; min-width: 0; padding: 16px; overflow-y: auto; }
+.sp-group.is-active { display: block; }
+details.sp-adv { margin: 10px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-soft); }
+details.sp-adv > summary {
+  cursor: pointer; padding: 8px 12px; font-size: 12px; color: var(--text-dim); list-style: none;
+}
+details.sp-adv > summary::-webkit-details-marker { display: none; }
+details.sp-adv > summary::before { content: "▸ "; }
+details.sp-adv[open] > summary::before { content: "▾ "; }
+details.sp-adv > .sp-adv-body { padding: 2px 12px 10px; }
+details.sp-adv h3 { margin-top: 0; }
+/* 窄屏（桌宠形态下窗口可能只有 400px 宽）：侧栏改成顶部横向标签，
+   否则 128px 的导航会把内容区挤到只剩两百多像素。 */
+@media (max-width: 560px) {
+  .sp-body { flex-direction: column; }
+  /* 换行而不是横向滚动：横向滚动会把「连接」挤出可视区，
+     用户根本不知道还有第六组。宁可占两行。 */
+  .sp-nav {
+    flex: none; display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 8px; border-right: none; border-bottom: 1px solid var(--line);
+  }
+  .sp-nav-item {
+    flex: 1 1 auto; width: auto; white-space: nowrap;
+    margin-bottom: 0; text-align: center;
+  }
+}
 .sp-body h3 { font-size: 12px; color: var(--accent); margin: 18px 0 8px; font-weight: 600; }
 .sp-body h3:first-child { margin-top: 0; }
 .sp-body label { display: block; margin-bottom: 10px; color: var(--text-dim); font-size: 12px; }
@@ -632,6 +673,12 @@ body[data-mode="workbench"] {
 }
 .sp-row button:hover { border-color: var(--accent); color: var(--accent); }
 .sp-row button.danger:hover { border-color: var(--danger); color: var(--danger); }
+/* 按钮就地反馈（D49）：点了要看得见。反馈长在手指按下的那个按钮上，
+   而不是只写在段落末尾的灰色小字里。 */
+.sp-row button.is-busy { border-color: var(--line); color: var(--text-dim); cursor: progress; }
+.sp-row button.is-ok { border-color: var(--ok); color: var(--ok); background: rgba(110, 231, 168, 0.10); }
+.sp-row button.is-fail { border-color: var(--danger); color: var(--danger); background: rgba(255, 107, 107, 0.10); }
+.sp-row button:disabled { cursor: default; }
 /* range 输入框不要继承 block/width:100% 的文本框样式 */
 .sp-body input[type="range"] {
   display: inline-block;

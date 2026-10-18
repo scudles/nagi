@@ -79,15 +79,18 @@ test('重要项永远 deliver，且不调用随机数（零遗忘的关键）', 
   assert.equal(calls, 0, '重要项分支不得调用 rng')
 })
 
-test('关闭 / 概率为 0 时不 defer（opt-in）', () => {
+test('关闭 / 概率显式为 0 时不 defer；默认值是 2% 不是 0', () => {
   // 关开关：不给延迟，也不重放积压
   const off = decideOptionalFollowup({ id: 'a', intention: LOW('a'), now: T0, config: { enabled: false, forgetProbability: 0.1 } })
   assert.equal(off.reason, 'disabled')
   assert.equal(off.action, 'deliver')
   assert.equal(decideOptionalFollowup({ id: 'a', intention: LOW('a'), now: T0, config: {} }).reason, 'disabled')
-  // 开了但概率 0（默认）：同样不延迟
+  // 开了但概率显式写 0（明确不要）：同样不延迟
   assert.equal(decideOptionalFollowup({ id: 'a', intention: LOW('a'), now: T0, config: { enabled: true, forgetProbability: 0 } }).reason, 'probability-zero')
-  assert.equal(IMPERFECTION_LIMITS.forgetProbabilityDefault, 0)
+  // D49：默认概率 2%。不能是 0 —— 开关勾着而概率默认 0，界面显示「已开启」却一次都不生效（假开）
+  assert.equal(IMPERFECTION_LIMITS.forgetProbabilityDefault, 0.02)
+  // 漏传概率时走默认 2%，而不是退回 0
+  assert.equal(decideOptionalFollowup({ id: 'a', intention: LOW('a'), now: T0, rng: () => 0.5, config: { enabled: true } }).reason, 'probability')
 })
 
 test('概率上限 10%：配置写大也被夹住', () => {

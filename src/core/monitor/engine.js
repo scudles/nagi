@@ -17,7 +17,9 @@ import { evaluateRules, RULES } from './rules.js'
  * @param {{sample: () => Promise<object|null>}} deps.sampler 采集器
  * @param {() => object} deps.getPrivacy 读取隐私配置
  * @param {(payload:{ruleId:string, mood:string, vars:object, text:string, stats:object}) => void} deps.onProactive 触发回调
- * @param {(poolKey:string, vars:object) => string} deps.pickText 台词选择器（反重复由 persona 负责）
+ * @param {(poolKey:string, vars:object, rule:object) => string|Promise<string>} deps.pickText
+ *        开口内容的来源。2026-10-17 起**由 LLM 现场生成**（新人设无台词铁律），
+ *        因此允许返回 Promise；返回空串表示"这次没什么可说"，引擎会跳过、不开口。
  * @param {() => number} [deps.now] 时钟
  * @param {object} [deps.tracker] 统计器（默认自建）
  * @param {object} [deps.throttle] 节流器（默认自建）
@@ -81,9 +83,10 @@ export function createMonitorEngine({
 
     let text = ''
     try {
-      text = pickText(hit.rule.pool, hit.vars) || ''
+      // 2026-10-17：pickText 可以是异步的（LLM 现场生成），这里统一 await。
+      text = (await pickText(hit.rule.pool, hit.vars, hit.rule)) || ''
     } catch (err) {
-      log('[monitor] 选台词失败：' + (err && err.message ? err.message : err))
+      log('[monitor] 生成开口内容失败：' + (err && err.message ? err.message : err))
     }
     if (!text) return { empty: hit.rule.id, stats }
 

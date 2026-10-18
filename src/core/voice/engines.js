@@ -65,7 +65,8 @@ export const TTS_FALLBACK = ['edge', 'sapi', 'cloud', 'gptsovits']
 
 /** edge-tts 的 zh-CN 音色（2026-10 实测可用，免密钥） */
 export const EDGE_VOICES = [
-  { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓 · 温暖（推荐）', note: '干净、情绪稳，最贴「过于干净的音色」' },
+  // 2026-10-17：旧 note 引用了旧人设的「过于干净的音色」，已随《world.execute(me);》设定移除
+  { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓 · 温暖（推荐）', note: '干净、情绪稳，贴她安静温柔的日常' },
   { id: 'zh-CN-XiaoyiNeural', label: '晓伊 · 活泼', note: '音调略高，活泼一些' },
   { id: 'zh-CN-YunxiNeural', label: '云希 · 阳光（男声）', note: '男声' },
   { id: 'zh-CN-YunyangNeural', label: '云扬 · 专业（男声）', note: '男声，播音感' },

@@ -1,7 +1,7 @@
 // test/backchannel.test.js
 // 非语言语气音（回合首尾）纯决策层单测。
 //
-// 覆盖：默认零影响、概率上限、有意留白、时段/勿扰压制、每日配额、最小间隔、
+// 覆盖：默认开启与老配置升级、概率上限、有意留白、时段/勿扰压制、每日配额、最小间隔、
 // 跨日归零、候选抽取不退化、脏输入安全、状态不可变。
 
 import test from 'node:test'
@@ -28,32 +28,49 @@ const ON = { enabled: true, probability: 1 }
 /** 关掉节流，专测"能不能出声"（节流本身另有单测） */
 const ON_NO_THROTTLE = { enabled: true, probability: 1, minIntervalMs: 0, perDayMax: 100 }
 
-test('默认不发声：开关未开 / 概率为 0 都零影响', () => {
+test('开关没开 / 概率显式写 0 才不发声；漏传概率走默认 15%', () => {
   const s = emptyBackchannelState()
   assert.equal(decideBackchannel({ phase: 'start', mood: 'calm', now: T0, state: s, config: {} }).reason, 'disabled')
   assert.equal(decideBackchannel({ phase: 'start', mood: 'calm', now: T0, state: s, config: { enabled: false, probability: 1 } }).reason, 'disabled')
-  assert.equal(decideBackchannel({ phase: 'start', mood: 'calm', now: T0, state: s, config: { enabled: true } }).reason, 'probability-zero')
+  // 显式写 0 = 明确不要，仍然不发声
+  assert.equal(decideBackchannel({ phase: 'start', mood: 'calm', now: T0, state: s, config: { enabled: true, probability: 0 } }).reason, 'probability-zero')
   assert.equal(decideBackchannel({ phase: 'end', mood: 'calm', now: T0, state: s, config: { enabled: true, probability: 0 } }).reason, 'probability-zero')
-  // 连默认都没配时也不能出声
+  // 连 config 都不传也不能出声
   assert.equal(decideBackchannel({ phase: 'start', now: T0, state: s }).reason, 'disabled')
+  // D49：开了开关却漏传概率，不能悄悄退回 0（那就是假开），要走默认 15%
+  assert.equal(decideBackchannel({ phase: 'start', mood: 'calm', now: T0, state: s, config: { enabled: true }, rng: constRng(0) }).reason, 'ok')
 })
 
-// 「默认关闭」写在注释里不算数——要有一条测试盯着，哪天有人把它默认打开会立刻红。
-test('出厂默认必须关闭：默认设置与缺项合并后都绝不发声', () => {
-  assert.equal(DEFAULT_VOICE_SETTINGS.backchannel.enabled, false, '出厂不能默认开启语气音')
-  assert.equal(DEFAULT_VOICE_SETTINGS.backchannel.probability, 0, '出厂概率必须是 0')
+// D49 决策变更：语气音由「出厂关闭」改为「默认开启 15%」，这条测试的方向随之反转。
+// 它现在盯的是「默认值确实开着」＋「老配置（voice 段里没有 backchannel 键）升级上来也能用上」——
+// 否则「活人感默认全开」就是一句空话。
+// 注意：反转的只是「要不要出厂就有」这一件事。概率上限、深夜、勿扰、每日配额、最小间隔
+// 这些硬约束由本文件其他测试继续钉着，一条都没松。
+test('出厂默认开启：默认设置与缺项合并后都能发声', () => {
+  assert.equal(DEFAULT_VOICE_SETTINGS.backchannel.enabled, true, '出厂默认开启语气音')
+  assert.equal(DEFAULT_VOICE_SETTINGS.backchannel.probability, 0.15, '出厂概率 15%')
   const merged = mergeVoiceSettings({})
-  assert.equal(merged.backchannel.enabled, false)
-  assert.equal(decideBackchannel({
+  assert.equal(merged.backchannel.enabled, true)
+  assert.ok(decideBackchannel({
     phase: 'start', mood: 'calm', now: T0, state: emptyBackchannelState(),
     config: merged.backchannel, rng: constRng(0)
-  }).text, null)
-  // 旧配置（压根没有 backchannel 键）升级上来也不能突然发声
+  }).text, '默认配置下 rng=0 应当出声')
+  // 老配置（压根没有 backchannel 键）升级上来也要用上
   const legacy = mergeVoiceSettings({ ttsEnabled: true })
-  assert.equal(decideBackchannel({
+  assert.equal(legacy.backchannel.enabled, true)
+  assert.ok(decideBackchannel({
     phase: 'end', mood: 'worry', now: T0, state: emptyBackchannelState(),
     config: legacy.backchannel, rng: constRng(0)
-  }).text, null)
+  }).text, '老配置升级后也应当能出声')
+  // 硬约束一条没松：深夜与勿扰仍然闭嘴
+  assert.equal(decideBackchannel({
+    phase: 'start', mood: 'calm', period: 'night', now: T0, state: emptyBackchannelState(),
+    config: merged.backchannel, rng: constRng(0)
+  }).reason, 'quiet-night')
+  assert.equal(decideBackchannel({
+    phase: 'start', mood: 'calm', now: T0, quiet: true, state: emptyBackchannelState(),
+    config: merged.backchannel, rng: constRng(0)
+  }).reason, 'do-not-disturb')
 })
 
 test('概率上限在代码里夹住：配成 0.9 也不会变成口头禅', () => {

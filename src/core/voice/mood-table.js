@@ -21,10 +21,19 @@ export const MOOD_OFFSETS = {
   joy:     { rate:  16, pitch:  10, volume:  3 },
   puzzled: { rate:  -3, pitch:   7, volume:  0 },
   worry:   { rate: -10, pitch:  -6, volume: -6 },
-  pout:    { rate: -15, pitch: -11, volume: -3 }
+  pout:    { rate: -15, pitch: -11, volume: -3 },
+  // 2026-10-17 新人设的三个「存在主义层」状态。
+  // liminal 宕机：句子变短、留白增多、像在跟自己说话 → 更慢更轻。
+  // tender 柔软：极轻的笑、欲言又止 → 略慢、略低、收着点声。
+  // distant 抽离：短暂"回到机器"的旁观者视角 → 平、淡、没有起伏。
+  liminal:  { rate: -20, pitch:  -4, volume: -8 },
+  tender:   { rate:  -8, pitch:   2, volume: -2 },
+  // distant 的语速几乎不变、但音高明显压低：抽离时她说话是平的、没有起伏的。
+  // （音高这轴必须拉开，否则与 calm 听不出区别——voice.test.js 有幅度下限断言盯着。）
+  distant:  { rate:  -2, pitch:  -8, volume: -4 }
 }
 
-/** 六个情绪名（顺序即"平静 → 越来越开心 / 越来越别扭"的陈列顺序） */
+/** 情绪名（顺序即"平静 → 越来越开心 / 越来越别扭"的陈列顺序；末尾三个是存在主义层） */
 export const MOOD_KEYS = Object.keys(MOOD_OFFSETS)
 
 /** 深拷贝一份，避免调用方拿到同一引用后互相污染（两份表都不该被就地改） */

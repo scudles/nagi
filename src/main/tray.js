@@ -5,10 +5,14 @@ import { Tray, Menu, nativeImage, app } from 'electron'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { MODE } from '../shared/protocol.js'
-import { switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow } from './windows.js'
+import { MODE, EVT } from '../shared/protocol.js'
+import { switchMode, getMode, getPetWindow, getWorkbenchWindow, openDiaryWindow, broadcast } from './windows.js'
 import { outfitCatalog, sendOutfitCommand } from './outfit-state.js'
 import { DEFAULT_SHORTCUTS, prettyAccelerator } from './shortcuts.js'
+import { getSettings, saveSettings } from './settings-store.js'
+import { refreshPresence } from './presence.js'
+import { refreshMonitorPrivacy } from './monitor/index.js'
+import { refreshHaSignals } from './signals/ha.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -39,6 +43,8 @@ function buildMenu() {
       checked: mode === MODE.PET,
       click: () => switchMode(MODE.PET)
     },
+    { type: 'separator' },
+    ...quietMenuItems(),
     { type: 'separator' },
     {
       label: '显示 / 隐藏桌宠',
@@ -80,6 +86,43 @@ function buildMenu() {
     { type: 'separator' },
     { label: '退出凪', click: () => app.quit() }
   ])
+}
+
+/**
+ * 打扰控制（D51）：勿扰与只陪着是**临时状态**，不该埋在设置页最底部 ——
+ * 用的时候往往就是要立刻静下来，右键托盘一下就够了。
+ * 设置页里这两项收进了「陪伴 → 高级」，留作备用入口（万一托盘图标被系统折叠了）。
+ */
+function quietMenuItems() {
+  const p = getSettings()?.privacy || {}
+  return [
+    {
+      label: '勿扰模式',
+      type: 'checkbox',
+      checked: p.doNotDisturb === true,
+      click: (item) => setPrivacy('doNotDisturb', item.checked)
+    },
+    {
+      label: '只陪着',
+      type: 'checkbox',
+      checked: p.onlyPresence === true,
+      click: (item) => setPrivacy('onlyPresence', item.checked)
+    }
+  ]
+}
+
+/**
+ * 从托盘翻隐私开关。后置动作必须与设置页保存**完全一致**
+ * （见 ipc/settings.js 的 SETTINGS_SET），否则会出现「菜单勾了、行为没变」
+ * 这种最难查的不一致。
+ */
+function setPrivacy(key, value) {
+  const next = saveSettings({ privacy: { [key]: value === true } })
+  refreshPresence()
+  refreshMonitorPrivacy()
+  refreshHaSignals()
+  broadcast(EVT.SETTINGS_CHANGED, next)
+  refreshTrayMenu()
 }
 
 /**
