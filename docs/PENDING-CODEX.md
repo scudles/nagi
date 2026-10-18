@@ -2,9 +2,19 @@
 
 > 引用修正：`CONTRACTS.md` 红区接口骨架已顺延为 **§8**（§6 现为 C4 标题感知，§7 为契约变更流程）。凡引用"§6 红区接口骨架"的旧条目按 §8 读。
 
-- D2 场景化上下文与表达意图：需红区确定 `activity` 的授权来源白名单、规则与模型字段冲突时的优先级；确定后 WorkBuddy 可按 `CONTRACTS.md` §8（D2 骨架）施工。
-- B1 系统通知已接入，mock IO 与调度交错测试通过；Windows 真机通知展示仍需 WorkBuddy 验收（`verify:reminder` **10/10**，余项需人眼看通知中心）。当前投递语义为进程内按 `id:at` 去重，进程崩溃后依赖已有承诺簿恢复；通知发送与持久化之间的崩溃窗口无法保证严格恰好一次。
-- B4、D5、B6、B9 的实现与三层验收尚未执行，契约骨架见 `CONTRACTS.md` §8，交 WorkBuddy 施工。
+- D2、D5、B6、B9 的阶段 2 前置契约已定版于 `CONTRACTS.md` §8，可直接施工；实现与分层证据仍按各任务卡验收。
+- B1 系统通知已接入，mock IO 与调度交错测试通过；裁决 A 已冻结且 `verify:reminder` **14/14**，Windows 通知中心 toast 仍需人眼或可复查的系统证据。当前投递语义为进程内按 `id:at` 去重，进程崩溃后依赖已有承诺簿恢复；通知发送与持久化之间的崩溃窗口无法保证严格恰好一次。
+- B2/B3 已由 `9abf398` 实现并在 TASKS P1-02/P1-03 关单；下文升级 2/4 保留为当时的历史对账，不再是当前待办。
+
+## 阶段 1 二轮 Codex 复判（2026-10-18）
+
+- **证据**：复核 `3916eab` 的变更、CONTRACTS §2/§6/§8、EVAL §3.1/§3.5；定向运行 `node --experimental-test-module-mocks --test test/crisis.test.js test/messages.test.js test/emotion-tone.test.js test/reminder-delivery.test.js test/generation.test.js test/persona-guard.test.js`，46 通过、0 失败。WorkBuddy 报告全量 845 项中 844 通过、1 跳过及 `verify:reminder` 14/14、`verify:title-outbound` 7/7；本轮未重复真机测试。
+- **B2/B3 通过**：`9abf398` 可由 Git 解析，含 RAG 交错与归来 defer 测试；TASKS 已回填。
+- **B5 通过**：`beginTurn` 清除旧 tone、`settle` 固定本句，连续两句测试通过。D5 的 `expressionId/phase/ended` 生命周期仍属阶段 2，不把 B5 通过误当 D5 完工。
+- **C4 通过**：标题观测段移出 system，独立 user 段且历史剔除；符合 CONTRACTS §6.4 和 EVAL C4-AUTH-02。连续 user 消息需保留在后续 provider 组合测试中，但不是本轮阻塞。
+- **B1 待验**：裁决 A 的程序侧路径与测试通过；Windows toast 是否实际可见尚无设备层证据。
+- **B4 打回一处，归蓝区 WorkBuddy 修**：`src/main/agent.js` 的 `mockRun` 在 `safetyLevel=crisis` 时仍先取 `NagiPersona.reply`，只用禁词式 guard 判定，合格便展示；首次 `announce` 尾句又在审核后追加。只读复现：输入“我已经吃了很多药”，占位回复“……我现在接不上大脑。等接上了，我再好好回你。”，`createPersonaGuard(...,{crisis:true}).review(...)` 返回 `{ok:true}`。这条 L3 路径既没有求助指引，也退回普通闲聊，违反 CONTRACTS §2.1/§2.2 与 §8 B4。**最小修法**：占位大脑收到 L2/L3 时直接走按级别的确定性安全指引，并在任何 `announce` 拼接前确定最终正文；最终展示正文统一过 guard，危机轮禁止追加占位自嘲尾句。补 `mockRun` 入口的 L2/L3 断网/无模型测试，断言 L2 询问安全、L3 有急救/到场求助、正文非空且无候选泄漏；原有 provider 纯策略矩阵不能代替此测试。
+- **P1-07 仍部分落地**：L1 表达策略与 EVAL §3.1 场景集未完成；危机正则是辅助判定，转述/虚构语境的误判漏判需绿区给对照样例并评测。
 
 ---
 
