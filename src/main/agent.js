@@ -44,7 +44,7 @@ import { createThinkGate } from '../core/presence/reaction.js'
 import { createReactionEngine } from './reaction.js'
 import { modelsDir } from './paths.js'
 import { NagiPersona } from '../core/persona.js'
-import { buildContextBlock, buildSceneContext, recentAssistantReplies, sceneFactsBlock, timeSlot } from '../core/context.js'
+import { SCENE_PRESENCE_LABEL, buildContextBlock, buildSceneContext, pickSceneActivity, recentAssistantReplies, sceneFactsBlock, timeSlot } from '../core/context.js'
 import {
   buildDiaryMessages,
   formatMoodJourney,
@@ -76,7 +76,7 @@ import { createSystemTools } from '../core/tools/system.js'
 import { createBrowserTools } from '../core/tools/browser.js'
 import { getHa, stopHaSignals, canControlHa, haReadAllowed, haContext } from './signals/ha.js'
 import { createNativeTools } from './native-tools.js'
-import { getSettings } from './settings-store.js'
+import { getSettings, saveSettings } from './settings-store.js'
 import { getSecret, hasSecret } from './keystore.js'
 import { broadcast, getWorkbenchWindow, getPetWindow } from './windows.js'
 import { companionStatus, companionDelivered, companionInteracted } from './companion.js'
@@ -87,7 +87,7 @@ import { getRag } from './rag/index.js'
 import { getLedger } from './ledger.js'
 import { runRecordedTool } from './promises.js'
 import { upcomingCalendarContext } from './signals/calendar.js'
-import { currentObservationContext } from './signals/music.js'
+import { currentObservationContext, musicStatus } from './signals/music.js'
 import { titleOutboundAllowed } from '../core/signals/title-outbound.js'
 import { deferOptionalExpression } from './extensions/imperfection.js'
 import { currentGeoContext } from './signals/geo.js'
@@ -172,6 +172,13 @@ const toneState = createToneState()
  * 但验收与工作台需要一个能看到"这轮判成了什么、来自哪里"的出口。
  */
 let lastIntent = null
+
+/**
+ * D2：最近一次 monitor 采样给出的**活动分类**（只有类别，不含标题/应用名）。
+ * 为什么要在这里留一份：`monitorSnapshot()` 只返回"最近一次主动开口"的记录，
+ * 拿不到当前类别；而类别本身是监测回调里现成的，顺手存一个时间戳就能当场景事实用。
+ */
+let lastMonitorCategory = null
 export function intentState() {
   return lastIntent ? { ...lastIntent } : null
 }
@@ -563,12 +570,20 @@ function handleProactive({ mood: hitMood, text, ruleId }) {
 
 /** 启动活动监测（app ready 后调用；幂等）。总开关在 settings.privacy.monitorEnabled */
 export function startActivityMonitor() {
+  // D2：给活动分类打一个**授权时间戳**（只在开启监测且尚未打过时写一次）。
+  // 场景上下文要用它证明"这条事实有授权来源"；用 Date.now() 现编一个授权时间是造假。
+  const privacy = getSettings().privacy || {}
+  if (privacy.monitorEnabled !== false && !privacy.monitorAuthorizedAt) {
+    try { saveSettings({ privacy: { monitorAuthorizedAt: Date.now() } }) } catch { /* 打戳失败就退回 null，不编造 */ }
+  }
   startMonitor({
     onProactive: handleProactive,
     // 主动搭话的内容由 LLM 现场生成（新人设无台词铁律）；走注入避免循环依赖
     composeText: ({ intent, vars, mood }) => composeProactiveLine({ intent, vars, mood }),
     onPresenceSample: (sample) => {
       presence.observe(sample ? { kind: 'idle', idleSec: sample.idleSec } : { kind: 'pause' })
+      // D2：记下当前活动分类与采样时刻（过期由 pickSceneActivity 的 TTL 兜住）
+      if (sample?.category) lastMonitorCategory = { category: sample.category, at: sample.ts || Date.now() }
       // 「她想一下再表现」：只喂**活动分类**（隐私上不传标题/应用名）。
       // 不 await —— 思考要走网络，绝不能拖慢监测节拍。
       if (sample?.category) {
@@ -949,12 +964,31 @@ async function buildMessages(userText, supportsNative, { turnId = '', crisis = f
   const memoryRefs = (Array.isArray(recalled) ? recalled : [])
     .filter((x) => x && x.piece && x.piece.id)
     .map((x) => ({ id: x.piece.id, source: x.source || 'rag', text: x.piece.text || '' }))
+  // D2（§8 白名单）：活动事实只从三类**已授权**来源挑一条，优先级 媒体 > monitor 分类 > 模拟。
+  // 标题不参与——它只是 C4 的低权威观测数据，不能升级成"他在做什么"。
+  const privacy = getSettings().privacy || {}
+  let mediaStatus = null
+  try { mediaStatus = await musicStatus(false) } catch { mediaStatus = null }
+  const presenceSnap = presence.snapshot()
+  const lastPresenceActivity = Array.isArray(presenceSnap.activities) ? presenceSnap.activities.at(-1) : null
+  const activity = pickSceneActivity({
+    media: mediaStatus,
+    monitor: lastMonitorCategory && privacy.monitorEnabled !== false
+      ? { ...lastMonitorCategory, authorizedAt: Number(privacy.monitorAuthorizedAt) || 0 }
+      : null,
+    // presence 的离线/模拟活动必须标 simulated；没有授权时间就整条丢弃（宁缺勿造）
+    presence: lastPresenceActivity
+      ? {
+        value: SCENE_PRESENCE_LABEL[lastPresenceActivity.kind] || '离开了电脑',
+        at: lastPresenceActivity.endedAt || lastPresenceActivity.at || 0,
+        authorizedAt: Number(getSettings().presence?.enabledAt) || 0
+      }
+      : null
+  })
   const scene = buildSceneContext({
     turnId,
     source,
-    // activity 的白名单装配在 P2-01 二期（需要 monitor 分类 + 媒体状态的授权快照）；
-    // 本轮先固定 null——宁缺勿造，不用标题冒充"他在做什么"。
-    activity: null,
+    activity,
     relationship: relationSummary(),
     relevantMemoryRefs: memoryRefs,
     userNeed: null

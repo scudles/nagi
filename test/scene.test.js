@@ -122,3 +122,75 @@ test('sceneFactsBlock：没有事实时返回空串（调用方不要塞空段�
   assert.equal(sceneFactsBlock(null), '')
   assert.equal(sceneFactsBlock({}), '')
 })
+
+/* ---------------- D2：三类来源的挑选（媒体 > monitor > 模拟） ---------------- */
+
+test('媒体优先，且播放/暂停照实标（不能把暂停说成正在播）', async () => {
+  const { pickSceneActivity } = await import('../src/core/context.js')
+  const media = (playbackStatus) => ({
+    authorized: true,
+    authorizedAt: NOW - 3600000,
+    observation: { available: true, title: '某一首歌', artist: '某人', playbackStatus, observedAt: NOW - 5000 }
+  })
+  const playing = pickSceneActivity({
+    media: media('playing'),
+    monitor: { category: 'work', at: NOW - 5000, authorizedAt: NOW - 3600000 },
+    now: NOW
+  })
+  assert.equal(playing.origin, 'media')
+  assert.match(playing.value, /^正在播放：/)
+  assert.match(playing.value, /某一首歌 \/ 某人/)
+
+  const paused = pickSceneActivity({ media: media('paused'), now: NOW })
+  assert.match(paused.value, /^已暂停：/, '暂停必须照实写')
+})
+
+test('媒体未授权/被勿扰暂停/观测过期 → 退回 monitor 分类，绝不编造', async () => {
+  const { pickSceneActivity } = await import('../src/core/context.js')
+  const monitor = { category: 'video', at: NOW - 2000, authorizedAt: NOW - 3600000 }
+  const unauthed = pickSceneActivity({
+    media: { authorized: false, observation: { available: true, title: 'x', playbackStatus: 'playing', observedAt: NOW } },
+    monitor,
+    now: NOW
+  })
+  assert.equal(unauthed.origin, 'monitor')
+  assert.equal(unauthed.value, '在看视频')
+
+  const dnd = pickSceneActivity({
+    media: { authorized: true, paused: 'do-not-disturb', authorizedAt: NOW - 1000, observation: { available: true, title: 'x', playbackStatus: 'playing', observedAt: NOW } },
+    monitor,
+    now: NOW
+  })
+  assert.equal(dnd.origin, 'monitor')
+
+  const stale = pickSceneActivity({
+    media: null,
+    monitor: { ...monitor, at: NOW - SCENE_ACTIVITY_TTL_MS - 1 },
+    presence: null,
+    now: NOW
+  })
+  assert.equal(stale, null, '过期事实一律 null')
+})
+
+test('monitor 缺授权时间时不冒充（返回模拟或 null，不用当前时间顶替）', async () => {
+  const { pickSceneActivity } = await import('../src/core/context.js')
+  const noAuth = pickSceneActivity({ monitor: { category: 'work', at: NOW - 1000, authorizedAt: 0 }, now: NOW })
+  assert.equal(noAuth, null)
+  const simulated = pickSceneActivity({
+    monitor: { category: 'work', at: NOW - 1000, authorizedAt: 0 },
+    presence: { value: '电脑离开过一段时间', at: NOW - 1000, authorizedAt: NOW - 5000 },
+    now: NOW
+  })
+  assert.equal(simulated.origin, 'simulated', '模拟活动必须标源')
+})
+
+test('标题不参与活动事实：即使传了 foreground 形状也进不来', async () => {
+  const { pickSceneActivity } = await import('../src/core/context.js')
+  const out = pickSceneActivity({
+    media: null,
+    monitor: { category: 'other', at: NOW, authorizedAt: NOW - 1000, title: '某页面标题' },
+    now: NOW
+  })
+  assert.equal(out.value, '在用电脑')
+  assert.equal(out.value.includes('某页面标题'), false)
+})

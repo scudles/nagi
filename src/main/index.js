@@ -38,6 +38,7 @@ import { prewarmVoice, disposeVoice } from './voice/index.js'
 import { EVT, MODE } from '../shared/protocol.js'
 import { registerPresenceIpc } from './ipc/presence.js'
 import { registerNotesIpc } from './ipc/notes.js'
+import { registerMaintenanceIpc } from './ipc/maintenance.js'
 import { presenceInput } from './presence.js'
 import { installPresenceExtensions } from './presence-extensions.js'
 import { runPresenceSelftest } from './presence-selftest.js'
@@ -116,6 +117,7 @@ if (!gotLock) {
     registerGeoIpc()
     registerPresenceIpc()
     registerNotesIpc()
+    registerMaintenanceIpc()
     registerOutfitIpc()
 
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。

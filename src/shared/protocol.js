@@ -107,6 +107,15 @@ export const EVT = {
  * 装束清单来自模型目录的 nagi-outfit.json，只有渲染层读得到（走 nagi-local://），
  * 所以主进程做"渲染层上报什么就用什么"，不自己维护一份可能过期的副本。
  */
+/**
+ * B8（CONTRACTS §12.2）：维护状态的**只读** IPC。
+ * 渲染层只能看与清，不能写入任何状态——错误来自主进程，界面只负责如实呈现。
+ */
+export const MAINTENANCE_IPC = {
+  HEALTH: 'maintenance:health',
+  CLEAR: 'maintenance:clear'
+}
+
 export const OUTFIT_IPC = {
   REPORT: 'outfit:report' // 渲染层上报 { looks, current, slots }
 }
@@ -223,6 +232,9 @@ export const DEFAULT_SETTINGS = {
     doNotDisturb: false, // 勿扰模式：临时停采，不落任何样本
     onlyPresence: false, // 只陪着：不监测活动、不主动开口；手动对话与戳击仍可用
     noticeShown: false, // 「她在观察你在用什么程序」的首次告知是否已展示
+    // D2：活动分类的**授权时间**（开启监测时打戳）。场景上下文要用它证明"这条事实有授权来源"，
+    // 没有它就只能填 null——不用当前时间冒充授权时间。
+    monitorAuthorizedAt: 0,
     sampleSec: 20, // 多久看一眼（秒）
     blacklist: [...DEFAULT_BLACKLIST] // 命中即丢样本（窗口标题/应用名，支持 * 通配）
   },

@@ -30,6 +30,11 @@
 
 **勿动**：不改已冻结契约语义；不写规格定稿；不做作者已裁决之外的产品取舍。改 preload/IPC/安全门须先复现再补回归。
 
+**下一轮（2026-10-18 绿区整理，承接阶段2蓝区首批对账，见 PENDING-CODEX 升级单5）**：
+1. **拍板 modelHint 接通方式**：`resolveIntent` 的 modelHint 分支已备好且被单测覆盖（`src/core/agent/intent.js`），但 `agent.js:962` 调用处未接——接通需 `stream-normalize` 多带字段 + loop 透传一行。铁律"loop.js 零改动"由你定。拍：加那一行接通，还是接受"次轮生效"（本轮 modelHint 恒 null）。结论写回升级单5 第1项。
+2. **拍板 C5-EXPORT-01 前置**：仓库无统一导出模块，绿区规格 EVAL §3.10 的 C5-EXPORT-01 依赖导出功能。拍：单开一张"记忆/数据导出"卡（阶段2/3）承接导出，C5-EXPORT-01 标注依赖它；还是从本阶段验收剔除。结论写回升级单5 第2项。
+3. **阶段2 红区剩余**：P2-03 B6 已收口。确认阶段2 红区是否还有承接卡，或转阶段3（D5 多模态快照 P3-07 依赖 P1-05/P2-03，可预留）。
+
 ---
 
 ## 🔵 蓝区交接（WorkBuddy · 常规实现/测试）
@@ -77,6 +82,13 @@
 4. **新增（蓝区）**：`scripts/verify-settings-nav.mjs` 已老化——它直接找 `#btn-pet-settings`，但 CDP 连上的是工作台页（只有 `#btn-open-settings`），当前必然超时。建议改为"按 mode 选入口 / 找不到就回落"，属验收脚本维护，**不动产品代码**。
 
 **下一步（蓝区）**：① 等人眼确认 Windows 通知中心那条 toast（唯一未闭环项）；② 作者裁决勿扰口径后补 verify；③ 阶段2 蓝区卡 P2-04（B8 空 catch 分类）、P3-04（C1）、P3-05（C2）；④ 顺手修 `verify-settings-nav.mjs`（待允许）。
+
+**下一轮（2026-10-18 绿区整理，承接你的提交 `16b1ee6`；对账见 PENDING-CODEX 升级单5，绿区逐条核实全部属实）**：
+- **直接做（规格已就绪，无依赖）**：
+  1. **activity 白名单装配**（P2-01 二期，CONTRACTS §8 D2 + §9 B7）：`context.js` 的 `normalizeSceneActivity` 已具备白名单+TTL，但 `agent.js:955-957` 传 null。按 CONTRACTS §8 D2"来源白名单"接线：只收 ①当前仍获授权的 monitor 活动分类、②获授权的当前媒体状态（播放/暂停照实标）、③presence 离线/模拟活动（`origin='simulated'` 不得说成真实经历）；未授权/过期/缺来源一律 null，宁缺勿造。验收：EVAL §3.x D2 场景化断言。
+  2. **B8 按 CONTRACTS §12 补"可见"落地**（你要的标准已给）：主进程暴露只读健康 API（如 `getHealth()`）+ IPC 可查；持久化失败/承诺失败在设置页有状态标记（非仅 warn）；即时 UI 提示仅当失败影响用户当下操作，后台小错不打扰。验收：EVAL §3.11 B8-PERSIST/PROMISE/HEALTH/DEGRADE/SEMANTIC。
+- **等拍板后再做**：③ modelHint 接通——等 Codex 拍"加一行 or 次轮生效"，未拍前保持恒 null；④ C5-EXPORT-01——等绿区/Codex 确认是否单开导出卡，已提交的"便签一跳"保持，勿自行扩展导出。
+- **铁律**：无台词铁律；loop.js 未获 Codex 批准前零改动；完成回填 TASKS 状态与证据。
 
 ### 阶段1 闭环二轮（2026-10-18 14:5x，按 PENDING-CODEX 升级单 4 / Codex 三处打回）
 
@@ -177,9 +189,38 @@
 3. `reminders.js` 的 `setInterval(... .catch(...))` 原来完全静默，现在进轨迹；重试仍由下一拍承担（未做退避）。若 B8 要求"承诺失败可重试 + 健康状态"，退避与健康状态需要单独设计，我这轮没做。
 
 **升级项**
-1. **Codex 决策项**：意图模型建议通道（loop 透传 or 次轮生效）。
-2. **绿区规格项**：便签/承诺簿的遗忘口径；B8"需可见状态"的可见标准。
-3. **蓝区二批**：D2 activity 装配、其余空 catch 逐点分类、C5 端到端用例。
+1. **Codex 决策项**：意图模型建议通道（loop 透传 or 次轮生效）——**仍未拍，modelHint 继续保持 null**。
+2. **绿区规格项**：承诺簿的遗忘口径；C5-EXPORT-01 是否单开导出卡。
+3. **蓝区剩余**：其余空 catch 逐点分类；按模型/用途存参数。
+
+### 阶段2 蓝区二批（2026-10-18，activity 装配 + B8 可见落地）
+
+**改动文件**
+- 新增：`src/main/ipc/maintenance.js`、`test/maintenance-health.test.js`、`scripts/verify-maintenance-ui.mjs`
+- 改动：`src/core/context.js`（`pickSceneActivity` + `SCENE_CATEGORY_LABELS` + `SCENE_PRESENCE_LABEL`）、`src/main/agent.js`（活动来源注入、monitor 授权戳）、`src/shared/protocol.js`（`monitorAuthorizedAt` + `MAINTENANCE_IPC`）、`src/main/index.js`、`src/preload/index.js`、`src/renderer/index.html`、`src/renderer/js/main.js`、`test/scene.test.js`、`package.json`
+
+**已验证结果**
+- `npm test`：**908 项 / 907 通过 / 0 失败 / 1 skip，exit 0**
+- `npm run build`：**exit 0**
+- `npm run verify:maintenance` **7/7**（新）、`verify:title-outbound` 7/7、`verify:crisis-offline` 11/11、`verify:reminder` 14/14
+
+**D2 activity 装配（§8 白名单）**
+- `pickSceneActivity` 优先级：媒体（播放/暂停照实标）> monitor 分类 > presence 模拟；三类都必须带 `authorizedAt`，**`authorizedAt=0` 视为"从没授权"直接丢弃**——不用当前时间冒充授权时间。
+- monitor 授权戳在 `startActivityMonitor()` 里写一次 `privacy.monitorAuthorizedAt`；监测关掉后不再产生新分类，旧值由 TTL 兜住。
+- 标题仍不进活动事实：`pickSceneActivity` 只认白名单字段，即使传了 title 也不会被用（有测试）。
+
+**B8 可见落地（§12.2）**
+- 主进程 `maintenanceHealth()` → 只读 IPC `maintenance:health`（附最近 10 条轨迹）；`maintenance:clear` 可删。
+- 设置页「连接」组新增**维护状态**区：只列"最近一次仍是异常"的站点（`lastClass !== 'degrade'`），可降级不显示、不打扰；打开设置与点该分组都会刷新。
+- `verify:maintenance` 覆盖 preload → IPC → 渲染三层；首跑 B1/B2 失败是**脚本自己绕过 openSettings 直接去 hidden**，改走真实入口后 7/7。
+
+**请绿区对账**
+1. B8 的"即时 UI 提示"我**没做**：现在只有设置页状态 + 轨迹。§12.2 说"仅当失败影响用户当下操作才弹"，我找不到可判定的"影响当下操作"信号。需要一条可执行规则，否则不擅自加弹窗。
+2. `privacy.monitorAuthorizedAt` 是新写进 settings 的字段。如果你认为"授权时间"该有独立展示（帮用户确认何时开的），请一并说。
+
+**请 Codex 复核**
+1. `pickSceneActivity` 放在 `core/context.js`；媒体状态走 `musicStatus(false)`（读缓存，不新起探针）——请确认不会每轮对话都拉起一次媒体探针进程。
+2. 设置页新增一块只读区域（连接组顶部），未改任何既有开关语义；若你认为设置页结构要冻结，我可以挪到工作台单独面板。
 
 
 
@@ -224,6 +265,13 @@
 - B4 ⚠️ 打回属实（根因已定位）：`mockRun`（agent.js:789-837）crisis 轮仍 `body = r.text`（NagiPersona.reply 普通文本），guard 判定合格即展示；"接不上大脑"不违反红线 → 直接展示。修法见 PENDING-CODEX 顶部复判第 16 行（占位大脑 L2/L3 直接走确定性安全指引 + announce 前定正文 + 危机轮禁自嘲尾句 + 补 mockRun L2/L3 断网/无模型测试）。
 - 阶段2 前置契约：CONTRACTS §8 D5/B6/D2/B9 均已"已可直接施工"，属实。
 - **P1-07 剩余（绿区待办，Codex 指派）**：L1 表达策略未完成；EVAL §3.1 场景集未完成；`crisis.js` 保守正则在转述/虚构语境下的误判漏判需绿区补对照样例并评测。
+
+**阶段2 Codex 裁决 · 绿区核实（2026-10-18）**：
+- **modelHint 本轮不接**：Codex 指出时序关键——`buildMessages` 在模型请求前裁决意图并写进 system，模型输出的 hint 晚于该时点，单行透传无法参与本轮裁决。取舍正确（避免"下一轮继承上一轮 hint"污染）；保留 `loop.js` 零改动，P2-01 保持部分完成（首批完成、待二批 activity+参数保存+后续实施轮接 modelHint）。
+- **C5-EXPORT-01 新增 P3-08**：新增阶段3 P3-08「记忆/数据导出」卡，C5-EXPORT-01 标「待验」依赖 P3-08；阶段2其余 C5 遗忘断言独立验收不阻塞。正确（导出能力缺失不删验收，单开卡承接）。
+- **红区排期**：P2-03 B6 已关；阶段2无新增红区卡；P3-07 D5 预留阶段3（前置 P1-05/P2-03 已落地）。属实。
+- 提交 `da21d16`（意图单测 17/17）：git 未装无法复核提交，但升级单5 裁决内容已在；TASKS P3-08/P2-01/P2-03 已同步。
+- **待办**：WorkBuddy 二批——activity 白名单装配、按模型/用途存参数、B8 按 CONTRACTS §12 补可见落地；Codex 阶段3 承接 P3-07/P3-08。
 
 **对 Codex 四问的回应（2026-10-18）**：
 1. **C4-FLOW-01"长期记录不落盘"证据链**：代码级旁证（sampler `latest` 只在内存、日志只打 `titleLen` 不打原文、music-store 只存 `authorizedAt`）**满足 `[mock-io]` 层要求**；可在 P2-08（B9）补一条"采样落盘面无 title 字段"结构断言作加固，非本阶段阻塞。

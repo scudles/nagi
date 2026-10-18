@@ -1149,6 +1149,34 @@ function openSettings() {
   refreshMusicStatus()
   refreshGeoStatus()
   refreshHaStatus()
+  refreshMaintStatus()
+}
+
+/**
+ * B8（CONTRACTS §12.2）：维护状态。
+ * 只有"最近一次仍是异常"的失败点才标红——可降级的小错不进界面，避免天天报警。
+ */
+async function refreshMaintStatus() {
+  const label = document.getElementById('maint-status')
+  const traceBox = document.getElementById('maint-trace')
+  if (!label || !window.nagi.maintenance) return
+  try {
+    const state = await window.nagi.maintenance.health()
+    const bad = (state.sites || []).filter((s) => s.lastClass && s.lastClass !== 'degrade')
+    if (bad.length === 0) {
+      label.textContent = '一切正常：最近没有影响保存或承诺的失败'
+    } else {
+      label.textContent = '这些位置最近出过问题：' + bad
+        .map((s) => `${s.site}（${s.lastClass}，共 ${s.count} 次，最近 ${new Date(s.lastAt).toLocaleString()}）`)
+        .join('；')
+    }
+    traceBox.textContent = (state.trace || []).length
+      ? (state.trace || []).map((t) => `${new Date(t.at).toLocaleTimeString()} [${t.cls}] ${t.site} ${t.message}`).join(String.fromCharCode(10))
+      : ''
+  } catch (err) {
+    label.textContent = '维护状态读取失败：' + (err?.message || err)
+    traceBox.textContent = ''
+  }
 }
 function closeSettings() {
   document.getElementById('settings-overlay')?.classList.add('hidden')
@@ -2644,6 +2672,14 @@ function wireSettingsPage() {
     else await refreshMusicStatus()
   })
   on('btn-music-refresh', refreshMusicStatus)
+  // 点「连接」分组时也刷一次：设置面板可能被别的路径打开，不能只靠 openSettings 那一次
+  document.querySelectorAll('.sp-nav-item').forEach((item) => {
+    if (item.dataset?.group === 'connect') item.addEventListener('click', () => refreshMaintStatus())
+  })
+  on('btn-maint-refresh', refreshMaintStatus)
+  on('btn-maint-clear', async () => {
+    try { await window.nagi.maintenance.clear(); refreshMaintStatus() } catch { /* 清不掉就下次再说 */ }
+  })
   on('btn-music-revoke', async () => {
     await window.nagi.music.revoke()
     await refreshMusicStatus()

@@ -622,6 +622,15 @@
         </div>
         </section>
         <section class="sp-group" data-group="connect">
+        <h3>维护状态（只读）</h3>
+        <p class="dim">这里显示主进程里"最近出过问题的位置"：保存失败、承诺失败、后台任务失败。
+        只有一个失败点**最近一次**仍是异常时才标红；可降级的小错（缓存没命中之类）只进内部轨迹，不会显示，也不会打扰你。</p>
+        <div id="maint-status" class="dim" aria-live="polite">正在读取…</div>
+        <div class="sp-row">
+          <button id="btn-maint-refresh">刷新</button>
+          <button id="btn-maint-clear" class="danger">清空记录</button>
+        </div>
+        <div id="maint-trace" class="dim" style="max-height:160px;overflow:auto;white-space:pre-wrap"></div>
         <h3>日历信号（只读）</h3>
         <p class="dim">选择一份 .ics 日历文件后，凪只保存本机快照，并在聊天时参考未来 48 小时的计划。计划不等于已经发生的经历。撤销会删除快照；更新日历需重新选择文件。</p>
         <div class="sp-row">

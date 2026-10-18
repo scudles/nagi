@@ -200,7 +200,8 @@ export function normalizeSceneActivity(activity, { now = Date.now(), ttlMs = SCE
   const origin = String(activity.origin || '')
   if (!SCENE_ACTIVITY_ORIGINS.includes(origin)) return null
   if (activity.authorized !== true) return null
-  if (!Number.isFinite(activity.authorizedAt)) return null
+  // authorizedAt=0 是"从没打过授权戳"的默认值，不能当有效授权时间
+  if (!Number.isFinite(activity.authorizedAt) || activity.authorizedAt <= 0) return null
   const at = Number(activity.at)
   if (!Number.isFinite(at)) return null
   if (now - at > ttlMs || at > now + 60 * 1000) return null
@@ -303,4 +304,72 @@ export function sceneFactsBlock(scene) {
     + '但不能当成已验证的事实反复强调。',
     ...lines
   ].join('\n')
+}
+
+/**
+ * presence 内部活动的说法（origin='simulated'）。
+ * 这些不是"他做了什么"，是她自己的时间感记录：必须按模拟状态陈述。
+ */
+export const SCENE_PRESENCE_LABEL = Object.freeze({
+  'time-jump': '电脑离开过一段时间',
+  activity: '刚有过一段活动',
+  away: '不在电脑前',
+  return: '刚回来'
+})
+
+/** 活动分类的中文说法（只到"在工作/看视频"这个粒度，绝不含标题或应用名） */
+export const SCENE_CATEGORY_LABELS = Object.freeze({
+  work: '在工作',
+  video: '在看视频',
+  gaming: '在打游戏',
+  social: '在聊天',
+  browser: '在浏览网页',
+  other: '在用电脑'
+})
+
+/**
+ * D2（§8 白名单）：从三类**已授权**来源里挑一条活动事实。
+ *
+ * 优先级：媒体（播放/暂停照实标）> monitor 分类 > presence 模拟活动。
+ * 为什么媒体优先：它比"某个类别"更具体，而且用户最常被问"我在听什么/看什么"。
+ * 为什么都要 authorizedAt：`normalizeSceneActivity` 拿它当"授权来源"的证据；
+ * 没有授权时间的候选一律丢弃——宁缺勿造，不用标题冒充"他在做什么"。
+ *
+ * @param {object} o
+ * @param {{authorized?:boolean, authorizedAt?:number, paused?:string, observation?:object}|null} o.media
+ * @param {{category?:string, at?:number, authorizedAt?:number}|null} o.monitor
+ * @param {{value?:string, at?:number, authorizedAt?:number}|null} o.presence
+ * @param {number} [o.now]
+ * @param {number} [o.ttlMs]
+ * @returns {object|null} 可直接交给 buildSceneContext 的候选
+ */
+export function pickSceneActivity({ media = null, monitor = null, presence = null, now = Date.now(), ttlMs = SCENE_ACTIVITY_TTL_MS } = {}) {
+  const fresh = (at) => Number.isFinite(at) && now - at <= ttlMs && at <= now + 60 * 1000
+
+  // ① 媒体：authorized + 有观测 + 没被勿扰暂停
+  if (media && media.authorized === true && !media.paused && media.observation?.available === true) {
+    const ob = media.observation
+    const at = ob.observedAt
+    const name = [ob.title, ob.artist].filter(Boolean).join(' / ').trim()
+    if (fresh(at) && name && Number.isFinite(media.authorizedAt) && media.authorizedAt > 0) {
+      // 播放/暂停必须照实写：把暂停说成正在播，是编造事实
+      const state = ob.playbackStatus === 'playing' ? '正在播放' : (ob.playbackStatus === 'paused' ? '已暂停' : '状态未知')
+      return { kind: 'media', value: `${state}：${name}`, at, origin: 'media', authorized: true, authorizedAt: media.authorizedAt }
+    }
+  }
+
+  // ② monitor 分类（只有类别；标题走 C4 那条低权威通道，不进这里）
+  if (monitor && monitor.category && fresh(monitor.at) && Number.isFinite(monitor.authorizedAt) && monitor.authorizedAt > 0) {
+    const label = SCENE_CATEGORY_LABELS[monitor.category]
+    if (label) {
+      return { kind: 'app-category', value: label, at: monitor.at, origin: 'monitor', authorized: true, authorizedAt: monitor.authorizedAt }
+    }
+  }
+
+  // ③ presence 的离线/模拟活动：必须标 simulated，不能说成他真实经历
+  if (presence && presence.value && fresh(presence.at) && Number.isFinite(presence.authorizedAt) && presence.authorizedAt > 0) {
+    return { kind: 'presence', value: String(presence.value), at: presence.at, origin: 'simulated', authorized: true, authorizedAt: presence.authorizedAt }
+  }
+
+  return null
 }

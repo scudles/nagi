@@ -3,7 +3,7 @@
 // 原则：渲染层拿不到 Node / Electron 原始对象，也拿不到任何密钥明文。
 
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC, EVT, OUTFIT_IPC } from '../shared/protocol.js'
+import { IPC, EVT, MAINTENANCE_IPC, OUTFIT_IPC } from '../shared/protocol.js'
 import { VOICE_IPC, VOICE_EVT } from '../shared/voice-protocol.js'
 import { RAG_IPC, RAG_EVT } from '../shared/rag-protocol.js'
 import { LLM_IPC } from '../shared/llm-protocol.js'
@@ -34,6 +34,11 @@ const api = {
     clear: () => ipcRenderer.invoke(PRESENCE_IPC.CLEAR)
   },
   /** 她留下的东西（BLUE-3）：只读列表 + 清除；开关走 settings */
+  /** B8：维护状态只读（失败点/健康），清空为可删操作 */
+  maintenance: {
+    health: () => ipcRenderer.invoke(MAINTENANCE_IPC.HEALTH),
+    clear: () => ipcRenderer.invoke(MAINTENANCE_IPC.CLEAR)
+  },
   notes: {
     list: () => ipcRenderer.invoke(NOTES_IPC.LIST),
     clear: () => ipcRenderer.invoke(NOTES_IPC.CLEAR),
