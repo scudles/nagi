@@ -35,6 +35,7 @@ import { apiKeyForLlm, isLocalLlm, resolveLlm, supportsNativeTools } from '../co
 import { checkOllama } from '../core/llm/ollama.js'
 import { initCloudBrain, cloudBrainStatus, cloudChatStream } from '../core/llm/cloud-workbuddy.js'
 import { createMood } from '../core/emotion/mood.js'
+import { resolveMoodSnapshot } from '../core/emotion/resolve.js'
 import { createThinkGate } from '../core/presence/reaction.js'
 import { createReactionEngine } from './reaction.js'
 import { modelsDir } from './paths.js'
@@ -149,7 +150,18 @@ setPresenceService(presence)
 const reunion = createReunionCoordinator()
 
 function broadcastMood() {
-  broadcast(EVT.MOOD, mood.current())
+  broadcast(EVT.MOOD, resolvedMood())
+}
+
+/**
+ * B5：主进程是情绪裁决的唯一权威。
+ * 长期心境（mood/intensity/expr）来自状态机；本句语气（tone）只在这一句有效，
+ * 由 DONE 时固定下来，**绝不写回**状态机（契约 D5：句子语气不得静默覆盖长期 mood）。
+ */
+let lastTone = null
+let lastToneSource = null
+function resolvedMood() {
+  return resolveMoodSnapshot(mood.current(), { tone: lastTone, toneSource: lastToneSource })
 }
 
 /* ---------------- S4：情绪与关系跨重启延续 ---------------- */
@@ -236,6 +248,10 @@ function emitAgentEvent(e) {
   }
   if (e.type === AGENT_EVENT.DONE) {
     if (lastEmotion) {
+      // 本句语气先固定进快照，再让状态机按它自己的粘性决定要不要接管长期心境。
+      // 渲染层收到的 MOOD 广播因此已经带 tone，不需要自己在 DONE 时满强度重设表情。
+      lastTone = lastEmotion
+      lastToneSource = 'reply'
       mood.propose(lastEmotion, 1.0, 'llm')
       broadcastMood()
     }
@@ -1062,10 +1078,10 @@ export async function runTurn(userText, emit, turnRef = null) {
 
   // 工具通道判定 + 情绪取回：都在 emit 这条唯一出口上记，避免再改 Agent Loop 的返回契约
   let toolCallCount = 0
-  let lastEmotion = null
+  let turnEmotion = null
   const turnEmit = (event) => {
     if (event && event.type === AGENT_EVENT.TOOL_CALL) toolCallCount++
-    if (event && event.type === AGENT_EVENT.EMOTION && event.emotion) lastEmotion = event.emotion
+    if (event && event.type === AGENT_EVENT.EMOTION && event.emotion) turnEmotion = event.emotion
     emit(event)
   }
 
@@ -1140,7 +1156,7 @@ export async function runTurn(userText, emit, turnRef = null) {
   return createGenerationResult({
     turnId,
     text: r.text,
-    emotion: lastEmotion,
+    emotion: turnEmotion,
     toolCalls: toolCallCount,
     safetyLevel,
     guardDecision: createGuardDecision({ ok: true }, { retryCount: stats.retryCount })
@@ -1198,9 +1214,9 @@ export async function handleChatSend(text) {
 
 /* ---------------- 桌宠交互：戳一戳 / 情绪读数 ---------------- */
 
-/** 当前情绪快照（渲染层轮询或 IPC 拉取用） */
+/** 当前情绪快照（渲染层轮询或 IPC 拉取用）。B5：与广播同一份 resolved 口径。 */
 export function getMoodSnapshot() {
-  return mood.current()
+  return resolvedMood()
 }
 
 /** 戳一戳：返回气泡台词 + 当时表情，并广播 PET 事件 */

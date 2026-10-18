@@ -54,7 +54,9 @@ export function createMood({ now = () => Date.now() } = {}) {
     intensity: 0,
     lastInteraction: now(),
     lastIdlePush: 0,
-    nightWorried: false
+    nightWorried: false,
+    // 最近一次情绪变化的来源与"是不是用户互动带来的"（B5：情绪事件要能归因）
+    lastChange: { source: null, userInteraction: false, at: 0 }
   };
 
   let listener = null;
@@ -71,7 +73,15 @@ export function createMood({ now = () => Date.now() } = {}) {
   function label() { return LABELS[state.mood] || '平静'; }
 
   function snapshot() {
-    return { mood: state.mood, intensity: state.intensity, expr: restingExpr(), label: label() };
+    return {
+      mood: state.mood,
+      intensity: state.intensity,
+      expr: restingExpr(),
+      label: label(),
+      // B5：这一段情绪是谁推的、是否来自用户互动（idle/rhythm/night 都是 false）
+      source: state.lastChange.source,
+      userInteraction: state.lastChange.userInteraction
+    };
   }
 
   function notify() {
@@ -89,6 +99,7 @@ export function createMood({ now = () => Date.now() } = {}) {
     if (!LABELS[mood]) return;
     var w = clamp01(weight);
     if (interaction) state.lastInteraction = now();
+    const beforeMood = state.mood, beforeIntensity = state.intensity;
 
     if (mood === state.mood) {
       // 同情绪：叠加强度
@@ -105,6 +116,10 @@ export function createMood({ now = () => Date.now() } = {}) {
         state.intensity = clamp01(state.intensity - w * 0.3);
         logTransition((how || 'conflict') + ' 削弱');
       }
+    }
+    // 真的变了才记来源：否则每次心跳的同一情绪提议都会把"最后一次互动"刷成 idle
+    if (state.mood !== beforeMood || state.intensity !== beforeIntensity) {
+      state.lastChange = { source: how || 'propose', userInteraction: !!interaction, at: now() };
     }
     notify();
   }
@@ -132,14 +147,17 @@ export function createMood({ now = () => Date.now() } = {}) {
     if (idleMin > MOOD_PARAMS.IDLE_POUT_MIN && state.mood !== 'pout' && state.mood !== 'worry' &&
         t - state.lastIdlePush > 20 * 60000) {
       state.lastIdlePush = t;
-      propose('pout', 0.5, 'idle');
+      // B5：idle 推力**不是**用户互动，不能刷新 lastInteraction——
+      // 否则"被冷落越久越不安"会自己把自己的计时器清零，冷落永远积累不起来。
+      propose('pout', 0.5, 'idle', { interaction: false });
     }
 
     // 深夜 → 担心（每晚只推一次，早 7 点后重置）
     var h = new Date(t).getHours();
     if (!rhythm?.enabled && (h >= 23 || h < 7) && !state.nightWorried) {
       state.nightWorried = true;
-      propose('worry', 0.45, 'night');
+      // 同上：深夜担心是环境推力，不是他来找过我
+      propose('worry', 0.45, 'night', { interaction: false });
     }
     if (h >= 7 && h < 23) state.nightWorried = false;
 
@@ -210,8 +228,12 @@ export function createMood({ now = () => Date.now() } = {}) {
     const t = now();
     const savedAt = Number.isFinite(data.savedAt) ? data.savedAt : t;
     const steps = Math.max(0, Math.floor((t - savedAt) / MOOD_PARAMS.TICK_MS));
-    let intensity = clamp01((Number(data.intensity) || 0) - steps * MOOD_PARAMS.DECAY);
     let m = LABELS[data.mood] ? data.mood : 'calm';
+    // B5：离线衰减必须与在线同一条曲线。liminal 在线走慢衰减，
+    // 重启时却按常规速率算，会让"刚才那一下停顿"在开机瞬间被抹掉——
+    // 同一状态两种半衰期，是最难解释的那种不一致。
+    const decay = m === 'liminal' ? MOOD_PARAMS.LIMINAL_DECAY : MOOD_PARAMS.DECAY;
+    let intensity = clamp01((Number(data.intensity) || 0) - steps * decay);
     if (intensity <= 0.02) { m = 'calm'; intensity = 0; }
 
     state.mood = m;

@@ -29,8 +29,7 @@ let settings = null
 let llmDraftProfiles = {}
 let llmDraftProvider = null
 let l2dReady = false
-let currentMood = null // 主进程情绪状态机的最新快照
-let chatEmotion = null // 本轮对话流式情绪（只记录，回复返回后才翻脸）
+let currentMood = null // 主进程情绪状态机的最新快照（B5：resolved，含 longMood/tone）
 let lastMoodKey = null // 用于区分「情绪真的变了」和「心跳重复广播」
 
 /* ---------------- 待机醒目：一段时间没互动就放大一点、换个姿势 ---------------- */
@@ -86,12 +85,16 @@ function applyMood(snap) {
   ui.setMood(snap.mood)
   if (!l2dReady) return
   // 情绪真变了才带动作；心跳重复广播时只保持面容（否则每 15 秒手舞足蹈一次）
-  const key = snap.mood + '|' + snap.expr
+  // B5：面孔只跟**长期心境**（longMood）走。本句语气（tone）由主进程裁决后
+  // 通过 propose 影响长期心境，渲染层不再自己拿这一句的标签满强度翻脸——
+  // 那会让"她整体在低落"被一句玩笑当场抹平。
+  const face = snap.longMood || snap.mood || snap.expr
+  const key = face + '|' + snap.expr
   const changed = key !== lastMoodKey
   lastMoodKey = key
   // 用 mood（而不是 expr）取肌肉：restingExpr 在强度 0.6 处会把 smile 切成 joy，
   // 那是一次硬跳；直接用 mood 则是一条连续的强度曲线（2026-10-17）
-  l2d.setEmotion(snap.mood || snap.expr, { motion: changed, intensity: snap.intensity })
+  l2d.setEmotion(face, { motion: changed, intensity: snap.intensity })
 }
 
 /* ---------------- 归来便签入口（BLUE-2；便签数据走 BLUE-3） ----------------
@@ -498,11 +501,9 @@ async function boot() {
   //   · 回复返回后 → 按回答内容的情绪与语气选表情 + 轻微动作；判断不出 → 中立脸
   //   · 空闲 → 呼吸/眨眼/待机动作照旧（姿态全部归零即交还给模型自身）
   initChat({
-    // 流式情绪只记录、不当场翻脸：状态机的正式情绪仍以 MOOD 广播为准，
-    // 而"她这一句是什么情绪"等回复返回后在 onDone 落地
-    onEmotion: (emotion) => {
-      chatEmotion = EMOTIONS.includes(emotion) ? emotion : null
-    },
+    // B5：本句语气不再由渲染层裁决。流式情绪标签只留在主进程（DONE 时固定成
+    // 快照的 tone，再由状态机的粘性决定要不要接管长期心境），渲染层只消费 MOOD 广播。
+    // 旧写法在 onDone 用这一句的标签满强度重设表情，等于让一句玩笑抹平整天的低落。
     onStatus: (state) => {
       if (state === 'thinking') ui.showBubble('……', { autoHide: 0 })
       // 非 idle（思考/执行/等待）都算"生成回复期间"
@@ -519,12 +520,9 @@ async function boot() {
       if (l2dReady) {
         l2d.stopTalking()
         l2d.setPose(null) // 思考姿态平滑收回，交还呼吸/待机
-        // 说完了 → 身体后仰靠回去（Z 轴；紧接着下面按情绪翻脸）
+        // 说完了 → 身体后仰靠回去（Z 轴）
         l2d.triggerDepth('leanBack')
-        // 回答内容的情绪与语气 → 表情 + 轻微动作；无法判断 → 中立
-        l2d.setEmotion(chatEmotion || 'calm', { motion: !!chatEmotion })
       }
-      chatEmotion = null
     }
   })
 

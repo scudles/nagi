@@ -222,9 +222,64 @@ test('onChange 观察者：propose 后收到快照', () => {
   m.onChange((s) => seen.push(s))
   m.propose('joy', 1.0)
   assert.equal(seen.length, 1)
-  assert.deepEqual(Object.keys(seen[0]).sort(), ['expr', 'intensity', 'label', 'mood'])
+  // B5：快照多带两个归因字段（这次变化是谁推的、是否用户互动）
+  assert.deepEqual(Object.keys(seen[0]).sort(), ['expr', 'intensity', 'label', 'mood', 'source', 'userInteraction'])
   assert.equal(seen[0].label, '开心')
   assert.equal(seen[0].expr, 'joy')
+  assert.equal(seen[0].source, 'propose')
+  assert.equal(seen[0].userInteraction, true)
+})
+
+/* ---------------- B5：情绪裁决统一（归因 / 冷落计时 / 离线衰减） ---------------- */
+
+test('B5：idle 推力不刷新 lastInteraction（否则冷落计时自己把自己清零）', () => {
+  const clock = fakeClock()
+  const m = createMood({ now: clock.fn })
+  m.propose('joy', 0.2, 'user') // 先有一次真正的互动
+  const interactedAt = m.serialize().lastInteraction
+
+  // 冷落门槛 + 一分钟，触发 pout 推力
+  clock.advance(MOOD_PARAMS.IDLE_POUT_MIN * 60000 + 60000)
+  m.tick()
+
+  assert.equal(m.current().mood, 'pout')
+  assert.equal(m.current().source, 'idle')
+  assert.equal(m.current().userInteraction, false)
+  // 关键：互动时间没被 idle 推力改写，冷落仍然从用户那次算起
+  assert.equal(m.serialize().lastInteraction, interactedAt)
+})
+
+test('B5：night 推力也是环境事件，不算用户互动', () => {
+  // 深夜 00:30 起表
+  let t = new Date('2026-10-14T00:30:00').getTime()
+  const m = createMood({ now: () => t })
+  m.propose('joy', 0.2, 'user')
+  const interactedAt = m.serialize().lastInteraction
+  t += MOOD_PARAMS.TICK_MS
+  m.tick()
+  assert.equal(m.current().mood, 'worry')
+  assert.equal(m.current().userInteraction, false)
+  assert.equal(m.serialize().lastInteraction, interactedAt)
+})
+
+test('B5：liminal 在线与离线衰减同一条曲线（重启不会把停顿抹掉）', () => {
+  const clock = fakeClock()
+  const m = createMood({ now: clock.fn })
+  m.propose('liminal', 1.0, 'user')
+  const before = m.current().intensity
+  clock.advance(MOOD_PARAMS.TICK_MS)
+  m.tick()
+  const onlineDrop = before - m.current().intensity
+
+  // 同样的强度与同样的离线时长，restore 后的下降幅度必须一致
+  const savedAt = clock.fn()
+  const restored = createMood({ now: () => savedAt + MOOD_PARAMS.TICK_MS })
+  const ok = restored.restore({ mood: 'liminal', intensity: before, savedAt, lastInteraction: savedAt })
+  assert.equal(ok, true)
+  const offlineDrop = before - restored.current().intensity
+  assert.ok(close(onlineDrop, offlineDrop), `在线 ${onlineDrop} vs 离线 ${offlineDrop}`)
+  assert.ok(close(onlineDrop, MOOD_PARAMS.LIMINAL_DECAY))
+  assert.equal(restored.current().mood, 'liminal')
 })
 
 test('无效情绪名被忽略', () => {
