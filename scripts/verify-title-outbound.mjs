@@ -97,15 +97,21 @@ console.log('假模型通道就绪：' + JSON.stringify(keySet).slice(0, 60))
 async function ask(text) {
   const before = requests.length
   await page.evaluate((t) => window.nagi.chat.send(t), text)
-  // 一轮对话会触发多次模型调用：主对话（带 system）+ 记忆抽取（无 system）
-  // + 反应引擎（无 system）。必须等到"带 system 的那一条"出现再读，
-  // 否则会读到别人的请求、拿到空提示词，误判成"标题没进上下文"（2026-10-18 自坑两次）。
+  // 同一轮会触发多次模型调用，且**其中至少两次带 system**：
+  //   ① 主对话（有观测行）② 聊完后的日记生成（有 system、没有观测行）③ 记忆抽取（无 system）。
+  // 只按"有没有 system"筛会随机读到日记那次，C3 因此偶发假失败（2026-10-18 第三次自坑）。
+  // 判据改成：这条请求的最后一条 user 消息**逐字等于我问的那句话**。
+  const wanted = String(text).trim()
   let sys = ''
   for (let i = 0; i < 60; i++) {
     const fresh = requests.slice(before)
-    const withSystem = fresh.filter((msgs) => msgs.some((m) => m?.role === 'system'))
-    if (withSystem.length) {
-      sys = String(withSystem.at(-1).find((m) => m?.role === 'system')?.content || '')
+    const mine = fresh.filter((msgs) => {
+      if (!msgs.some((m) => m?.role === 'system')) return false
+      const lastUser = [...msgs].reverse().find((m) => m?.role === 'user')
+      return String(lastUser?.content || '').trim() === wanted
+    })
+    if (mine.length) {
+      sys = String(mine.at(-1).find((m) => m?.role === 'system')?.content || '')
       break
     }
     await sleep(500)
