@@ -230,10 +230,11 @@ test('打断不跳变：前倾未结束时探头，从当前包络续上', () =>
   assert.equal(after.mode, 'peek')
 })
 
-test('常态复合摆动：左右转身 + 前后不同相，周期 2400ms', () => {
+test('常态复合摆动：左右转身 + 前后不同相，周期与幅度按配置', () => {
   const dm = createDepthMotion({ now: 0, auto: false })
-  const frames = scan(dm, 0, 4800, 8)
-  // yaw（身体左右转）应完整摆过 ±7
+  // 扫描窗口覆盖两个完整周期（周期 2026-10-18 由 2400ms 放宽到 15000ms）
+  const P = DEPTH_AMBIENT.periodMs
+  const frames = scan(dm, 0, P * 2, Math.round(P / 120))
   let yawMin = Infinity
   let yawMax = -Infinity
   let scaleMin = Infinity
@@ -249,23 +250,46 @@ test('常态复合摆动：左右转身 + 前后不同相，周期 2400ms', () =
     dyMin = Math.min(dyMin, f.transform.dy)
     dyMax = Math.max(dyMax, f.transform.dy)
   }
-  assert.ok(yawMin <= -4.5 && yawMax >= 4.5, `身体左右摆应摆满 ±${DEPTH_AMBIENT.yaw}，实际 [${yawMin.toFixed(2)}, ${yawMax.toFixed(2)}]`)
-  assert.ok(scaleMax - 1 >= 0.02 && 1 - scaleMin >= 0.02, `前后缩放幅度应约 ±${DEPTH_AMBIENT.scale}，实际 [${scaleMin.toFixed(3)}, ${scaleMax.toFixed(3)}]`)
-  assert.ok(dyMin <= -2.5 && dyMax >= 2.5, `前后位移幅度应约 ±${DEPTH_AMBIENT.dy}px，实际 [${dyMin.toFixed(2)}, ${dyMax.toFixed(2)}]`)
+  // 幅度一律按配置的 90% 当下限（采样比正弦峰值稀疏，留一点余量）
+  assert.ok(
+    yawMin <= -DEPTH_AMBIENT.yaw * 0.9 && yawMax >= DEPTH_AMBIENT.yaw * 0.9,
+    `身体左右摆应摆满 ±${DEPTH_AMBIENT.yaw}，实际 [${yawMin.toFixed(2)}, ${yawMax.toFixed(2)}]`
+  )
+  assert.ok(
+    scaleMax - 1 >= DEPTH_AMBIENT.scale * 0.9 && 1 - scaleMin >= DEPTH_AMBIENT.scale * 0.9,
+    `前后缩放幅度应约 ±${DEPTH_AMBIENT.scale}，实际 [${scaleMin.toFixed(4)}, ${scaleMax.toFixed(4)}]`
+  )
+  assert.ok(
+    dyMin <= -DEPTH_AMBIENT.dy * 0.9 && dyMax >= DEPTH_AMBIENT.dy * 0.9,
+    `前后位移幅度应约 ±${DEPTH_AMBIENT.dy}px，实际 [${dyMin.toFixed(2)}, ${dyMax.toFixed(2)}]`
+  )
   // 复合而非同步：yaw 的零点与前后分量的极值点应对齐（相位差 π/2）
   let yawZeroT = -1
   for (const f of frames) {
-    if (yawZeroT < 0 && f.t > 400 && Math.abs((f.params.ParamBodyAngleX || 0)) < 0.05) {
+    if (yawZeroT < 0 && f.t > 400 && Math.abs(f.params.ParamBodyAngleX || 0) < DEPTH_AMBIENT.yaw * 0.02) {
       yawZeroT = f.t
       break
     }
   }
-  const nearZero = frames.find((f) => Math.abs(f.t - yawZeroT) < 40)
-  assert.ok(nearZero && Math.abs(nearZero.transform.scale - 1) > 0.015, 'yaw 过正面时前后分量应接近极值（复合动作）')
-  // 周期：yaw 两次向上过零的间距 ≈ 2400ms
-  const zeros = frames.filter((f) => f.t > 100 && (f.params.ParamBodyAngleX || 0) > 0 && ((frames[frames.indexOf(f) - 1]?.params?.ParamBodyAngleX) || 0) <= 0).map((f) => f.t)
+  const nearZero = frames.find((f) => Math.abs(f.t - yawZeroT) < P / 60)
+  assert.ok(
+    nearZero && Math.abs(nearZero.transform.scale - 1) > DEPTH_AMBIENT.scale * 0.6,
+    'yaw 过正面时前后分量应接近极值（复合动作）'
+  )
+  // 周期：yaw 两次向上过零的间距 ≈ periodMs
+  const zeros = frames
+    .filter(
+      (f) =>
+        f.t > 100 &&
+        (f.params.ParamBodyAngleX || 0) > 0 &&
+        (frames[frames.indexOf(f) - 1]?.params?.ParamBodyAngleX || 0) <= 0
+    )
+    .map((f) => f.t)
   if (zeros.length >= 2) {
-    assert.ok(Math.abs(zeros[1] - zeros[0] - DEPTH_AMBIENT.periodMs) < 40, `周期应约 ${DEPTH_AMBIENT.periodMs}ms，实际 ${zeros[1] - zeros[0]}`)
+    assert.ok(
+      Math.abs(zeros[1] - zeros[0] - P) < P / 30,
+      `周期应约 ${P}ms，实际 ${zeros[1] - zeros[0]}`
+    )
   }
 })
 
@@ -274,9 +298,10 @@ test('触发期间常态摆动让位（duck），结束后恢复', () => {
   const idleEnv = dm.update(100).ambientEnv
   assert.equal(idleEnv, 1, '常态摆动默认全量')
   dm.trigger('peek', 100)
-  const during = dm.update(100 + 520) // rise 结束
+  const P = DEPTH_ACTIONS.peek
+  const during = dm.update(100 + P.riseMs) // rise 结束，env=1
   assert.ok(during.ambientEnv < 0.3, `触发期间常态摆动应让位，实际 ${during.ambientEnv}`)
-  const after = dm.update(100 + 520 + 900 + 500 + 50)
+  const after = dm.update(100 + P.riseMs + P.holdMs + P.fallMs + 50)
   assert.equal(after.ambientEnv, 1, '动作结束后常态摆动恢复')
 })
 
@@ -297,13 +322,15 @@ test('自动触发：没人管她时她自己也会前倾/探头/后仰', () => 
 
 test('关开关是平滑收回，不是硬切；关闭期间触发被拒绝', () => {
   const dm = createDepthMotion({ now: 0, auto: false })
+  // 时长一律**实读配置**（D40：期望值与配置同源，改过渡时长不该让测试假失败）
+  const L = DEPTH_ACTIONS.leanIn
   dm.trigger('leanIn', 0)
-  dm.update(420) // rise 结束，env=1
-  dm.setEnabled(false, 420)
-  assert.equal(dm.trigger('peek', 420), false, '关闭期间触发应被拒绝')
-  const mid = dm.update(420 + 200)
+  dm.update(L.riseMs) // rise 结束，env=1
+  dm.setEnabled(false, L.riseMs)
+  assert.equal(dm.trigger('peek', L.riseMs), false, '关闭期间触发应被拒绝')
+  const mid = dm.update(L.riseMs + Math.round(L.fallMs / 2))
   assert.ok(mid.env > 0 && mid.env < 1, `关闭时应平滑淡出，实际 env=${mid.env}`)
-  const done = dm.update(420 + 460 + 50)
+  const done = dm.update(L.riseMs + L.fallMs + 50)
   assert.equal(done.env, 0)
   assert.equal(done.mode, 'idle')
   // 关闭期间常态摆动也归零（否则"关了还在动"）
@@ -330,11 +357,12 @@ test('amount 滑杆线性缩放全部输出（0 = 完全关闭，2 = 双倍）',
 
 test('release()：外部要求收回时平滑归零', () => {
   const dm = createDepthMotion({ now: 0, auto: false })
+  const B = DEPTH_ACTIONS.leanBack
   dm.trigger('leanBack', 0)
-  dm.update(460)
-  dm.release(460)
-  const mid = dm.update(460 + 230)
+  dm.update(B.riseMs)
+  dm.release(B.riseMs)
+  const mid = dm.update(B.riseMs + Math.round(B.fallMs / 2))
   assert.ok(mid.env > 0 && mid.env < 1)
-  const done = dm.update(460 + 460 + 50)
+  const done = dm.update(B.riseMs + B.fallMs + 50)
   assert.equal(done.env, 0)
 })

@@ -34,6 +34,9 @@ process.env.NO_PROXY = '127.0.0.1,localhost'
 process.env.no_proxy = '127.0.0.1,localhost'
 
 const ROOT = resolve(import.meta.dirname, '..')
+// 期望值一律从 core 实读（D40：验收脚本自己会烂，硬编码的时长/幅度一改就假失败）
+const { DEPTH_ACTIONS, DEPTH_AMBIENT } = await import('../src/core/presence/depth-motion.js')
+const LI = DEPTH_ACTIONS.leanIn
 const ELECTRON = join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
 const SNAP_DIR = join(tmpdir(), `nagi-depth-${Date.now()}`)
 
@@ -335,9 +338,10 @@ async function main() {
         maxDyRate = Math.max(maxDyRate, Math.abs(trace[i].dy - trace[i - 1].dy) / dt)
       }
       check('leanIn 峰值包络到 1 且无过冲', peakEnv <= 1 + 1e-9 && peakEnv >= 0.999, `envPeak=${peakEnv.toFixed(4)}`)
-      check('leanIn 淡入约 420ms 到 95%', t95 !== null && t95 >= 200 && t95 <= 620, `t(env≥0.95)=${t95?.toFixed(0)}ms`)
-      check('leanIn 保持段env≈1（420ms 与 1000ms 都在高位）', envAt(trace, 400) >= 0.99 && envAt(trace, 1000) >= 0.95, `env@400=${envAt(trace, 400).toFixed(3)} env@1000=${envAt(trace, 1000).toFixed(3)}`)
-      check('leanIn 淡出在约 1440ms 内收干净并回到恒等', envAt(trace, 1550) <= 0.1 && last.mode === 'idle' && Math.abs(last.scale - 1) < 1e-9 && last.dy === 0, `env@1550=${envAt(trace, 1550).toFixed(4)} mode=${last.mode} scale=${last.scale}`)
+      check(`leanIn 淡入约 ${LI.riseMs}ms 到 95%`, t95 !== null && t95 >= LI.riseMs * 0.55 && t95 <= LI.riseMs * 1.3, `t(env≥0.95)=${t95?.toFixed(0)}ms（riseMs=${LI.riseMs}）`)
+      check(`leanIn 保持段 env≈1（rise 结束后到 hold 中段都在高位）`, envAt(trace, LI.riseMs * 1.05) >= 0.99 && envAt(trace, LI.riseMs + LI.holdMs * 0.5) >= 0.99, `env@${Math.round(LI.riseMs * 1.05)}=${envAt(trace, LI.riseMs * 1.05).toFixed(3)} env@${Math.round(LI.riseMs + LI.holdMs * 0.5)}=${envAt(trace, LI.riseMs + LI.holdMs * 0.5).toFixed(3)}`)
+      const _endT = LI.riseMs + LI.holdMs + LI.fallMs + 100
+      check(`leanIn 淡出在 ${LI.riseMs + LI.holdMs + LI.fallMs}ms 内收干净并回到恒等`, envAt(trace, _endT) <= 0.1 && last.mode === 'idle' && Math.abs(last.scale - 1) < 1e-9 && last.dy === 0, `env@${Math.round(_endT)}=${envAt(trace, _endT).toFixed(4)} mode=${last.mode} scale=${last.scale}`)
       check('leanIn 峰值缩放 ≥1.04（设计 1.045，明显可感知）', peakScale >= 1.04 && peakScale <= 1.048, `scalePeak=${peakScale.toFixed(4)}`)
       check('leanIn 峰值下移 ≥6.5px（设计 +7；前倾是往下凑，不是往上飘）', maxDy >= 6.5 && maxDy <= 7.5, `dyMax=${maxDy.toFixed(2)}`)
       check('容器层全程 scaleX === scaleY（等比，不拉伸变形）', equalRatio)
@@ -476,7 +480,7 @@ async function main() {
     }
     const offLast = off.samples[off.samples.length - 1]
     check(
-      '关开关后平滑收回：确实从峰值下手、约 420ms 内归零、最终恒等、无跳变',
+      `关开关后平滑收回：确实从峰值下手、约 ${LI.fallMs}ms 内归零、最终恒等、无跳变`,
       off.atPeak >= 1.04 && off.state.enabled === false && offLast.env <= 0.05 && Math.abs(offLast.scale - 1) < 1e-9 && offLast.dy === 0 && maxRateOff <= 1e-3,
       `atPeak=${off.atPeak?.toFixed(4)} endScale=${offLast.scale.toFixed(6)} endEnv=${offLast.env.toFixed(4)} rate≤${maxRateOff.toExponential(2)}/ms`
     )
@@ -496,7 +500,7 @@ async function main() {
             lastSeq = d.seq
             out.push({ t: performance.now() - t0, yaw: d.params.ParamBodyAngleX ?? 0, roll: d.params.ParamAngleZ ?? 0, scale: d.transform.scale, dy: d.transform.dy })
           }
-          if (performance.now() - t0 < 3000) requestAnimationFrame(tick)
+          if (performance.now() - t0 < 15000 * 1.25) requestAnimationFrame(tick)
           else resolve()
         }
         requestAnimationFrame(tick)
@@ -512,12 +516,13 @@ async function main() {
     // （实测得到 1801ms = 2400−600）。相位差要按周期取模：1/4 周期偏移在 |Δt| 上
     // 表现为 600 或 1800，取 min(|Δ|, 周期−|Δ|) 两者都归一到 600。
     const phaseGap = Math.abs(tYaw - tDepth)
-    const phaseGapMod = Math.min(phaseGap, 2400 - phaseGap)
+    const P = DEPTH_AMBIENT.periodMs
+    const phaseGapMod = Math.min(phaseGap, P - phaseGap)
     // 左右摆改用 ParamBodyAngleX（实测它才是横移的那个；旧代码用 Y，等于没转身）
-    check('常态摆动：身体左右摆幅度到位（|ParamBodyAngleX| ≥4.5，设计 5）', yawPeak >= 4.5, `yawPeak=${yawPeak.toFixed(2)}°`)
-    check('常态摆动：歪头幅度到位（|ParamAngleZ| ≥2.5，设计 3）', rollPeak >= 2.5, `rollPeak=${rollPeak.toFixed(2)}°`)
-    check('常态摆动：前后分量到位（|scale−1| ≥0.02，设计 0.025）', depthPeak >= 0.02, `depthPeak=${(depthPeak * 100).toFixed(2)}%`)
-    check('常态摆动是**复合**的：yaw 极值与前后极值相位差 ≈1/4 周期（600ms）', phaseGapMod >= 350 && phaseGapMod <= 850, `Δt=${phaseGapMod.toFixed(0)}ms（原始 ${phaseGap.toFixed(0)}ms，周期 2400ms）`)
+    check(`常态摆动：身体左右摆幅度到位（|ParamBodyAngleX| ≥${(DEPTH_AMBIENT.yaw * 0.9).toFixed(1)}，设计 ${DEPTH_AMBIENT.yaw}）`, yawPeak >= DEPTH_AMBIENT.yaw * 0.9, `yawPeak=${yawPeak.toFixed(2)}°`)
+    check(`常态摆动：歪头幅度到位（|ParamAngleZ| ≥${(DEPTH_AMBIENT.roll * 0.9).toFixed(1)}，设计 ${DEPTH_AMBIENT.roll}）`, rollPeak >= DEPTH_AMBIENT.roll * 0.9, `rollPeak=${rollPeak.toFixed(2)}°`)
+    check(`常态摆动：前后分量到位（|scale−1| ≥${(DEPTH_AMBIENT.scale * 0.9).toFixed(4)}，设计 ${DEPTH_AMBIENT.scale}）`, depthPeak >= DEPTH_AMBIENT.scale * 0.9, `depthPeak=${(depthPeak * 100).toFixed(2)}%`)
+    check(`常态摆动是**复合**的：yaw 极值与前后极值相位差 ≈1/4 周期（${Math.round(P / 4)}ms）`, phaseGapMod >= P * 0.12 && phaseGapMod <= P * 0.38, `Δt=${phaseGapMod.toFixed(0)}ms（原始 ${phaseGap.toFixed(0)}ms，周期 ${P}ms）`)
     await page.evaluate(() => window.__nagiDepthConfig({ ambient: false, auto: false }))
 
     /* ⑩ 回归：转向层 set 绝对值不许盖掉 depth 的角度增量（2026-10-17 实测踩过）

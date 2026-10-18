@@ -1531,8 +1531,17 @@ function ensureIdleHeadHook() {
   idleHeadHook = () => {
     const core = model?.internalModel?.coreModel
     if (!core) return
-    // 转向时让位：那边在 set 绝对值，这里再 add 会叠过头
-    if (turnCtl.isActive()) return
+    // 转向时让位：那边用 set 写绝对值，这里用 add。
+    // ⚠ 2026-10-18 之前是**硬 return** —— 转向开始的那一帧待机摆头从 ±10° 直接跳回 0，
+    // 松手后又从 0 跳回 ±10°，用户反馈的"突然快速转头 / 复位衔接不自然"有一半来自这里。
+    // 改为按 turn 的包络 w 做**交叉淡变**：keep = 1−w，w→1 时完全让位、w→0 时自然接回。
+    // （turnCtl.tick() 是纯读，重复调用无副作用）
+    let keep = 1
+    if (turnCtl.isActive()) {
+      const ts = turnCtl.tick()
+      keep = 1 - (ts ? Number(ts.weight) || 0 : 0)
+      if (keep <= 0.002) return
+    }
     const now = performance.now()
 
     // 动作组变化 → 记一下开始时间（用来算动作期包络）
@@ -1563,30 +1572,31 @@ function ensureIdleHeadHook() {
       y: Math.sin(t * 2.1 + 1.1) * ACT_HEAD.y * actEnv,
       z: Math.sin(t * 1.9 + 0.4) * ACT_HEAD.z * actEnv
     }
-    lastHeadAngle = { x: base.x + extra.x, y: base.y + extra.y }
+    lastHeadAngle = { x: (base.x + extra.x) * keep, y: (base.y + extra.y) * keep }
     // 验收用：待机摆动的**实际写入值**。判"头部有没有在动"要读这个，不能拿画面差分——
     // 冻结/关掉之后头发尾巴的物理还会余震好几秒，像素差会把"已经关了"算成"还在动"
     // （2026-10-17 verify:turns A 项踩过：关掉后基线仍有 10~12%）。extra 是"动作期加强"
     // 分量（actEnv 包络内的 ±16° 快摆），待机时恒为 0——C 项"播动作时摆动加强"也读它。
     window.__idleHeadLast = {
       seq: ++idleHeadSeq,
-      x: base.x + extra.x,
-      y: base.y + extra.y,
-      z: base.z + extra.z,
-      extra: { x: extra.x, y: extra.y, z: extra.z },
+      x: (base.x + extra.x) * keep,
+      y: (base.y + extra.y) * keep,
+      z: (base.z + extra.z) * keep,
+      extra: { x: extra.x * keep, y: extra.y * keep, z: extra.z * keep },
+      keep,
       acting
     }
     try {
-      core.addParameterValueById('ParamAngleX', base.x + extra.x)
-      core.addParameterValueById('ParamAngleY', base.y + extra.y)
-      core.addParameterValueById('ParamAngleZ', base.z + extra.z)
+      core.addParameterValueById('ParamAngleX', (base.x + extra.x) * keep)
+      core.addParameterValueById('ParamAngleY', (base.y + extra.y) * keep)
+      core.addParameterValueById('ParamAngleZ', (base.z + extra.z) * keep)
       // 头摆动时眼珠也要跟着挪一点，否则眼珠相对眼眶像在飘（斜视感）
-      core.addParameterValueById('ParamEyeBallX', (base.x / TURN_ANGLE_MAX) * EYE_FOLLOW_IDLE + (extra.x / TURN_ANGLE_MAX) * EYE_FOLLOW_IDLE)
-      core.addParameterValueById('ParamEyeBallY', (base.y / TURN_ANGLE_MAX) * EYE_FOLLOW_IDLE)
+      core.addParameterValueById('ParamEyeBallX', ((base.x / TURN_ANGLE_MAX) * EYE_FOLLOW_IDLE + (extra.x / TURN_ANGLE_MAX) * EYE_FOLLOW_IDLE) * keep)
+      core.addParameterValueById('ParamEyeBallY', ((base.y / TURN_ANGLE_MAX) * EYE_FOLLOW_IDLE) * keep)
       if (actEnv > 0.01) {
-        core.addParameterValueById('ParamBodyAngleX', Math.sin(t * 2.3) * ACT_BODY.x * actEnv)
-        core.addParameterValueById('ParamBodyAngleY', Math.sin(t * 1.7 + 0.8) * ACT_BODY.y * actEnv)
-        core.addParameterValueById('ParamBodyAngleZ', Math.sin(t * 2.9 + 1.5) * ACT_BODY.z * actEnv)
+        core.addParameterValueById('ParamBodyAngleX', Math.sin(t * 2.3) * ACT_BODY.x * actEnv * keep)
+        core.addParameterValueById('ParamBodyAngleY', Math.sin(t * 1.7 + 0.8) * ACT_BODY.y * actEnv * keep)
+        core.addParameterValueById('ParamBodyAngleZ', Math.sin(t * 2.9 + 1.5) * ACT_BODY.z * actEnv * keep)
       }
     } catch {
       /* 模型缺参数就算了 */

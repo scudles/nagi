@@ -63,6 +63,11 @@ const EASES = { outCubic: easeOutCubic, inOutSine: easeInOutSine }
  *     是整个人均匀变大往上飘，读起来就是整体前后移动。
  *   · dy 方向随之反转：前倾**下**移（凑近）、后仰**上**移（退开）。
  *   取值范围：缩放 ≤6%、位移 ≤12px、身体角度 ≤3°（预算见文件头）。
+ *
+ * 2026-10-18 用户反馈「部分动作开始和结束都太过突兀」—— 过渡时间整体加长、
+ * 曲线从 `outCubic`（起步速度最大 = 猛一下）换成 `inOutSine`（两端速度都是 0）：
+ *   rise 420~520ms → 680~780ms、fall 420~500ms → 900~980ms。
+ * 收尾比进入更长一点，因为"回到原位"比"动起来"更容易被看出突兀。
  */
 export const DEPTH_ACTIONS = {
   /** 身体前倾：躯干略压缩 + 头下探 + 微微放大（对话开始） */
@@ -70,10 +75,10 @@ export const DEPTH_ACTIONS = {
     label: '前倾凑近',
     scale: 1.045,
     dy: 7,
-    riseMs: 420,
+    riseMs: 680,
     holdMs: 600,
-    fallMs: 420,
-    ease: 'outCubic',
+    fallMs: 900,
+    ease: 'inOutSine',
     params: { ParamBodyAngleY: -2 }
   },
   /** 探头看你：压缩最多、头探得最低、放大最多，侧头方向每次随机（归来） */
@@ -81,10 +86,10 @@ export const DEPTH_ACTIONS = {
     label: '探头看你',
     scale: 1.06,
     dy: 12,
-    riseMs: 520,
+    riseMs: 780,
     holdMs: 900,
-    fallMs: 500,
-    ease: 'outCubic',
+    fallMs: 980,
+    ease: 'inOutSine',
     params: { ParamBodyAngleY: -3, ParamAngleZ: 3 }
   },
   /** 身体后仰：躯干伸展 + 头上抬 + 略缩小（说完一句靠回去） */
@@ -92,9 +97,9 @@ export const DEPTH_ACTIONS = {
     label: '后仰松弛',
     scale: 0.965,
     dy: -5,
-    riseMs: 460,
+    riseMs: 700,
     holdMs: 700,
-    fallMs: 460,
+    fallMs: 900,
     ease: 'inOutSine',
     params: { ParamBodyAngleY: 2.5 }
   }
@@ -109,14 +114,26 @@ export const DEPTH_ACTIONS = {
  */
 export const DEPTH_PIVOT_FY = 0.23
 
-/** 常态复合摆动（左右 + 前后）：永续循环，无人触发时也有"活着"的纵深呼吸 */
+/**
+ * 常态复合摆动（左右 + 前后）：永续循环，无人触发时也有"活着"的纵深呼吸。
+ *
+ * 2026-10-18 用户反馈「日常待机 Z 轴前后移动太夸张，大幅减小幅度和频率，
+ * 只在特定动作可以让 Z 轴大幅移动」—— 降幅降频：
+ *   · periodMs 2400 → **15000**：原来 2.4 秒一个来回（0.42Hz，肉眼就是"来回晃"），
+ *     现在 15 秒一个来回（0.067Hz），只有长时间盯着才察觉得到"在呼吸"。
+ *   · scale 0.025 → **0.0035**（±0.35%，几乎是呼吸级的尺度变化）
+ *   · dy 3 → **0.5px**（亚像素级）
+ *   · yaw 5 → 3、roll 3 → 2：左右摆与歪头属于同一套"待机摆动"，
+ *     用户说"夸张"时它们也在贡献动感，一并收一档。
+ * 大幅前后（scale 1.045~1.06 / dy 7~12px）只保留在 **DEPTH_ACTIONS 的触发动作**里。
+ */
 export const DEPTH_AMBIENT = {
   label: '常态纵深摆动',
-  periodMs: 2400, // 一个完整来回
-  yaw: 5, // ParamBodyAngleX 幅度（身体左右摆；实测它才是横移的那个，见文件头）
-  roll: 3, // ParamAngleZ 幅度（头歪）
-  scale: 0.025, // 容器缩放幅度（转身时略微远近）
-  dy: 3 // 容器纵向位移幅度（px）
+  periodMs: 15000, // 一个完整来回（原来 2400，太快）
+  yaw: 3, // ParamBodyAngleX 幅度（身体左右摆；实测它才是横移的那个，见文件头）
+  roll: 2, // ParamAngleZ 幅度（头歪）
+  scale: 0.0035, // 容器缩放幅度（转身时略微远近）
+  dy: 0.5 // 容器纵向位移幅度（px）
 }
 
 /** 自动触发：常态摆动之外，没人管她时她自己偶尔前倾/探头/后仰 */

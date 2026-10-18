@@ -57,8 +57,19 @@ const SAME_KIND_GAP_MS = {
 /** 两次转向之间的最小间隔（避免一直转） */
 const MIN_GAP_MS = 1200
 
-const easeOut = (k) => 1 - (1 - k) * (1 - k)
-const easeIn = (k) => k * k
+// 缓动（2026-10-18 改）：原来 in 用 easeOut、out 用 easeIn —— 两条曲线都是"速度最大"的那头
+// 落在起止点上，读起来就是「猛一下转过去 / 到点了突然停住」（用户反馈"突然快速转头、
+// 复位衔接不自然"）。改成两端导数都为 0 的 easeInOutSine：
+//   · 进入：0 → 1 两端慢、中间快，起步是"缓缓转过来"；
+//   · 退出：1 → 0 同样两端慢，松到位时速度已经是 0，不会"咔"一下停住。
+const easeInOutSine = (k) => 0.5 - 0.5 * Math.cos(Math.PI * k)
+
+const lerp = (a, b, k) => a + (b - a) * k
+const lerpVec = (from, to, k) => ({
+  x: lerp(from.x, to.x, k),
+  y: lerp(from.y, to.y, k),
+  body: lerp(from.body, to.body, k)
+})
 
 /**
  * 转向控制器。
@@ -68,8 +79,10 @@ export function createTurnController(deps = {}) {
   const now = deps.now ?? (() => Date.now())
   const rng = deps.rng ?? Math.random
 
-  let active = null // { kind, preset, startedAt, x, y, body }
-  let lastAt = 0
+  let active = null // { kind, preset, startedAt, x, y, body, fromOut }
+  // 初值必须是 −Infinity 而不是 0：写 0 时若时钟从小数起算（单测注入 now:()=>0、
+  // 或页面用 performance.now() 且刚启动），首次转向会被 MIN_GAP 误判成"间隔不足"直接拒掉。
+  let lastAt = -Infinity
   let lastByKind = {}
   let history = [] // 最近几次（调试/验证用）
 
@@ -86,11 +99,18 @@ export function createTurnController(deps = {}) {
     if (!preset) return { ok: false, reason: 'unknown-kind' }
     if (!opts.force) {
       const gap = SAME_KIND_GAP_MS[kind] ?? 0
-      if (gap && t - (lastByKind[kind] || -Infinity) < gap) return { ok: false, reason: 'kind-gap' }
+      // ⚠ 用 ?? 而不是 ||：lastByKind 里存的是时间戳，0 是合法值（时钟从 0 起算时），
+      // 用 || 会把它当成"没有记录"，冷却直接失效。
+      const prevSame = lastByKind[kind] ?? -Infinity
+      if (gap && t - prevSame < gap) return { ok: false, reason: 'kind-gap' }
       if (active && t - active.startedAt < MIN_GAP_MS) return { ok: false, reason: 'busy' }
       if (!active && t - lastAt < MIN_GAP_MS) return { ok: false, reason: 'gap' }
     }
     const num = (v, d) => (Number.isFinite(Number(v)) ? Math.max(-1, Math.min(1, Number(v))) : d)
+    // 打断续接：记下"此刻实际朝向"，新的淡入从这里出发 —— 否则中途换一个方向
+    // （例如 +0.9 转到一半突然要往 −0.88 别过头）会先跳回 0 再转，明显抽搐。
+    const prev = tick(t)
+    const fromOut = prev ? { x: prev.x, y: prev.y, body: prev.body } : { x: 0, y: 0, body: 0 }
     active = {
       kind,
       preset,
@@ -98,6 +118,7 @@ export function createTurnController(deps = {}) {
       x: num(opts.x, preset.x),
       y: num(opts.y, preset.y),
       body: num(opts.body, preset.body),
+      fromOut,
       holdMs: Number.isFinite(Number(opts.holdMs)) ? Math.max(200, Number(opts.holdMs)) : preset.holdMs
     }
     lastAt = t
@@ -110,7 +131,7 @@ export function createTurnController(deps = {}) {
   /**
    * 每帧取当前的转向量。
    * @returns {{kind:string, x:number, y:number, body:number, weight:number}|null}
-   *          weight 是包络（0..1），已经乘进 x/y/body
+   *          返回的 x/y/body 是**已经含包络的绝对值**（渲染层直接 set，不要再乘 weight）
    */
   function tick(t = now()) {
     if (!active) return null
@@ -121,18 +142,33 @@ export function createTurnController(deps = {}) {
       active = null
       return null
     }
+    const target = { x: active.x, y: active.y, body: active.body }
+    const from = active.fromOut || { x: 0, y: 0, body: 0 }
+    let out
     let w
-    if (el < inMs) w = easeOut(el / Math.max(1, inMs))
-    else if (el < inMs + active.holdMs) w = 1
-    else w = 1 - easeIn((el - inMs - active.holdMs) / Math.max(1, outMs))
+    if (el < inMs) {
+      // 淡入：从"打断那一刻的实际朝向"插到目标（正常开始时 from 就是 0）
+      const e = easeInOutSine(el / Math.max(1, inMs))
+      out = lerpVec(from, target, e)
+      w = e
+    } else if (el < inMs + active.holdMs) {
+      out = target
+      w = 1
+    } else {
+      // 淡出：两端都慢；到头时速度已是 0，不会突然停住
+      const e = easeInOutSine((el - inMs - active.holdMs) / Math.max(1, outMs))
+      const keep = 1 - e
+      out = { x: target.x * keep, y: target.y * keep, body: target.body * keep }
+      w = keep
+    }
     return {
       kind: active.kind,
-      x: active.x * w,
-      y: active.y * w,
-      body: active.body * w,
+      x: out.x,
+      y: out.y,
+      body: out.body,
       weight: w,
       // 头部转到接近极限时，头上再带一点侧倾会更像"真的在转"
-      tilt: active.x * w * 0.28
+      tilt: out.x * 0.28
     }
   }
 
@@ -144,7 +180,7 @@ export function createTurnController(deps = {}) {
 
   function reset() {
     active = null
-    lastAt = 0
+    lastAt = -Infinity
     lastByKind = {}
     history = []
   }
