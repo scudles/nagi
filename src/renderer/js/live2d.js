@@ -29,6 +29,7 @@ import {
 } from '../../core/outfit.js'
 import { microEnvelope, parseMicroExpr } from '../../core/microexpr.js'
 import { DEFAULT_DEPTH_CONFIG, DEPTH_PIVOT_FY, createDepthMotion } from '../../core/presence/depth-motion.js'
+import { checkFinalFrame, createFrameHookRegistry, live2dHookSpecs } from '../../core/face/hook-registry.js'
 import { TURN_KIND, createTurnController, directionFrom, describeTurn } from '../../core/face/turn.js'
 import { createBlinkScheduler } from '../../core/face/blink.js'
 import { createEyeWander } from '../../core/face/eye.js'
@@ -91,6 +92,16 @@ let depthMotion = null
 let depthHook = null
 let depthSeq = 0
 let depthCfg = { ...DEFAULT_DEPTH_CONFIG }
+let hookRegistry = null
+let mouthOpenHook = null
+let finalFrameSeq = 0
+let lastRangeFailure = ''
+const FINAL_FRAME_IDS = [
+  'ParamAngleX', 'ParamAngleY', 'ParamAngleZ',
+  'ParamBodyAngleX', 'ParamBodyAngleY', 'ParamBodyAngleZ',
+  'ParamEyeBallX', 'ParamEyeBallY', 'ParamEyeLOpen', 'ParamEyeROpen',
+  'ParamMouthOpenY', 'ParamMouthForm'
+]
 /**
  * 模型的稳定基准尺寸（模型单位）。
  *
@@ -244,14 +255,9 @@ export function frameInfo() {
 export function probeRedOnce() {
   return new Promise((resolve) => {
     const im = model?.internalModel
-    if (!im) return resolve(null)
+    if (!im || !hookRegistry) return resolve(null)
     const core = im.coreModel
     const once = () => {
-      try {
-        im.off('beforeModelUpdate', once)
-      } catch {
-        /* ignore */
-      }
       const get = (id) => {
         try {
           return core.getParameterValueById(id)
@@ -261,9 +267,8 @@ export function probeRedOnce() {
       }
       resolve({ ParamRedGlow: get('ParamRedGlow'), ParamRedHighlight: get('ParamRedHighlight') })
     }
-    // 注册在 guard 之后 → 读到的是被压回 0 之后的值
-    im.on('beforeModelUpdate', once)
-    setTimeout(() => resolve(null), 1500)
+    const cancel = hookRegistry.observeOnce(once)
+    setTimeout(() => { cancel(); resolve(null) }, 1500)
   })
 }
 
@@ -281,14 +286,9 @@ const POSE_PARAM_IDS = ['ParamEyeBallX', 'ParamEyeBallY', 'ParamAngleX', 'ParamA
 export function probePoseOnce(ids = POSE_PARAM_IDS) {
   return new Promise((resolve) => {
     const im = model?.internalModel
-    if (!im) return resolve(null)
+    if (!im || !hookRegistry) return resolve(null)
     const core = im.coreModel
     const once = () => {
-      try {
-        im.off('beforeModelUpdate', once)
-      } catch {
-        /* ignore */
-      }
       const out = {}
       for (const id of ids) {
         try {
@@ -299,9 +299,23 @@ export function probePoseOnce(ids = POSE_PARAM_IDS) {
       }
       resolve(out)
     }
-    im.on('beforeModelUpdate', once)
-    setTimeout(() => resolve(null), 1500)
+    const cancel = hookRegistry.observeOnce(once)
+    setTimeout(() => { cancel(); resolve(null) }, 1500)
   })
+}
+
+/** B6 验收：读取整条固定钩子链写完、网格更新之前的最终参数。 */
+export function probeFinalFrameOnce(ids = FINAL_FRAME_IDS) {
+  return new Promise((resolve) => {
+    const core = model?.internalModel?.coreModel
+    if (!core || !hookRegistry) return resolve(null)
+    const cancel = hookRegistry.observeOnce(() => resolve(checkFinalFrame(core, ids)))
+    setTimeout(() => { cancel(); resolve(null) }, 1500)
+  })
+}
+
+export function hookState() {
+  return hookRegistry ? { order: hookRegistry.order(), active: hookRegistry.active() } : null
 }
 
 /* ------------------------------------------------------------------ *
@@ -449,6 +463,9 @@ function overrideEntry(emotion) {
  *   depth: 前后（Z 轴）动作配置 { enabled, amount }（设置页 live2d.depthMotion）
  */
 export async function load(canvas, url, opts = {}) {
+  // 同一页换模型时先完整卸下旧模型的唯一监听器；保留传入的 canvas 供新实例复用。
+  if (model) destroy({ preserveCanvas: true })
+  disposed = false
   if (!coreAvailable()) {
     throw new Error('Live2D Cubism Core 未加载（请确认 src/renderer/public/vendor/live2dcubismcore.min.js 存在）')
   }
@@ -481,6 +498,17 @@ export async function load(canvas, url, opts = {}) {
   outfit = await loadOutfitConfig(url)
   microCfg = await loadMicroExprConfig(url)
   faceCfg = await loadFaceConfig(url)
+  hookRegistry?.destroy()
+  hookRegistry = createFrameHookRegistry(m.internalModel, live2dHookSpecs({ face: faceCfg, outfit, micro: microCfg }))
+  hookRegistry.add('frameGuard', () => {
+    const core = model?.internalModel?.coreModel
+    if (!core) return
+    const frame = checkFinalFrame(core, FINAL_FRAME_IDS)
+    window.__nagiFinalFrame = { seq: ++finalFrameSeq, ...frame }
+    const fingerprint = frame.failures.map((f) => f.id).join(',')
+    if (fingerprint && fingerprint !== lastRangeFailure) console.warn('[live2d] final frame out of range', frame.failures)
+    lastRangeFailure = fingerprint
+  })
   // 前后（Z 轴）动作的载体：模型外面套一层容器。只动这一层的 scale/x/y
   // （绕模型锚点——即取景带底边/肚脐线——缩放与位移），layout() 给模型本人的
   // 定位原样不动，于是取景、镜像、安全边距全不受影响，画面也不会被拉变形。
@@ -515,6 +543,16 @@ export async function load(canvas, url, opts = {}) {
     setMouthOpen(0.14 + Math.abs(Math.sin(talkPhase * 8.5)) * 0.52 + Math.random() * 0.1)
   }
   m.internalModel.on('afterMotionUpdate', mouthHook)
+  // afterMotionUpdate 只决定开口度；在表情 set 之后重放，才不会被表情嘴型盖掉。
+  mouthOpenHook = () => {
+    if (!talking && !lipTrack && mouthValue < 0.02) return
+    const core = model?.internalModel?.coreModel
+    if (!core) return
+    for (const id of ['ParamMouthOpenY', 'ParamMouthOpen']) {
+      try { core.setParameterValueById(id, mouthValue) } catch { /* 模型无此参数 */ }
+    }
+  }
+  hookRegistry.add('mouthOpen', mouthOpenHook)
 
   // 红色形态裁剪（默认开启；模型目录 nagi-emotion.json 里 removeRedGlow:false 可放行）
   if (shouldRemoveRedGlow(overrideMap)) {
@@ -532,7 +570,7 @@ export async function load(canvas, url, opts = {}) {
           }
         }
       }
-      m.internalModel.on('beforeModelUpdate', redGuard)
+      hookRegistry.add('redGuard', redGuard)
     }
   }
 
@@ -589,16 +627,7 @@ export async function load(canvas, url, opts = {}) {
   ensureAutoBlinkHook()
   ensureEyeWanderHook()
   ensureEarHook()
-  // 前后（Z 轴）动作的 hook 必须注册在**这一串的最后**：
-  // beforeModelUpdate 的监听器按**注册顺序**执行（pixi-live2d-display 用
-  // eventemitter3，FIFO——2026-10-17 实测纠正：早前注释写的"后注册先执行"是错的，
-  // probeRedOnce/probePoseOnce"注册在后就已生效"与 freezeIdleMotion 能按住待机，
-  // 两条都只在 FIFO 下成立）。而转向层 turnHook 对 ParamAngle*/ParamBodyAngle*
-  // 是 set 绝对值：depth 若排在它前面，add 的角度增量会被整个盖掉——归来时
-  // playTurn('return') 与 triggerDepth('peek') 正好叠加，探头的抬头就丢了。
-  // 放最后，depth 的增量才叠在每一层之上：turn 的绝对值当底，待机摆头/思考姿态/
-  // 时段表现/呼吸都是 add 照常相加，容器层（scale/dx/dy）则谁都不碰、天然独占。
-  // redGuard 只写 ParamRed*，与 depth 无交集，谁先谁后都行。
+  // 固定顺序由每模型唯一 hookRegistry 决定；迟启表情/姿态不再改变执行位置。
   ensureDepthHook()
   if (faceCfg?.emotions) console.log('[live2d] 面部表达：', faceCfg.tremor.channels.length, '路微动 /', faceCfg.visemeOrder.length, '个元音')
   return m
@@ -773,7 +802,7 @@ export function setPose(name) {
     }
     if (poseState.releasing && settled) {
       try {
-        model.internalModel.off('beforeModelUpdate', poseHook)
+        hookRegistry?.remove('pose', poseHook)
       } catch {
         /* ignore */
       }
@@ -781,7 +810,7 @@ export function setPose(name) {
       poseState = null
     }
   }
-  model.internalModel.on('beforeModelUpdate', poseHook)
+  hookRegistry.add('pose', poseHook)
   return true
 }
 
@@ -856,7 +885,7 @@ export function applyRhythmPose(rhythm) {
     }
     if (rhythmState.releasing && settled) {
       try {
-        model.internalModel.off('beforeModelUpdate', rhythmHook)
+        hookRegistry?.remove('rhythm', rhythmHook)
       } catch {
         /* ignore */
       }
@@ -864,7 +893,7 @@ export function applyRhythmPose(rhythm) {
       rhythmState = null
     }
   }
-  model.internalModel.on('beforeModelUpdate', rhythmHook)
+  hookRegistry.add('rhythm', rhythmHook)
   return true
 }
 
@@ -915,7 +944,7 @@ function ensureOutfitHook() {
       }
     }
   }
-  model.internalModel.on('beforeModelUpdate', outfitHook)
+  hookRegistry.add('outfit', outfitHook)
 }
 
 /** 主动眨眼；眼睛完全闭合的那一刻回调 onClosed —— 用它把参数切换"藏"在闭眼里 */
@@ -960,7 +989,7 @@ function briefBlink(onClosed) {
     }
     if (el >= end) {
       try {
-        model.internalModel.off('beforeModelUpdate', blinkHook)
+        hookRegistry?.remove('blinkCover', blinkHook)
       } catch {
         /* ignore */
       }
@@ -968,7 +997,7 @@ function briefBlink(onClosed) {
       blinkState = null
     }
   }
-  model.internalModel.on('beforeModelUpdate', blinkHook)
+  hookRegistry.add('blinkCover', blinkHook)
 }
 
 /** 轻微头部偏移：给切换一个"她动了一下"的由头，1 秒内起落 */
@@ -987,7 +1016,7 @@ function nudgeHead(dir = 0) {
     const el = performance.now() - state.t0
     if (el >= HEAD_NUDGE_MS) {
       try {
-        model.internalModel.off('beforeModelUpdate', headHook)
+        hookRegistry?.remove('headNudge', headHook)
       } catch {
         /* ignore */
       }
@@ -1003,7 +1032,7 @@ function nudgeHead(dir = 0) {
       /* 没有这些参数就只当没加 */
     }
   }
-  model.internalModel.on('beforeModelUpdate', headHook)
+  hookRegistry.add('headNudge', headHook)
 }
 
 /** 槽位表是否刚好等于某个预设装束 */
@@ -1144,7 +1173,7 @@ export function playMicroExpr(params, holdMs = 1600) {
     }
     if (el >= Math.max(state.holdMs, 400)) {
       try {
-        model.internalModel.off('beforeModelUpdate', microHook)
+        hookRegistry?.remove('micro', microHook)
       } catch {
         /* ignore */
       }
@@ -1152,7 +1181,7 @@ export function playMicroExpr(params, holdMs = 1600) {
       microState = null
     }
   }
-  model.internalModel.on('beforeModelUpdate', microHook)
+  hookRegistry.add('micro', microHook)
   return true
 }
 
@@ -1222,7 +1251,7 @@ function ensureEmotionHook() {
       }
     }
   }
-  model.internalModel.on('beforeModelUpdate', emotionHook)
+  hookRegistry.add('emotion', emotionHook)
 }
 
 /** 五官微动 + 眼球微扫视：小幅度、不同步、连续 */
@@ -1257,7 +1286,7 @@ function ensureTremorHook() {
       }
     }
   }
-  model.internalModel.on('beforeModelUpdate', tremorHook)
+  hookRegistry.add('tremor', tremorHook)
 }
 
 /** 口型层：按元音切形状（"张多大"由 setMouthOpen 给） */
@@ -1285,7 +1314,7 @@ function ensureVisemeHook() {
       }
     }
   }
-  model.internalModel.on('beforeModelUpdate', visemeHook)
+  hookRegistry.add('viseme', visemeHook)
 }
 
 /** 设置页可调：五官微动的明显程度（0 = 关掉） */
@@ -1317,7 +1346,6 @@ let eyeWanderCtl = null
 let eyeWanderHook = null
 let eyeWanderOn = true
 let lastGazeAt = -1e9 // 最近一次"真的在指方向"的注视（鼠标静止后眼球才开始自己游走）
-let lastHeadAngle = { x: 0, y: 0 } // 待机摆动当前写进去的角度（眼球游走时要叠加）
 // 抖耳朵（2026-10-17）：Param78/79 是**物理输入**，写它耳朵会自己甩起来
 let earHook = null
 let earPulse = null
@@ -1333,7 +1361,7 @@ export function applyAngleProbe(id, value) {
         /* ignore */
       }
     }
-    model.internalModel.on('beforeModelUpdate', angleProbeHook)
+    hookRegistry.add('angleProbe', angleProbeHook)
   }
   return true
 }
@@ -1504,7 +1532,7 @@ function ensureTurnHook() {
       /* 模型缺参数就算了 */
     }
   }
-  model.internalModel.on('beforeModelUpdate', turnHook)
+  hookRegistry.add('turn', turnHook)
 }
 
 /* ---------------- 待机头部摆动 / 动作期加强（2026-10-17） ----------------
@@ -1572,7 +1600,6 @@ function ensureIdleHeadHook() {
       y: Math.sin(t * 2.1 + 1.1) * ACT_HEAD.y * actEnv,
       z: Math.sin(t * 1.9 + 0.4) * ACT_HEAD.z * actEnv
     }
-    lastHeadAngle = { x: (base.x + extra.x) * keep, y: (base.y + extra.y) * keep }
     // 验收用：待机摆动的**实际写入值**。判"头部有没有在动"要读这个，不能拿画面差分——
     // 冻结/关掉之后头发尾巴的物理还会余震好几秒，像素差会把"已经关了"算成"还在动"
     // （2026-10-17 verify:turns A 项踩过：关掉后基线仍有 10~12%）。extra 是"动作期加强"
@@ -1602,7 +1629,7 @@ function ensureIdleHeadHook() {
       /* 模型缺参数就算了 */
     }
   }
-  model.internalModel.on('beforeModelUpdate', idleHeadHook)
+  hookRegistry.add('idleHead', idleHeadHook)
 }
 
 /* ---------------- 自动眨眼（2026-10-17） ----------------
@@ -1643,8 +1670,8 @@ function ensureAutoBlinkHook() {
     }
     window.__blinkLastWritten = { f, at: performance.now() }
   }
-  // 最后注册 = 最后执行：闭眼要压过微动层对眼睑的微小增量
-  model.internalModel.on('beforeModelUpdate', autoBlinkHook)
+  // 固定表中排在眼睑微动之后：乘法闭眼保留表情半闭，又能压过微动增量。
+  hookRegistry.add('autoBlink', autoBlinkHook)
 }
 
 /** 开关自动眨眼（0 = 关，1 = 正常） */
@@ -1688,11 +1715,10 @@ function ensureEyeWanderHook() {
     // verify:pose 抓到：ΔEyeBallX=0.468 而非姿态目标 0.35，差值正是游走落点）
     if (now - lastGazeAt < GAZE_ACTIVE_MS) return // 她在看你
     const w = eyeWanderCtl.tick(now)
-    // 头部摆动带来的眼珠跟随要一起算进来（这一层是 set，会覆盖下方其它层）
-    const hx = (lastHeadAngle.x / TURN_ANGLE_MAX) * EYE_FOLLOW_IDLE
-    const hy = (lastHeadAngle.y / TURN_ANGLE_MAX) * EYE_FOLLOW_IDLE
-    const x = Math.max(-1, Math.min(1, w.x + hx))
-    const y = Math.max(-1, Math.min(1, w.y + hy))
+    // 固定顺序中 set 在 idleHead.add 之前；眼随头走的增量由 idleHead 本身写，
+    // 这里不再补偿一遍，否则会叠加两次。
+    const x = Math.max(-1, Math.min(1, w.x))
+    const y = Math.max(-1, Math.min(1, w.y))
     try {
       core.setParameterValueById('ParamEyeBallX', x)
       core.setParameterValueById('ParamEyeBallY', y)
@@ -1701,7 +1727,7 @@ function ensureEyeWanderHook() {
     }
     window.__eyeLastWritten = { x, y, at: now }
   }
-  model.internalModel.on('beforeModelUpdate', eyeWanderHook)
+  hookRegistry.add('eyeWander', eyeWanderHook)
 }
 
 /** 眼球游走开关（0 = 关，1 = 开） */
@@ -1765,7 +1791,7 @@ function ensureEarHook() {
     }
     window.__earLast = v
   }
-  model.internalModel.on('beforeModelUpdate', earHook)
+  hookRegistry.add('ear', earHook)
 }
 
 /** 调待机头部摆动的幅度（倍数；0 = 完全不动） */
@@ -1857,7 +1883,7 @@ function ensureDepthHook() {
       }
     }
   }
-  model.internalModel.on('beforeModelUpdate', depthHook)
+  hookRegistry.add('depth', depthHook)
 }
 
 /** 纵深感配置（设置页 live2d.depthMotion 驱动；加载时由调用方灌入） */
@@ -2003,12 +2029,12 @@ export function freezeIdleMotion(on) {
         }
       }
     }
-    model.internalModel.on('beforeModelUpdate', idleFreezeHook)
+    hookRegistry.add('idleFreeze', idleFreezeHook)
     return true
   }
   if (idleFreezeHook) {
     try {
-      model?.internalModel?.off?.('beforeModelUpdate', idleFreezeHook)
+      hookRegistry?.remove('idleFreeze', idleFreezeHook)
     } catch {
       /* ignore */
     }
@@ -2295,25 +2321,13 @@ export function clearLipTrack() {
   setLipTrack(null)
 }
 
-export function destroy() {
+export function destroy({ preserveCanvas = false } = {}) {
   if (disposed) return
   disposed = true
-  if (poseHook) {
-    try {
-      model?.internalModel?.off?.('beforeModelUpdate', poseHook)
-    } catch {
-      /* ignore */
-    }
-  }
+  hookRegistry?.destroy()
+  hookRegistry = null
   poseHook = null
   poseState = null
-  if (rhythmHook) {
-    try {
-      model?.internalModel?.off?.('beforeModelUpdate', rhythmHook)
-    } catch {
-      /* ignore */
-    }
-  }
   rhythmHook = null
   rhythmState = null
   for (const [h, setter] of [
@@ -2332,11 +2346,6 @@ export function destroy() {
     [earHook, () => (earHook = null)]
   ]) {
     if (!h) continue
-    try {
-      model?.internalModel?.off?.('beforeModelUpdate', h)
-    } catch {
-      /* ignore */
-    }
     setter()
   }
   outfitTarget = null
@@ -2344,6 +2353,7 @@ export function destroy() {
   outfitLookId = ''
   outfit = null
   blinkState = null
+  idleFreezeHook = null
   headState = null
   microCfg = null
   microState = null
@@ -2365,8 +2375,6 @@ export function destroy() {
   try {
     if (model) {
       if (mouthHook) model.internalModel?.off?.('afterMotionUpdate', mouthHook)
-      if (redGuard) model.internalModel?.off?.('beforeModelUpdate', redGuard)
-      if (depthHook) model.internalModel?.off?.('beforeModelUpdate', depthHook)
       // 先摘容器再毁模型：容器是 model 的父级，反了会让 pixi 拖着半棵子树
       if (zContainer) {
         zContainer.removeChild(model)
@@ -2377,7 +2385,7 @@ export function destroy() {
       }
       model.destroy()
     }
-    app?.destroy(true, { children: true })
+    app?.destroy(!preserveCanvas, { children: true })
   } catch {
     /* ignore */
   }
@@ -2386,6 +2394,9 @@ export function destroy() {
   zContainer = null
   depthMotion = null
   depthHook = null
+  mouthOpenHook = null
+  finalFrameSeq = 0
+  lastRangeFailure = ''
   depthSeq = 0
   mouthHook = null
   redGuard = null

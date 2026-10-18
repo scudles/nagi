@@ -3308,6 +3308,8 @@ window.__nagiFreezeMood = (on) => {
 window.__nagiDeepProbe = (ids) => l2d.deepProbe(ids)
 // 调试：在姿态生效的瞬间采样姿态参数（帧外读不到，Cubism 每帧末尾会还原快照）
 window.__nagiPoseParams = (ids) => l2d.probePoseOnce(ids)
+window.__nagiFinalFrameOnce = (ids) => l2d.probeFinalFrameOnce(ids)
+window.__nagiHookState = () => l2d.hookState()
 // 调试：焦点控制器内部状态（验证"目光不跟随鼠标"：它应该一直是 0）
 window.__nagiFocusState = () => l2d.focusState()
 // 调试：关系页

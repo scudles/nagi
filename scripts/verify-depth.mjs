@@ -546,7 +546,8 @@ async function main() {
         const tw = window.__turnLastWritten
         if (d && d.env >= 0.9 && tw && tw.w >= 0.3) {
           const real = await window.__nagiPoseParams(['ParamBodyAngleY', 'ParamAngleZ'])
-          return { depthOk, turnOk: turn?.ok === true, real, tw, env: d.env, depthParams: d.params }
+          const frame = await window.__nagiFinalFrameOnce(['ParamBodyAngleY', 'ParamAngleZ'])
+          return { depthOk, turnOk: turn?.ok === true, real, frame, hooks: window.__nagiHookState(), tw, env: d.env, depthParams: d.params }
         }
         await new Promise((r) => requestAnimationFrame(r))
       }
@@ -559,6 +560,13 @@ async function main() {
       '回归：转向进行中 peek 的躯干压缩增量仍在帧末值里（净贡献 ≈−3°，修复前被 set 盖成 0）',
       reg.depthOk === true && reg.turnOk === true && dBodyY !== null && dBodyY <= -2.2 && dBodyY >= -4,
       `ΔBodyAngleY=${dBodyY?.toFixed(2)}°（turn 写 ${(reg.tw?.body * 0.6)?.toFixed(2)}°，帧末 ${reg.real?.ParamBodyAngleY?.toFixed(2)}°，peek 意图 ${wantBodyY?.toFixed(2)}°）`
+    )
+    check(
+      'B6 固定钩子表：turn 在 depth 前、迟启钩子仍按总顺序，最终帧值域合格',
+      !!reg.frame?.ok && !!reg.hooks && reg.hooks.order.indexOf('turn') < reg.hooks.order.indexOf('depth') &&
+        reg.hooks.order.indexOf('emotion') < reg.hooks.order.indexOf('autoBlink') &&
+        new Set(reg.hooks.active).size === reg.hooks.active.length,
+      `final=${reg.frame?.ok} active=${reg.hooks?.active?.length}`
     )
     await page.evaluate(() => window.__nagiSetIdleHead(1)) // 恢复摆头
     await waitIdle(page)

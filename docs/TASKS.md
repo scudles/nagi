@@ -25,7 +25,7 @@
 |---|---|---|---|---|---|---|---|---|
 | P2-01 | 🟢+🔵 | D2 表达意图+场景化上下文 | `agent.js:791–820`；`core/rag/chunk.js`；`core/rag/recall.js`；`core/llm/openai-compatible.js:24–31` | 6 意图枚举（brief-ack/listen/clarify/solve/reminisce/boundary）+ 意图约束本轮功能；事实/表达材料分离；按模型/用途存参数 | 同一场景不同输入能跟随细节变化；技术任务不被迫哲理短句；参数按提供商保存 | §CONTRACTS §5 表达意图 | 8–14h | 🟢规格已写 |
 | P2-02 | 🟢 | D9 24 场景评测 | EVAL.md | 24 场景 + 红线；固定提供商/模型/快照；0–2 分六维 + 客观指标 | 抽 8 高频场景×2 次；红线一票否决 | EVAL.md 全套 | 4–6h首轮 | 🟢EVAL已建 |
-| P2-03 | 🔴 | B6 固定钩子顺序/最终帧 | `live2d.js:584–602,1188–1225,1619–1647` | 每模型生命周期固定有序钩子表；权重交叉淡变让位；眨眼/口型所有权；值域检查 | 组合测试（情绪+眨眼+说话 / 思考+眼球 / 转身+depth）读整链终值；最终帧校验 | — | 6–10h | 待开工 |
+| P2-03 | 🔴 | B6 固定钩子顺序/最终帧 | `live2d.js:584–602,1188–1225,1619–1647` | 每模型生命周期固定有序钩子表；权重交叉淡变让位；眨眼/口型所有权；值域检查 | 组合测试（情绪+眨眼+说话 / 思考+眼球 / 转身+depth）读整链终值；最终帧校验 | CONTRACTS §8 B6 | 6–10h | ✅ 已落地（固定单监听器与稳定拓扑顺序；组合假测 6/6、全量 857/858 通过且 1 skip、构建 0、真机 depth 39/39、face 10/10、pose 13/13；详情见当前状态） |
 | P2-04 | 🔵 | B8 空 catch 分类+事件轨迹 | `main/rag/store-io.js:36–40`；`reminders.js` tick | 按后果分类（可降级/需可见状态/不可静默持久化/承诺失败/语义失败）；有界脱敏事件轨迹 | 持久化失败不静默；承诺失败可重试+健康状态；轨迹脱敏可删 | — | 4–6h | 待开工 |
 | P2-05 | 🟢+🔵 | B7 分层契约 | `core/ledger/store.js:4`；`yearbook/store.js:3`；`signals/*-store.js`；`rag/recall.js` | 区分纯计算/IO适配器/Electron编排；now/rng 边界注入；IO 渐进迁入子目录 | 纯计算模块禁时钟/IO；边界检查通过；不一次大搬移 | — | 2–4h | 🟢规格待写 |
 | P2-06 | 🔵+🟢 | C5 遗忘全链路 | `main/ledger-actions.js` scrub/forget/correct | 数据地图 + 端到端遗忘验证；导出标主观/模拟/已删；外部副本单独授权 | 忘记→历史/检索/日记/年鉴/便签均不可引用；重启/后台生成后不恢复 | — | 4–6h | 🟢验证待写 |
@@ -47,6 +47,8 @@
 > 备注：阶段成本存在共享（评审 F 注明），不可机械相加；每阶段后用同一 EVAL 场景集判断是否改善，无收益即停止扩功能。勿扰是否拦重要提醒、本地求助信息等需作者裁决项在契约中标注。
 
 ## 当前状态（先读）
+
+- **2026-10-18 P2-03 B6 红区收口**：`src/core/face/hook-registry.js` 定义 HookSpec、稳定拓扑排序、同参数无先后关系拒绝装配和每模型唯一 `beforeModelUpdate` 监听器；`live2d.js` 所有生产钩子及临时钩子改由注册表调度，迟启表情不改顺序，眼球 set 先于姿态/待机 add，语音开口度在情绪 set 后重放，眨眼乘法在眼睑微动后，depth 在转向与其余角度写入后；最终帧按模型独立值域检查。`test/live2d-hook-registry.test.js` 组合假测 **6/6**（情绪+说话+眨眼、思考+眼球、转身+depth、模型重装、依赖环/同参双 set 拒绝、角度错十倍必红）；`node --experimental-test-module-mocks --test` **858 项 / 857 通过 / 0 失败 / 1 skip，exit 0**；`node node_modules/electron-vite/bin/electron-vite.js build` **exit 0**；真实 Electron `node scripts/verify-depth.mjs` **39/39**（新增 B6 总顺序+最终帧断言）、`verify-face.mjs` **10/10**、`verify-pose.mjs` **13/13**。`verify-turns.mjs` **4/5**：A/B/C/E 通过，D 项仍要求 8 次戳碰中至少 6 次固定台词，本轮无台词铁律下实际 0/8；属既有验收口径冲突，未为 B6 增加台词或改动业务语义。
 
 - **2026-10-18 阶段1 三轮（B4 占位大脑危机路径，Codex 二轮复判打回）**：根因确认无误——`mockRun` 在 crisis 时仍先取 `NagiPersona.reply` 的普通台词，禁词式 guard 判过就展示，且首启动 `announce` 尾句在**审核之后**才拼。修法（不动架构、`loop.js` 零改动）：
   - 新增 `core/agent/offline.js` 的 `composeOfflineReply`：**先定稿再送审**；危机轮不取任何角色台词，直接用按级别的确定性安全指引；危机轮**永不**追加自嘲尾句。
