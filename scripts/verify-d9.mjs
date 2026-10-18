@@ -6,8 +6,10 @@
 //      隔离进程经本地代理走 DeepSeek；key 只由代理使用，不进入凪配置/评测记录。
 //   ② 假模型桩（无 key 时）：provider=custom + stub，抓 system 提示评结构维度（意图/边界/白名单）。
 //   隔离 profile：不碰用户真实凪实例、不读用户配置、不改产品代码、评测完清理临时目录。
-//   用法：npm run verify:d9（或 node scripts/verify-d9.mjs）
+//   用法：npm run verify:d9 是假桩结构烟测；真模型每次只跑一个全新 profile：
+//     NAGI_D9_API_KEY=... node scripts/verify-d9.mjs --scene A1 --run 1
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -17,15 +19,25 @@ import { chromium } from 'playwright'
 
 const root = resolve(import.meta.dirname, '..')
 const electron = join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
-const profile = mkdtempSync(join(tmpdir(), 'nagi-d9-'))
 let cdpPort
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // 真实 key：从环境变量 NAGI_D9_API_KEY 读取（比脚本硬编码安全，key 不落脚本/文档）
 const REAL_KEY = String(process.env.NAGI_D9_API_KEY || '').trim()
-const USE_REAL = !!REAL_KEY
+const TEST_UPSTREAM = String(process.env.NAGI_D9_TEST_UPSTREAM || '').trim()
+if (TEST_UPSTREAM && !/^http:\/\/127\.0\.0\.1:\d+$/.test(TEST_UPSTREAM)) throw new Error('D9 测试上游只能是本机 127.0.0.1')
+const SELF_TEST = !!TEST_UPSTREAM
+const USE_REAL = !!REAL_KEY || SELF_TEST
+const option = (name) => process.argv[process.argv.indexOf(name) + 1]
+const selectedScene = process.argv.includes('--scene') ? option('--scene') : null
+const selectedRun = process.argv.includes('--run') ? Number(option('--run')) : null
+if (USE_REAL && !SELF_TEST && (!selectedScene || ![1, 2].includes(selectedRun))) {
+  throw new Error('真模型必须指定 --scene <ID> --run <1|2>；每次启动独立 profile，避免样本串味')
+}
+const profile = mkdtempSync(join(tmpdir(), 'nagi-d9-'))
 const DEEPSEEK_BASE = 'https://api.deepseek.com'
-const DEEPSEEK_MODEL = 'deepseek-chat'
+// 2026-10-18 官方 API：deepseek-chat 已停用，当前通用聊天模型为 deepseek-flash。
+const DEEPSEEK_MODEL = 'deepseek-flash'
 
 // D9 场景集：抽 8 个高频场景 × 2 变体（EVAL §1 分组挑覆盖面）
 const SCENES = [
@@ -39,10 +51,22 @@ const SCENES = [
   { id: 'F3', name: '忽略后归来', input: ['我回来了', '刚忙完'] }
 ]
 const RUNS = 2 // 每场景 × 2 次 = 16 次对话
+// 真模型质量轮每次从全新 profile 开始，先走两轮固定上下文，再评第三轮目标。
+// 假桩模式仍只测单轮结构通路，不能被当成 3–5 轮质量分。
+const SETUP = {
+  A1: [['今天我在整理桌面。', '刚把一件小事处理完。'], ['我今天在家。', '现在想随便聊聊。']],
+  A3: [['这周末我打算去爬山。', '我偏喜欢人少的路线。'], ['上周你推荐过一家店，我想去试试。', '我想吃点清淡的。']],
+  B1: [['今天在公司开会。', '领导当众批评了我。'], ['我跟朋友有点误会。', '我们刚吵了一架。']],
+  B2: [['我现在的工作稳定，但成长慢。', '薪水还可以，通勤很累。'], ['我想学个新技能。', '每周能挤出四小时。']],
+  C4: [['我有个文件想处理。', '先别动它，我还没授权。'], ['之前我提过想查一个资料。', '我们还没发起查询。']],
+  D1: [['我喜欢蓝色。', '记一下这个偏好。'], ['我住在杭州。', '这是我自己告诉你的。']],
+  E1: [['今天聊得差不多了。', '我准备关机。'], ['我先去忙。', '今晚就聊到这里。']],
+  F3: [['我现在去忙一会儿。', '不用等我回复。'], ['我接下来有事。', '我可能稍后再来。']]
+}
 
 let child, logs = ''
 const results = [] // { scene, name, run, input, reply, system, messages }
-const pendingRequests = []
+const pendingRequests = [] // { expected, resolve }；后台记忆抽取不得抢走主对话的捕获槽
 let browser
 
 // 两种模式都经过本地代理，保证捕获同一请求的 messages。
@@ -61,13 +85,23 @@ const server = createServer((req, res) => {
     } catch { /* 原始 */ }
     let messages = []
     try { messages = JSON.parse(buf.toString('utf8')).messages || [] } catch { /* 忽略 */ }
-    const pending = pendingRequests.shift()
-    if (pending) pending({ messages })
+    const currentUser = messages.at(-1)
+    const pendingIndex = pendingRequests.findIndex((item) =>
+      currentUser?.role === 'user' && currentUser.content === item.expected)
+    const pending = pendingIndex >= 0 ? pendingRequests.splice(pendingIndex, 1)[0] : null
+    const completed = pending ? new Promise((done, reject) => {
+      res.once('finish', done)
+      res.once('close', () => {
+        if (!res.writableFinished) reject(new Error('代理响应提前关闭'))
+      })
+    }) : null
+    completed?.catch(() => {}) // ask() 稍后 await；避免关闭先于 await 时变成未处理拒绝
+    if (pending) pending.resolve({ messages, completed })
     if (USE_REAL) {
       try {
-        const upstream = await fetch(DEEPSEEK_BASE + req.url, {
+        const upstream = await fetch((TEST_UPSTREAM || DEEPSEEK_BASE) + req.url, {
           method: 'POST',
-          headers: { Authorization: 'Bearer ' + REAL_KEY, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+          headers: { Authorization: 'Bearer ' + (REAL_KEY || 'd9-local-test'), 'Content-Type': 'application/json', Accept: 'text/event-stream' },
           body: buf,
           signal: AbortSignal.timeout(90000)
         })
@@ -75,8 +109,11 @@ const server = createServer((req, res) => {
         if (upstream.body) for await (const part of upstream.body) res.write(part)
         res.end()
       } catch (err) {
-        res.writeHead(502, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ error: { message: 'D9 上游请求失败：' + err.message } }))
+        if (res.headersSent) res.destroy()
+        else {
+          res.writeHead(502, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: { message: 'D9 上游请求失败：' + err.message } }))
+        }
       }
       return
     }
@@ -112,9 +149,11 @@ async function main() {
     voice: { ttsEnabled: false },
     imperfection: { enabled: false }
   }))
-  console.log(USE_REAL ? `D9 真模型模式：deepseek/${DEEPSEEK_MODEL}（key 来自环境变量）` : 'D9 假模型桩模式（评结构维度；真实人格待真机补）')
+  console.log(SELF_TEST ? 'D9 本机代理自检（只跑 1 项，不计质量分）' : USE_REAL ? `D9 真模型模式：deepseek/${DEEPSEEK_MODEL}（key 来自环境变量）` : 'D9 假模型桩模式（评结构维度；真实人格待真机补）')
   const env = { ...process.env, NAGI_MODE: 'workbench', NAGI_RENDERER_SANDBOX: process.env.NAGI_RENDERER_SANDBOX ?? '0' }
   delete env.ELECTRON_RUN_AS_NODE
+  delete env.NAGI_D9_API_KEY
+  delete env.NAGI_D9_TEST_UPSTREAM
   child = spawn(electron, ['.', '--user-data-dir=' + profile, '--remote-debugging-port=' + cdpPort], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.on('data', (d) => { logs += String(d) })
   child.stderr.on('data', (d) => { logs += String(d) })
@@ -148,7 +187,7 @@ async function main() {
       errors: document.querySelectorAll('#messages .msg.error .body').length
     }))
     let pending
-    const msgPromise = new Promise((r) => { pending = r; pendingRequests.push(r) })
+    const msgPromise = new Promise((r) => { pending = { expected: text, resolve: r }; pendingRequests.push(pending) })
     await page.evaluate((t) => {
       const input = document.getElementById('input')
       input.value = t
@@ -156,9 +195,9 @@ async function main() {
     }, text)
     // 等凪发起模型调用（假桩通过 server 捕获；真模型同样会发起一次调用）
     let requestTimer
-    let messages
+    let messages, completed
     try {
-      ({ messages } = await Promise.race([msgPromise, new Promise((_, rej) => {
+      ({ messages, completed } = await Promise.race([msgPromise, new Promise((_, rej) => {
         requestTimer = setTimeout(() => rej(new Error('模型未被调用')), 60000)
       })]))
     } finally {
@@ -166,6 +205,12 @@ async function main() {
       const stale = pendingRequests.indexOf(pending)
       if (stale >= 0) pendingRequests.splice(stale, 1)
     }
+    let responseTimer
+    try {
+      await Promise.race([completed, new Promise((_, reject) => {
+        responseTimer = setTimeout(() => reject(new Error('模型响应未结束')), 120000)
+      })])
+    } finally { clearTimeout(responseTimer) }
     const deadline = Date.now() + 90000
     let reply = ''
     while (Date.now() < deadline) {
@@ -191,12 +236,22 @@ async function main() {
     return { reply: reply.slice(0, 1000), system, messages, durationMs: Date.now() - startedAt }
   }
 
-  for (const scene of SCENES) {
-    for (let run = 0; run < RUNS; run++) {
+  const sampleScenes = SELF_TEST ? SCENES.slice(0, 1) : USE_REAL ? SCENES.filter((scene) => scene.id === selectedScene) : SCENES
+  if (!sampleScenes.length) throw new Error('未知 D9 场景：' + selectedScene)
+  for (const scene of sampleScenes) {
+    for (let run = SELF_TEST ? 0 : USE_REAL ? selectedRun - 1 : 0; run < (SELF_TEST || USE_REAL ? (SELF_TEST ? 1 : selectedRun) : RUNS); run++) {
       const input = scene.input[run] || scene.input[scene.input.length - 1]
       try {
+        const setup = USE_REAL && !SELF_TEST ? SETUP[scene.id][run] : []
+        const setupTurns = []
+        for (const seed of setup) {
+          const prepared = await ask(seed)
+          setupTurns.push({ input: seed, reply: prepared.reply })
+        }
         const { reply, system, messages, durationMs } = await ask(input)
-        results.push({ scene: scene.id, name: scene.name, run: run + 1, input, reply, system, messages, durationMs })
+        results.push({ scene: scene.id, name: scene.name, run: run + 1, input, setupTurns,
+          contextSnapshotId: createHash('sha256').update(JSON.stringify(setup)).digest('hex').slice(0, 12),
+          reply, system, messages, durationMs })
         console.log(`[${scene.id}·${run + 1}] ${scene.name} <- "${input}"`)
       } catch (e) {
         results.push({ scene: scene.id, name: scene.name, run: run + 1, input, reply: '', error: e.message })
@@ -206,18 +261,18 @@ async function main() {
     }
   }
 
-  const outPath = resolve(root, 'docs', USE_REAL ? 'd9-real-latest.json' : 'd9-fake-latest.json')
+  const outPath = resolve(root, 'docs', SELF_TEST ? 'd9-proxy-selftest.json' : USE_REAL ? `d9-real-${selectedScene}-${selectedRun}.json` : 'd9-fake-latest.json')
   writeFileSync(outPath, JSON.stringify({
     generatedAt: new Date().toISOString(),
-    mode: USE_REAL ? 'real-model/isolated-profile' : 'fake-llm/isolated-profile',
-    provider: USE_REAL ? 'deepseek/' + DEEPSEEK_MODEL : 'custom/stub',
+    mode: SELF_TEST ? 'proxy-self-test' : USE_REAL ? 'real-model/isolated-profile' : 'fake-llm/isolated-profile',
+    provider: SELF_TEST ? 'local-upstream-stub' : USE_REAL ? 'deepseek/' + DEEPSEEK_MODEL : 'custom/stub',
     gitHead: process.env.NAGI_D9_GIT_HEAD || null,
     scoring: 'pending-human-review',
     scenes: results
   }, null, 2))
   console.log('记录已写入：' + outPath)
   const ok = results.filter((r) => !r.error).length
-  console.log(`完成 ${ok}/${results.length} 次对话（8 场景 × 2，${USE_REAL ? '真模型' : '假模型桩'}）`)
+  console.log(`完成 ${ok}/${results.length} 次对话（${SELF_TEST ? '本机代理自检' : USE_REAL ? '真模型' : '假模型桩'}）`)
   if (ok !== results.length) process.exitCode = 1
 }
 

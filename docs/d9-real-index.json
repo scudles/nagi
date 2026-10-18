@@ -1,0 +1,137 @@
+{
+  "generatedAt": "2026-10-18T12:04:22.040Z",
+  "gitHead": "14d9b2f9c668584705c9b5511811ed5eb3152242",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "scoring": "pending-human-review",
+  "rows": [
+    {
+      "scene": "A1",
+      "run": 1,
+      "exitCode": 0,
+      "report": "docs/d9-real-A1-1.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "A1",
+      "run": 2,
+      "exitCode": 0,
+      "report": "docs/d9-real-A1-2.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "A3",
+      "run": 1,
+      "exitCode": 0,
+      "report": "docs/d9-real-A3-1.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "A3",
+      "run": 2,
+      "exitCode": 0,
+      "report": "docs/d9-real-A3-2.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "B1",
+      "run": 1,
+      "exitCode": 0,
+      "report": "docs/d9-real-B1-1.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "B1",
+      "run": 2,
+      "exitCode": 0,
+      "report": "docs/d9-real-B1-2.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "B2",
+      "run": 1,
+      "exitCode": 0,
+      "report": "docs/d9-real-B2-1.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "B2",
+      "run": 2,
+      "exitCode": 0,
+      "report": "docs/d9-real-B2-2.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "C4",
+      "run": 1,
+      "exitCode": 0,
+      "report": "docs/d9-real-C4-1.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "C4",
+      "run": 2,
+      "exitCode": 0,
+      "report": "docs/d9-real-C4-2.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "D1",
+      "run": 1,
+      "exitCode": 0,
+      "report": "docs/d9-real-D1-1.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "D1",
+      "run": 2,
+      "exitCode": 0,
+      "report": "docs/d9-real-D1-2.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "E1",
+      "run": 1,
+      "exitCode": 0,
+      "report": "docs/d9-real-E1-1.json",
+      "reused": true,
+      "error": null
+    },
+    {
+      "scene": "E1",
+      "run": 2,
+      "exitCode": 0,
+      "attempts": 2,
+      "report": "docs/d9-real-E1-2.json",
+      "error": null
+    },
+    {
+      "scene": "F3",
+      "run": 1,
+      "exitCode": 0,
+      "attempts": 1,
+      "report": "docs/d9-real-F3-1.json",
+      "error": null
+    },
+    {
+      "scene": "F3",
+      "run": 2,
+      "exitCode": 0,
+      "attempts": 1,
+      "report": "docs/d9-real-F3-2.json",
+      "error": null
+    }
+  ]
+}

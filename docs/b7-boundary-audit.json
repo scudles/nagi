@@ -1,0 +1,177 @@
+{
+  "generatedAt": "2026-10-18T12:09:40.261Z",
+  "mode": "strict",
+  "scope": "B7 待拆分 store 的直接边界依赖；静态审计，不代替注入/行为测试",
+  "total": 36,
+  "findings": [
+    {
+      "path": "src/core/ledger/store.js",
+      "violations": [
+        {
+          "line": 4,
+          "rule": "directFs"
+        },
+        {
+          "line": 47,
+          "rule": "globalRandom"
+        },
+        {
+          "line": 88,
+          "rule": "globalClock"
+        },
+        {
+          "line": 100,
+          "rule": "globalClock"
+        },
+        {
+          "line": 106,
+          "rule": "globalClock"
+        },
+        {
+          "line": 111,
+          "rule": "globalRandom"
+        },
+        {
+          "line": 130,
+          "rule": "globalClock"
+        },
+        {
+          "line": 136,
+          "rule": "globalClock"
+        },
+        {
+          "line": 140,
+          "rule": "globalRandom"
+        },
+        {
+          "line": 147,
+          "rule": "globalClock"
+        },
+        {
+          "line": 247,
+          "rule": "globalClock"
+        }
+      ]
+    },
+    {
+      "path": "src/core/yearbook/store.js",
+      "violations": [
+        {
+          "line": 3,
+          "rule": "directFs"
+        },
+        {
+          "line": 16,
+          "rule": "globalRandom"
+        },
+        {
+          "line": 93,
+          "rule": "globalClock"
+        },
+        {
+          "line": 94,
+          "rule": "globalRandom"
+        },
+        {
+          "line": 109,
+          "rule": "globalClock"
+        },
+        {
+          "line": 154,
+          "rule": "globalClock"
+        }
+      ]
+    },
+    {
+      "path": "src/core/signals/calendar-store.js",
+      "violations": [
+        {
+          "line": 2,
+          "rule": "directFs"
+        },
+        {
+          "line": 15,
+          "rule": "globalClock"
+        },
+        {
+          "line": 19,
+          "rule": "globalRandom"
+        },
+        {
+          "line": 20,
+          "rule": "globalRandom"
+        },
+        {
+          "line": 30,
+          "rule": "globalClock"
+        },
+        {
+          "line": 38,
+          "rule": "globalClock"
+        }
+      ]
+    },
+    {
+      "path": "src/core/signals/music-store.js",
+      "violations": [
+        {
+          "line": 2,
+          "rule": "directFs"
+        },
+        {
+          "line": 24,
+          "rule": "globalClock"
+        },
+        {
+          "line": 26,
+          "rule": "globalRandom"
+        },
+        {
+          "line": 42,
+          "rule": "globalClock"
+        },
+        {
+          "line": 72,
+          "rule": "globalClock"
+        },
+        {
+          "line": 81,
+          "rule": "globalClock"
+        }
+      ]
+    },
+    {
+      "path": "src/core/signals/geo-store.js",
+      "violations": [
+        {
+          "line": 11,
+          "rule": "directFs"
+        },
+        {
+          "line": 18,
+          "rule": "globalClock"
+        },
+        {
+          "line": 43,
+          "rule": "globalClock"
+        },
+        {
+          "line": 70,
+          "rule": "globalClock"
+        },
+        {
+          "line": 72,
+          "rule": "globalRandom"
+        },
+        {
+          "line": 88,
+          "rule": "globalClock"
+        },
+        {
+          "line": 112,
+          "rule": "globalClock"
+        }
+      ]
+    }
+  ]
+}
