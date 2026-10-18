@@ -1,12 +1,20 @@
-import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+// src/core/signals/music-store.js
+// 「他在听什么」的授权型信号：单独授权落盘、勿扰停采、60 秒缓存。
+// 纯逻辑：不碰 fs、不读全局时钟——io 端口与 now() 由调用方注入（B7 P2-05）。
+import { assertPorts } from '../store/document-io.js'
 import { musicContext, normalizeMediaObservation } from './music.js'
 
+/** 授权文件的文档键；真实路径由 main 侧 src/main/store/document-io.js 登记 */
+export const MUSIC_CONSENT_KEY = 'music-consent'
+
+/** 观测复用阈值：60 秒内不重复探测 PowerShell；与 fresh() 必须同改 */
+export const MEDIA_TTL_MS = 60000
+
 export class MusicSignal {
-  constructor(userDataDir, { probe, doNotDisturb = () => false } = {}) {
-    this.dir = join(userDataDir, 'signals')
-    this.consentFile = join(this.dir, 'music.json')
+  constructor({ io, now, probe, doNotDisturb = () => false } = {}) {
+    assertPorts('MusicSignal', { io, now }, ['io', 'now'])
+    this.io = io
+    this.now = now
     this.probe = probe
     this.doNotDisturb = doNotDisturb
     this.last = null
@@ -16,16 +24,14 @@ export class MusicSignal {
   }
 
   authorized() {
-    if (!existsSync(this.consentFile)) return false
-    try { return Number(JSON.parse(readFileSync(this.consentFile, 'utf8')).authorizedAt) > 0 }
+    const raw = this.io.read(MUSIC_CONSENT_KEY)
+    if (raw === null || raw === undefined) return false
+    try { return Number(JSON.parse(raw).authorizedAt) > 0 }
     catch { return false }
   }
 
-  authorize(at = Date.now()) {
-    mkdirSync(this.dir, { recursive: true })
-    const temp = this.consentFile + '.' + randomUUID() + '.tmp'
-    writeFileSync(temp, JSON.stringify({ version: 1, authorizedAt: at }), 'utf8')
-    renameSync(temp, this.consentFile)
+  authorize(at = this.now()) {
+    this.io.write(MUSIC_CONSENT_KEY, JSON.stringify({ version: 1, authorizedAt: at }))
     this.generation++
     this.inflight = null
     return { authorized: true, authorizedAt: at }
@@ -34,19 +40,19 @@ export class MusicSignal {
   revoke() {
     this.generation++
     this.inflight = null
-    rmSync(this.consentFile, { force: true })
+    this.io.remove(MUSIC_CONSENT_KEY)
     this.last = null
     return { authorized: false }
   }
 
-  async status({ refresh = false, now = Date.now() } = {}) {
+  async status({ refresh = false, now = this.now() } = {}) {
     if (!this.authorized()) return { authorized: false, observation: null }
-    const authorizedAt = JSON.parse(readFileSync(this.consentFile, 'utf8')).authorizedAt
+    const authorizedAt = JSON.parse(this.io.read(MUSIC_CONSENT_KEY)).authorizedAt
     if (this.doNotDisturb()) {
       this.last = null
       return { authorized: true, authorizedAt, paused: 'do-not-disturb', observation: null }
     }
-    if (refresh || !this.last || now - this.last.observedAt > 60000) {
+    if (refresh || !this.last || now - this.last.observedAt > MEDIA_TTL_MS) {
       if (!this.inflight) {
         const generation = this.generation
         const task = Promise.resolve().then(() => this.probe()).then((raw) => {
@@ -69,17 +75,17 @@ export class MusicSignal {
       : { authorized: false, observation: null }
   }
 
-  context(now = Date.now()) {
+  context(now = this.now()) {
     if (!this.authorized() || this.doNotDisturb()) return []
     return musicContext(this.last, now)
   }
 
   /**
    * 缓存是否够新（够新就不必再探一次 PowerShell）。
-   * 与 status() 内部的复用阈值（60 秒）保持一致，改一处必须改另一处。
+   * 与 status() 内部的复用阈值保持一致，改一处必须改另一处。
    */
-  fresh(now = Date.now()) {
+  fresh(now = this.now()) {
     return Boolean(this.last) && Number.isFinite(now - this.last.observedAt) &&
-      now - this.last.observedAt <= 60000
+      now - this.last.observedAt <= MEDIA_TTL_MS
   }
 }

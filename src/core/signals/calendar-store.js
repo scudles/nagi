@@ -1,47 +1,57 @@
-import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+// src/core/signals/calendar-store.js
+// 日历快照：用户导入 ICS 后她才知道"他今天有什么安排"（只读、随时可撤销）。
+// 纯逻辑：文本 → 事件 → 上下文；落盘走注入的文档端口（B7 P2-05，core 不碰 fs）。
+import { assertPorts } from '../store/document-io.js'
 import { calendarContext, parseCalendar } from './calendar.js'
+
+/** 文档键；真实路径（signals/calendar.ics 等）由 main 侧登记 */
+export const CALENDAR_ICS_KEY = 'calendar-ics'
+export const CALENDAR_META_KEY = 'calendar-meta'
 
 const MAX_ICS_BYTES = 2 * 1024 * 1024
 
+/** 取文件名：不用 node:path，core 侧连路径形状都不必知道 */
+function fileStem(name) {
+  const parts = String(name || 'calendar.ics').split(/[\\/]/)
+  return parts[parts.length - 1] || 'calendar.ics'
+}
+
 export class CalendarSnapshot {
-  constructor(userDataDir) {
-    this.dir = join(userDataDir, 'signals')
-    this.ics = join(this.dir, 'calendar.ics')
-    this.meta = join(this.dir, 'calendar.json')
+  constructor({ io, now } = {}) {
+    assertPorts('CalendarSnapshot', { io, now }, ['io', 'now'])
+    this.io = io
+    this.now = now
   }
 
-  importText(text, sourceName, at = Date.now()) {
+  importText(text, sourceName, at = this.now()) {
     if (Buffer.byteLength(String(text || ''), 'utf8') > MAX_ICS_BYTES) throw new Error('日历文件超过 2MB')
     const parsed = parseCalendar(text, at)
-    mkdirSync(this.dir, { recursive: true })
-    const tempIcs = this.ics + '.' + randomUUID() + '.tmp'
-    const tempMeta = this.meta + '.' + randomUUID() + '.tmp'
-    writeFileSync(tempIcs, text, 'utf8')
-    writeFileSync(tempMeta, JSON.stringify({ version: 1, importedAt: at,
-      sourceName: basename(String(sourceName || 'calendar.ics')), total: parsed.total,
-      unsupported: parsed.unsupported }), 'utf8')
-    renameSync(tempIcs, this.ics)
-    renameSync(tempMeta, this.meta)
+    this.io.write(CALENDAR_ICS_KEY, text)
+    this.io.write(CALENDAR_META_KEY, JSON.stringify({
+      version: 1, importedAt: at,
+      sourceName: fileStem(sourceName), total: parsed.total,
+      unsupported: parsed.unsupported
+    }))
     return this.status(at)
   }
 
-  status(now = Date.now()) {
-    if (!existsSync(this.ics) || !existsSync(this.meta)) return { authorized: false, events: [] }
-    const meta = JSON.parse(readFileSync(this.meta, 'utf8'))
-    const parsed = parseCalendar(readFileSync(this.ics, 'utf8'), now)
+  status(now = this.now()) {
+    const ics = this.io.read(CALENDAR_ICS_KEY)
+    const metaRaw = this.io.read(CALENDAR_META_KEY)
+    if (ics === null || metaRaw === null) return { authorized: false, events: [] }
+    const meta = JSON.parse(metaRaw)
+    const parsed = parseCalendar(ics, now)
     return { authorized: true, importedAt: meta.importedAt, sourceName: meta.sourceName,
       total: parsed.total, unsupported: parsed.unsupported, events: parsed.events.slice(0, 20) }
   }
 
-  context(now = Date.now()) {
+  context(now = this.now()) {
     return calendarContext(this.status(now).events, now)
   }
 
   revoke() {
-    rmSync(this.ics, { force: true })
-    rmSync(this.meta, { force: true })
+    this.io.remove(CALENDAR_ICS_KEY)
+    this.io.remove(CALENDAR_META_KEY)
     return { authorized: false, events: [] }
   }
 }

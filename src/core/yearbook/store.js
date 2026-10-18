@@ -1,7 +1,11 @@
 // 双人年鉴只保存账本引用与用户编辑，不复制经历正文；来源被忘记后无法复活旧文字。
-import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+//
+// B7（P2-05）：Core 侧不碰 fs、不读全局时钟、不用全局随机——
+// 落盘走文档端口（io）、「此刻」与唯一 id 走注入的 now()/rng()。
+import { assertPorts } from '../store/document-io.js'
+
+/** 年鉴文档的文档键；真实路径由 main 侧登记（yearbook/pages.json） */
+export const YEARBOOK_PAGES_KEY = 'yearbook-pages'
 
 const FRAGMENTS = [
   // 2026-10-17：原文本来自旧人设的「出厂缓存」《world.execute(me);》母题，已移除。
@@ -11,12 +15,6 @@ const FRAGMENTS = [
   { id: 'farewell', title: '有尊严的结束', text: '缓存里的告别是创作母题。真实的告别由你决定；年鉴可以带走，她不会用共同回忆挽留你。' }
 ]
 const THRESHOLDS = [1, 3, 8]
-
-function atomicWrite(path, data) {
-  const temp = path + '.' + randomUUID() + '.tmp'
-  writeFileSync(temp, JSON.stringify(data, null, 2) + '\n', 'utf8')
-  renameSync(temp, path)
-}
 
 function validPage(page) {
   return page && typeof page.id === 'string' && typeof page.sourceId === 'string' &&
@@ -41,9 +39,12 @@ function linkedSubjective(ledger, sourceId) {
 }
 
 export class YearbookStore {
-  constructor(userDataDir, ledger) {
-    this.dir = join(userDataDir, 'yearbook')
-    this.path = join(this.dir, 'pages.json')
+  constructor({ io, now, rng, ledger } = {}) {
+    assertPorts('YearbookStore', { io, now, rng }, ['io', 'now', 'rng'])
+    if (!ledger || typeof ledger.get !== 'function') throw new TypeError('YearbookStore 必须注入账本（ledger）')
+    this.io = io
+    this.now = now
+    this.rng = rng
     this.ledger = ledger
     this.pages = []
     this.loaded = false
@@ -51,9 +52,9 @@ export class YearbookStore {
 
   load() {
     if (this.loaded) return this
-    mkdirSync(this.dir, { recursive: true })
-    if (existsSync(this.path)) {
-      const data = JSON.parse(readFileSync(this.path, 'utf8'))
+    const raw = this.io.read(YEARBOOK_PAGES_KEY)
+    if (raw !== null && raw !== undefined) {
+      const data = JSON.parse(raw)
       if (data.version !== 1 || !Array.isArray(data.pages)) throw new Error('年鉴数据格式无法识别')
       this.pages = data.pages.filter(validPage)
     }
@@ -63,7 +64,7 @@ export class YearbookStore {
   }
 
   persist(pages) {
-    atomicWrite(this.path, { version: 1, pages })
+    this.io.write(YEARBOOK_PAGES_KEY, JSON.stringify({ version: 1, pages }, null, 2) + '\n')
     this.pages = pages
   }
 
@@ -90,8 +91,8 @@ export class YearbookStore {
     if (!canUse(source)) return { ok: false, error: '只能把有来源的真实经历收入年鉴' }
     const existing = this.pages.find((page) => page.sourceId === source.id)
     if (existing) return { ok: true, page: this.resolve(existing), existing: true }
-    const now = Date.now()
-    const page = { id: randomUUID(), sourceId: source.id, title: defaultTitle(source), note: '',
+    const now = this.now()
+    const page = { id: String(this.rng()), sourceId: source.id, title: defaultTitle(source), note: '',
       createdAt: now, updatedAt: now }
     this.persist([...this.pages, page])
     return { ok: true, page: this.resolve(page) }
@@ -106,7 +107,7 @@ export class YearbookStore {
     if (!nextTitle || nextTitle.length > 100 || nextNote.length > 4000) {
       return { ok: false, error: '标题需 1–100 字，创作文字不能超过 4000 字' }
     }
-    const changed = { ...page, title: nextTitle, note: nextNote, updatedAt: Date.now() }
+    const changed = { ...page, title: nextTitle, note: nextNote, updatedAt: this.now() }
     this.persist(this.pages.map((item) => item.id === id ? changed : item))
     return { ok: true, page: this.resolve(changed) }
   }
@@ -151,7 +152,7 @@ export class YearbookStore {
 
   exportBundle() {
     const current = this.list()
-    return { schemaVersion: 1, exportedAt: Date.now(),
+    return { schemaVersion: 1, exportedAt: this.now(),
       note: '事实来自可追溯账本；主观记录与用户编辑不等于事实；身世碎片是创作设定。',
       pages: current.pages, fragments: current.fragments.filter((item) => item.unlocked) }
   }

@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
 import { chromium } from 'playwright'
+import { signalsDocumentIo } from '../src/main/store/document-io.js'
 import { CalendarSnapshot } from '../src/core/signals/calendar-store.js'
 
 process.env.NO_PROXY = '127.0.0.1,localhost'
@@ -21,7 +22,7 @@ const model = process.env.OLLAMA_TEST_MODEL || 'qwen2.5'
 const baseURL = process.env.OLLAMA_TEST_BASE_URL || 'http://127.0.0.1:11434/v1'
 const profile = mkdtempSync(join(tmpdir(), 'nagi-local-llm-'))
 const calendarStart = new Date(Date.now() + 2 * 3600000).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
-new CalendarSnapshot(profile).importText(
+new CalendarSnapshot({ io: signalsDocumentIo(profile), now: () => Date.now() }).importText(
   ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:simulated-calendar-event',
     'DTSTART:' + calendarStart, 'SUMMARY:阶段7模拟日程', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n'),
   '模拟日程.ics'

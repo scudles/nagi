@@ -1,0 +1,1002 @@
+{
+  "generatedAt": "2026-10-18T14:33:32.603Z",
+  "mode": "audit",
+  "scope": "src/core 全量：只报告不出门禁——剩余的缺的不是决心，是排期",
+  "gate": false,
+  "total": 133,
+  "findings": [
+    {
+      "path": "src/core/agent/loop.js",
+      "violations": [
+        {
+          "line": 14,
+          "rule": "directCrypto",
+          "why": "直接用 crypto：多半是 randomUUID/sha，应走注入的 rng 或纯计算",
+          "text": "import { randomUUID } from 'node:crypto'"
+        },
+        {
+          "line": 267,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "const confirmationId = randomUUID()"
+        }
+      ]
+    },
+    {
+      "path": "src/core/ambient.js",
+      "violations": [
+        {
+          "line": 237,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = deps.now ?? (() => Date.now())"
+        }
+      ]
+    },
+    {
+      "path": "src/core/companion/budget.js",
+      "violations": [
+        {
+          "line": 14,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function normalizeBudget(raw = {}, now = Date.now()) {"
+        },
+        {
+          "line": 27,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function settleIgnored(raw, now = Date.now(), cfg = companionConfig()) {"
+        },
+        {
+          "line": 39,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function mayInterrupt(raw, { now = Date.now(), privacy = {}, config = {}, busy = false } = {}) {"
+        },
+        {
+          "line": 50,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function noteDelivered(raw, now = Date.now(), config = {}) {"
+        },
+        {
+          "line": 60,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function noteUserInteraction(raw, now = Date.now()) {"
+        },
+        {
+          "line": 68,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function noteExplicitIgnore(raw, now = Date.now(), config = {}) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/context.js",
+      "violations": [
+        {
+          "line": 33,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function formatClock(ts = Date.now()) {"
+        },
+        {
+          "line": 73,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "now = Date.now(),"
+        },
+        {
+          "line": 198,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function normalizeSceneActivity(activity, { now = Date.now(), ttlMs = SCENE_ACTIVITY_TTL_MS } = {}) {"
+        },
+        {
+          "line": 258,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "now = Date.now()"
+        },
+        {
+          "line": 346,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function pickSceneActivity({ media = null, monitor = null, presence = null, now = Date.now(), ttlMs = SCENE_ACTIV"
+        }
+      ]
+    },
+    {
+      "path": "src/core/diary.js",
+      "violations": [
+        {
+          "line": 59,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function formatMoodJourney(points, now = Date.now()) {"
+        },
+        {
+          "line": 89,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "now = Date.now(),"
+        },
+        {
+          "line": 245,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "return bag[Math.floor(Math.random() * bag.length)]"
+        },
+        {
+          "line": 254,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function shouldWriteNow({ now = Date.now(), lastWriteAt = 0, todayCount = 0 } = {}, trigger = 'ambient', rand = M"
+        },
+        {
+          "line": 268,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function shouldOfferCache({ now = Date.now(), weekCount = 0 } = {}, rand = Math.random) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/emotion/mood.js",
+      "violations": [
+        {
+          "line": 51,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function createMood({ now = () => Date.now() } = {}) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/face/blink.js",
+      "violations": [
+        {
+          "line": 48,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = deps.now ?? (() => Date.now())"
+        }
+      ]
+    },
+    {
+      "path": "src/core/face/expression.js",
+      "violations": [
+        {
+          "line": 173,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = deps.now ?? (() => Date.now())"
+        }
+      ]
+    },
+    {
+      "path": "src/core/face/eye.js",
+      "violations": [
+        {
+          "line": 40,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = deps.now ?? (() => Date.now())"
+        }
+      ]
+    },
+    {
+      "path": "src/core/face/turn.js",
+      "violations": [
+        {
+          "line": 79,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = deps.now ?? (() => Date.now())"
+        }
+      ]
+    },
+    {
+      "path": "src/core/journal.js",
+      "violations": [
+        {
+          "line": 22,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function dateKey(ts = Date.now()) {"
+        },
+        {
+          "line": 28,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function hhmm(ts = Date.now()) {"
+        },
+        {
+          "line": 69,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const t = Number.isFinite(evt.t) ? evt.t : Date.now()"
+        },
+        {
+          "line": 106,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function pruneOld(dates = [], now = Date.now(), keepDays = JOURNAL.KEEP_DAYS) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/llm/cloud-workbuddy.js",
+      "violations": [
+        {
+          "line": 12,
+          "rule": "directCrypto",
+          "why": "直接用 crypto：多半是 randomUUID/sha，应走注入的 rng 或纯计算",
+          "text": "import { randomUUID } from 'node:crypto'"
+        },
+        {
+          "line": 21,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "const conversationId = randomUUID(); // 应用级会话 ID（本次运行内稳定，重启换新）"
+        }
+      ]
+    },
+    {
+      "path": "src/core/memory.js",
+      "violations": [
+        {
+          "line": 76,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function mergeMemoryEntries(entries = [], ops = {}, now = Date.now()) {"
+        },
+        {
+          "line": 111,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function applyMemoryOps(entries = [], ops = {}, now = Date.now()) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/monitor/engine.js",
+      "violations": [
+        {
+          "line": 35,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "now = () => Date.now(),"
+        }
+      ]
+    },
+    {
+      "path": "src/core/monitor/throttle.js",
+      "violations": [
+        {
+          "line": 16,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function createThrottle({ now = () => Date.now(), minGapMs = MIN_GAP_MS } = {}) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/monitor/tracker.js",
+      "violations": [
+        {
+          "line": 68,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "now = () => Date.now(),"
+        }
+      ]
+    },
+    {
+      "path": "src/core/presence/anchors.js",
+      "violations": [
+        {
+          "line": 68,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function listAnchors({ now = Date.now(), relationLevel = 'stranger', anchors = [], evidence = [], config = {} } ="
+        },
+        {
+          "line": 132,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function emptyAnchorState(now = Date.now()) {"
+        },
+        {
+          "line": 136,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function normalizeAnchorState(raw, now = Date.now()) {"
+        },
+        {
+          "line": 154,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function decideAnchorReference({ anchors = [], evidence = [], now = Date.now(), state, rng, config = {}, relation"
+        },
+        {
+          "line": 165,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "const roll = typeof rng === 'function' ? rng() : Math.random()"
+        }
+      ]
+    },
+    {
+      "path": "src/core/presence/ha-rules.js",
+      "violations": [
+        {
+          "line": 73,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function evaluateHaRules({ signals = {}, grants = [], now = Date.now(), rules, config } = {}) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/presence/imperfection.js",
+      "violations": [
+        {
+          "line": 98,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function emptyImperfectionState(now = Date.now()) {"
+        },
+        {
+          "line": 114,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function normalizeImperfectionState(raw, now = Date.now()) {"
+        },
+        {
+          "line": 141,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function resetImperfectionState(now = Date.now()) {"
+        },
+        {
+          "line": 168,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function decideOptionalFollowup({ id, intention, now = Date.now(), rng, config = {}, state } = {}) {"
+        },
+        {
+          "line": 193,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "const roll = typeof rng === 'function' ? rng() : Math.random()"
+        },
+        {
+          "line": 208,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function lowPressureState(state, now = Date.now()) {"
+        },
+        {
+          "line": 219,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function enterLowPressure({ now = Date.now(), rng, state, config = {}, busy = false, crisis = false } = {}) {"
+        },
+        {
+          "line": 231,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "(typeof rng === 'function' ? rng() : Math.random()) * (IMPERFECTION_LIMITS.lowPressureMaxMs - IMPERFECTION_LIMITS.lowPre"
+        },
+        {
+          "line": 239,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function tickLowPressure(state, now = Date.now()) {"
+        },
+        {
+          "line": 250,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function comfort({ state, now = Date.now(), sourceMessageId = null } = {}) {"
+        },
+        {
+          "line": 268,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function expressionTone(state, now = Date.now()) {"
+        },
+        {
+          "line": 295,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function repairCandidate({ state, now = Date.now(), config = {}, signal, privacy = {} } = {}) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/presence/notes-file.js",
+      "violations": [
+        {
+          "line": 156,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function noteFileName(note, now = Date.now()) {"
+        },
+        {
+          "line": 182,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function emptyNoteFileState(now = Date.now()) {"
+        },
+        {
+          "line": 186,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function normalizeNoteFileState(raw, now = Date.now()) {"
+        },
+        {
+          "line": 198,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function resetNoteFileState(now = Date.now()) {"
+        },
+        {
+          "line": 218,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = Number.isFinite(input.now) ? input.now : Date.now()"
+        },
+        {
+          "line": 258,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function commitNoteWrite(state, noteId, ok, now = Date.now()) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/presence/notes.js",
+      "violations": [
+        {
+          "line": 39,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function emptyNoteState(now = Date.now()) {"
+        },
+        {
+          "line": 44,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function normalizeNoteState(raw, now = Date.now()) {"
+        },
+        {
+          "line": 93,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "at: Number.isFinite(event.at) ? event.at : Date.now(),"
+        },
+        {
+          "line": 106,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "at: Number.isFinite(event.at) ? event.at : Date.now(),"
+        },
+        {
+          "line": 125,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function considerNote({ kind, event, now = Date.now(), state, config = {}, privacy = {} } = {}) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/presence/reaction.js",
+      "violations": [
+        {
+          "line": 43,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = deps.now ?? (() => Date.now())"
+        }
+      ]
+    },
+    {
+      "path": "src/core/presence/traces.js",
+      "violations": [
+        {
+          "line": 38,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function normalizeActionTrace(raw, now = Date.now()) {"
+        },
+        {
+          "line": 79,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = Number.isFinite(opts.now) ? opts.now : Date.now()"
+        },
+        {
+          "line": 94,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = Number.isFinite(opts.now) ? opts.now : Date.now()"
+        }
+      ]
+    },
+    {
+      "path": "src/core/promises/book.js",
+      "violations": [
+        {
+          "line": 1,
+          "rule": "directCrypto",
+          "why": "直接用 crypto：多半是 randomUUID/sha，应走注入的 rng 或纯计算",
+          "text": "import { randomUUID } from 'node:crypto'"
+        },
+        {
+          "line": 2,
+          "rule": "directFs",
+          "why": "直接触文件系统：应走注入的存储端口",
+          "text": "import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'"
+        },
+        {
+          "line": 80,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "item.evidence = [...(item.evidence || []), { kind: 'interrupted-on-restart', at: Date.now() }]"
+        },
+        {
+          "line": 96,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "const temp = this.path + '.' + randomUUID() + '.tmp'"
+        },
+        {
+          "line": 112,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "create({ id = 'p_' + randomUUID(), kind, title, source, sourceIds = [], dueAt = null, status = 'scheduled', at = Date.no"
+        },
+        {
+          "line": 112,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "create({ id = 'p_' + randomUUID(), kind, title, source, sourceIds = [], dueAt = null, status = 'scheduled', at = Date.no"
+        },
+        {
+          "line": 130,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "redact(id, at = Date.now()) {"
+        },
+        {
+          "line": 157,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "detach(id, at = Date.now()) {"
+        },
+        {
+          "line": 181,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "transition(id, status, evidence = null, at = Date.now()) {"
+        },
+        {
+          "line": 202,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "updateDueAt(id, dueAt, at = Date.now()) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/rag/chunk.js",
+      "violations": [
+        {
+          "line": 59,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const at = Number.isFinite(raw.at) ? raw.at : Date.now()"
+        },
+        {
+          "line": 76,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function makeTurnChunk({ user, assistant, at = Date.now(), mood = '', meta = {} } = {}) {"
+        },
+        {
+          "line": 93,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function makeFactChunk({ text, at = Date.now(), source = 'memory', meta = {} } = {}) {"
+        },
+        {
+          "line": 100,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function makeSummaryChunk({ text, covers = [], at = Date.now(), meta = {} } = {}) {"
+        },
+        {
+          "line": 113,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function makeDiaryChunk({ text, at = Date.now(), meta = {} } = {}) {"
+        },
+        {
+          "line": 130,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const at = Number.isFinite(raw.at) ? raw.at : Date.now()"
+        }
+      ]
+    },
+    {
+      "path": "src/core/rag/recall.js",
+      "violations": [
+        {
+          "line": 18,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "now: Date.now()"
+        },
+        {
+          "line": 30,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function timeLabel(at, now = Date.now()) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/relation/familiarity.js",
+      "violations": [
+        {
+          "line": 44,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function emptyStats(now = Date.now()) {"
+        },
+        {
+          "line": 49,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function normalizeStats(stats, now = Date.now()) {"
+        },
+        {
+          "line": 64,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function noteInteraction(stats, now = Date.now()) {"
+        },
+        {
+          "line": 77,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function familiarityScore(stats, now = Date.now()) {"
+        },
+        {
+          "line": 114,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function describeRelation(stats, now = Date.now()) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/relation/timeline.js",
+      "violations": [
+        {
+          "line": 119,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function staleDates(dates, now = Date.now(), keep = TIMELINE.KEEP_DAYS) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/reminders/schedule.js",
+      "violations": [
+        {
+          "line": 196,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function parseWhen(input, now = Date.now()) {"
+        },
+        {
+          "line": 259,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function isDue(item, now = Date.now()) {"
+        },
+        {
+          "line": 267,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function advanceRepeat(item, now = Date.now()) {"
+        },
+        {
+          "line": 289,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function formatWhen(at, now = Date.now()) {"
+        },
+        {
+          "line": 301,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function remainingText(at, now = Date.now()) {"
+        },
+        {
+          "line": 315,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function describeItem(item, now = Date.now()) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/signals/calendar.js",
+      "violations": [
+        {
+          "line": 37,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function parseCalendar(text, now = Date.now()) {"
+        },
+        {
+          "line": 70,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function calendarContext(events, now = Date.now()) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/signals/foreground.js",
+      "violations": [
+        {
+          "line": 107,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function foregroundContext(sample, now = Date.now(), { staleMs = 15000, idleThresholdSec = 300, enabled = true } "
+        }
+      ]
+    },
+    {
+      "path": "src/core/signals/ha-consent.js",
+      "violations": [
+        {
+          "line": 1,
+          "rule": "directCrypto",
+          "why": "直接用 crypto：多半是 randomUUID/sha，应走注入的 rng 或纯计算",
+          "text": "import { randomUUID } from 'node:crypto'"
+        },
+        {
+          "line": 2,
+          "rule": "directFs",
+          "why": "直接触文件系统：应走注入的存储端口",
+          "text": "import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'"
+        },
+        {
+          "line": 24,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "const temp = this.file + '.' + randomUUID() + '.tmp'"
+        },
+        {
+          "line": 30,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "allowRead(at = Date.now()) {"
+        },
+        {
+          "line": 35,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "allowControl(at = Date.now()) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/signals/music.js",
+      "violations": [
+        {
+          "line": 108,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function normalizeMediaObservation(raw, at = Date.now()) {"
+        },
+        {
+          "line": 133,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function musicContext(observation, now = Date.now()) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/signals/players.js",
+      "violations": [
+        {
+          "line": 68,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function buildFallbackObservation(windows = [], at = Date.now(), { processes = DEFAULT_PLAYER_PROCESSES } = {}) {"
+        }
+      ]
+    },
+    {
+      "path": "src/core/tools/browser.js",
+      "violations": [
+        {
+          "line": 124,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const t0 = Date.now()"
+        },
+        {
+          "line": 130,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "return { ok: true, summary: `已导航到 ${p.url()}`, ms: Date.now() - t0 }"
+        },
+        {
+          "line": 135,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "return { ok: true, summary: `已点击 ${args.selector}`, ms: Date.now() - t0 }"
+        },
+        {
+          "line": 141,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "return { ok: true, summary: `已在 ${args.selector} 填入内容`, ms: Date.now() - t0 }"
+        },
+        {
+          "line": 147,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "return { ok: true, summary: `已按键 ${args.key}`, ms: Date.now() - t0 }"
+        },
+        {
+          "line": 152,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "return { ok: true, summary: `已滚动 ${dy}px`, ms: Date.now() - t0 }"
+        },
+        {
+          "line": 156,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "return { ok: true, summary: `已后退到 ${p.url()}`, ms: Date.now() - t0 }"
+        },
+        {
+          "line": 160,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "return { ok: true, summary: `已选择 ${args.value}`, ms: Date.now() - t0 }"
+        },
+        {
+          "line": 165,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "return { ok: true, summary: `等待 ${ms}ms`, ms: Date.now() - t0 }"
+        }
+      ]
+    },
+    {
+      "path": "src/core/tools/files.js",
+      "violations": [
+        {
+          "line": 6,
+          "rule": "directCrypto",
+          "why": "直接用 crypto：多半是 randomUUID/sha，应走注入的 rng 或纯计算",
+          "text": "import { randomUUID } from 'node:crypto'"
+        },
+        {
+          "line": 111,
+          "rule": "globalRandom",
+          "why": "读全局随机：唯一 id 必须由调用方注入 rng()",
+          "text": "const temp = join(dirname(abs), `.${basename(abs)}.${randomUUID()}.tmp`)"
+        }
+      ]
+    },
+    {
+      "path": "src/core/tools/system.js",
+      "violations": [
+        {
+          "line": 24,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "summary: `命令已执行（${Date.now() - t0}ms）：${command}\\n${out || '(无输出)'}`,"
+        },
+        {
+          "line": 25,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "data: { stdout: String(stdout || ''), stderr: String(stderr || ''), ms: Date.now() - t0 },"
+        },
+        {
+          "line": 26,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "ms: Date.now() - t0"
+        },
+        {
+          "line": 39,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "summary: `命令退出码 ${err.code ?? '?'}（${Date.now() - t0}ms）：${command}\\n${clip(stdout)}${stderr ? `\\n[stderr]\\n${clip(stder"
+        },
+        {
+          "line": 41,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "ms: Date.now() - t0"
+        },
+        {
+          "line": 75,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const t0 = Date.now()"
+        }
+      ]
+    },
+    {
+      "path": "src/core/voice/backchannel.js",
+      "violations": [
+        {
+          "line": 89,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function resetBackchannelState(now = Date.now()) {"
+        },
+        {
+          "line": 91,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "s.day = dayKeyOf(isFiniteTs(now) ? now : Date.now())"
+        },
+        {
+          "line": 96,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function tickBackchannelState(state, now = Date.now()) {"
+        },
+        {
+          "line": 98,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const day = dayKeyOf(isFiniteTs(now) ? now : Date.now())"
+        },
+        {
+          "line": 123,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "const now = isFiniteTs(input.now) ? input.now : Date.now()"
+        }
+      ]
+    },
+    {
+      "path": "src/core/voice/enum-cache.js",
+      "violations": [
+        {
+          "line": 26,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function cacheHit(entry, now = Date.now(), ttlMs = EMPTY_TTL_MS) {"
+        },
+        {
+          "line": 34,
+          "rule": "globalClock",
+          "why": "读全局时钟：时间必须由调用方注入 now()",
+          "text": "export function cacheEntry(list, now = Date.now()) {"
+        }
+      ]
+    }
+  ]
+}

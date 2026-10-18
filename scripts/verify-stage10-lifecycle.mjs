@@ -1,9 +1,14 @@
 // 阶段10：隔离用户数据上的真实 Electron 启动、迁移、断网通道、重启与授权撤销。
+import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { chromium } from 'playwright'
+import { signalsDocumentIo } from '../src/main/store/document-io.js'
+import { ledgerRecordIo } from '../src/main/store/record-io.js'
+import { userDataLegacyReader } from '../src/main/store/legacy-reader.js'
+import { createFsDocumentIo } from '../src/main/store/document-io.js'
 import { CalendarSnapshot } from '../src/core/signals/calendar-store.js'
 import { ExperienceLedger } from '../src/core/ledger/store.js'
 import { YearbookStore, yearbookMarkdown } from '../src/core/yearbook/store.js'
@@ -37,7 +42,7 @@ writeFileSync(join(profile, 'settings.json'), JSON.stringify({
   voice: { ttsEngine: 'sapi' }, rag: { enabled: false }
 }))
 const start = new Date(Date.now() + 2 * 3600000).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
-new CalendarSnapshot(profile).importText([
+new CalendarSnapshot({ io: signalsDocumentIo(profile), now: () => Date.now() }).importText([
   'BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:stage10-offline',
   `DTSTART:${start}`, 'SUMMARY:隔离数据里的日程', 'END:VEVENT', 'END:VCALENDAR'
 ].join('\r\n'), '阶段10.ics')
@@ -150,8 +155,19 @@ try {
     !after.music.authorized && after.yearbook.pages.length === 1)
   await stop()
 
-  const ledger = new ExperienceLedger(profile).load()
-  const bundle = new YearbookStore(profile, ledger).load().exportBundle()
+  // B7（P2-05）：这里的验证脚本扮演"主进程"角色，负责给 core 装配真实 fs 端口
+  const ledger = new ExperienceLedger({
+    recIo: ledgerRecordIo(profile),
+    legacy: userDataLegacyReader(profile),
+    now: () => Date.now(),
+    rng: randomUUID
+  }).load()
+  const bundle = new YearbookStore({
+    io: createFsDocumentIo({ root: profile, files: { 'yearbook-pages': 'yearbook/pages.json' } }),
+    now: () => Date.now(),
+    rng: randomUUID,
+    ledger
+  }).load().exportBundle()
   const markdown = yearbookMarkdown(bundle)
   check('离线导出可重读来源与用户编辑', bundle.pages.length === 1 &&
     markdown.includes('迁移来的真实对话') && markdown.includes(round1.journal.id) &&

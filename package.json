@@ -50,6 +50,8 @@
     "verify:d9:quality": "node scripts/run-d9-quality.mjs",
     "verify:d8:quality": "node scripts/run-d8-quality.mjs",
     "audit:b7": "node scripts/audit-b7-boundary.mjs",
+    "audit:b7:gate": "node scripts/audit-b7-boundary.mjs --strict",
+    "audit:b7:core": "node scripts/audit-b7-boundary.mjs --scope=core",
     "verify:b9:sabotage": "node scripts/verify-b9-sabotage.mjs"
   },
   "dependencies": {

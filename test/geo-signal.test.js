@@ -1,43 +1,42 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { GeoSignal, GEO_TTL_MS, geoContext, normalizeGeoObservation } from '../src/core/signals/geo-store.js'
+import { createMemoryDocumentIo } from '../src/core/store/document-io.js'
 
 test('坐标信号默认不读取；授权、TTL、勿扰和撤销各自生效', async () => {
-  const dir = mkdtempSync(join(process.cwd(), '.nagi-geo-test-'))
   let calls = 0
   let dnd = false
-  try {
-    const signal = new GeoSignal(dir, {
-      probe: async () => {
-        calls++
-        return { available: true, lat: 34.05, lon: -118.24, city: 'Los Angeles', country: 'United States', source: 'ip' }
-      },
-      doNotDisturb: () => dnd
-    })
-    assert.equal((await signal.status({ refresh: true })).authorized, false)
-    assert.equal(calls, 0)
-    signal.authorize(100)
-    const first = await signal.status({ refresh: true, now: 200 })
-    assert.equal(first.authorized, true)
-    assert.equal(first.observation.lat, 34.05)
-    assert.equal(calls, 1)
-    // TTL 内不重复探测（位置不需要每分钟刷新）
-    await signal.status({ now: 200 + GEO_TTL_MS - 1000 })
-    assert.equal(calls, 1)
-    // 过期后重新探测
-    await signal.status({ now: 200 + GEO_TTL_MS + 1000 })
-    assert.equal(calls, 2)
-    dnd = true
-    assert.equal((await signal.status({ refresh: true, now: 300 })).paused, 'do-not-disturb')
-    assert.deepEqual(signal.context(400), [])
-    dnd = false
-    signal.revoke()
-    assert.equal((await signal.status({ refresh: true, now: 500 })).authorized, false)
-    assert.deepEqual(signal.context(600), [])
-    assert.equal(calls, 2)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  const io = createMemoryDocumentIo()
+  const signal = new GeoSignal({
+    io,
+    now: () => 1000, // B7（P2-05）：时钟由外部注入，core 不读 Date.now()
+    probe: async () => {
+      calls++
+      return { available: true, lat: 34.05, lon: -118.24, city: 'Los Angeles', country: 'United States', source: 'ip' }
+    },
+    doNotDisturb: () => dnd
+  })
+  assert.equal((await signal.status({ refresh: true })).authorized, false)
+  assert.equal(calls, 0)
+  signal.authorize(100)
+  const first = await signal.status({ refresh: true, now: 200 })
+  assert.equal(first.authorized, true)
+  assert.equal(first.observation.lat, 34.05)
+  assert.equal(calls, 1)
+  // TTL 内不重复探测（位置不需要每分钟刷新）
+  await signal.status({ now: 200 + GEO_TTL_MS - 1000 })
+  assert.equal(calls, 1)
+  // 过期后重新探测
+  await signal.status({ now: 200 + GEO_TTL_MS + 1000 })
+  assert.equal(calls, 2)
+  dnd = true
+  assert.equal((await signal.status({ refresh: true, now: 300 })).paused, 'do-not-disturb')
+  assert.deepEqual(signal.context(400), [])
+  dnd = false
+  signal.revoke()
+  assert.equal((await signal.status({ refresh: true, now: 500 })).authorized, false)
+  assert.deepEqual(signal.context(600), [])
+  assert.equal(calls, 2)
 })
 
 test('坐标归一化：系统定位与 IP 定位、坏坐标与不可用', () => {

@@ -1,9 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { parseCalendar, calendarContext } from '../src/core/signals/calendar.js'
-import { CalendarSnapshot } from '../src/core/signals/calendar-store.js'
+import { CalendarSnapshot, CALENDAR_ICS_KEY, CALENDAR_META_KEY } from '../src/core/signals/calendar-store.js'
+import { createMemoryDocumentIo } from '../src/core/store/document-io.js'
 
 const now = Date.UTC(2026, 9, 16, 0, 0, 0)
 const ics = [
@@ -29,17 +28,27 @@ test('日历只读解析折行与时区；重复和取消事件不被编造成�
 })
 
 test('日历快照本地保存、重新装载与撤销后上下文消失', () => {
-  const dir = mkdtempSync(join(process.cwd(), '.nagi-calendar-test-'))
-  try {
-    const first = new CalendarSnapshot(dir)
-    assert.equal(first.status(now).authorized, false)
-    const imported = first.importText(ics, '个人日历.ics', now)
-    assert.equal(imported.authorized, true)
-    assert.equal(imported.sourceName, '个人日历.ics')
-    assert.equal(new CalendarSnapshot(dir).context(now).length, 1)
-    first.revoke()
-    assert.equal(new CalendarSnapshot(dir).status(now).authorized, false)
-    assert.deepEqual(new CalendarSnapshot(dir).context(now), [])
-    assert.throws(() => readFileSync(join(dir, 'signals', 'calendar.ics')), /ENOENT/)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  // B7（P2-05）：io 端口与时钟都注入；两个 CalendarSnapshot 共用同一个端口即代表"同一份落盘"
+  const io = createMemoryDocumentIo()
+  const opened = () => new CalendarSnapshot({ io, now: () => now })
+  const first = opened()
+  assert.equal(first.status(now).authorized, false)
+  const imported = first.importText(ics, '个人日历.ics', now)
+  assert.equal(imported.authorized, true)
+  assert.equal(imported.sourceName, '个人日历.ics')
+  assert.equal(opened().context(now).length, 1)
+  first.revoke()
+  assert.equal(opened().status(now).authorized, false)
+  assert.deepEqual(opened().context(now), [])
+  // 撤销后两份文档都必须消失（只删 meta 会留下"看得见的 ICS 原文"）
+  assert.equal(io.read(CALENDAR_ICS_KEY), null)
+  assert.equal(io.read(CALENDAR_META_KEY), null)
+})
+
+test('导入只认文件名，不接受路径穿越（core 侧连 path 都不引入）', () => {
+  const io = createMemoryDocumentIo()
+  const snapshot = new CalendarSnapshot({ io, now: () => now })
+  const imported = snapshot.importText(ics, 'C:\\Users\\某人\\Desktop\\周计划.ics', now)
+  assert.equal(imported.sourceName, '周计划.ics')
+  assert.doesNotMatch(JSON.stringify(snapshot.status(now)), /C:\\\\Users|Desktop/)
 })

@@ -19,6 +19,8 @@ import { runPowerShell, serialize } from '../voice/ps.js'
 import { pickActiveSession, filterSelfSessions, selfSessionIds } from '../../core/signals/music.js'
 import { DEFAULT_PLAYER_PROCESSES, buildFallbackObservation, mergeMediaObservations } from '../../core/signals/players.js'
 import { foregroundContext } from '../../core/signals/foreground.js'
+import { calendarNow } from '../clock.js'
+import { signalsDocumentIo } from '../store/document-io.js'
 import { MusicSignal } from '../../core/signals/music-store.js'
 
 /** SMTC 全会话读取成功 → { ok: true, raw }；失败 → { ok: false, error } */
@@ -114,7 +116,9 @@ async function probeMedia() {
 let music = null
 let timer = null
 export function getMusicSignal() {
-  if (!music) music = new MusicSignal(app.getPath('userData'), {
+  if (!music) music = new MusicSignal({
+    io: signalsDocumentIo(app.getPath('userData')), // B7（P2-05）：落盘端口由 main 注入
+    now: calendarNow,
     probe: probeMedia,
     doNotDisturb: () => Boolean(getSettings().privacy?.doNotDisturb || getSettings().privacy?.onlyPresence)
   })

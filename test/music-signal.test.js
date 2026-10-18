@@ -1,53 +1,52 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { MusicSignal } from '../src/core/signals/music-store.js'
+import { createMemoryDocumentIo } from '../src/core/store/document-io.js'
 import { normalizeMediaObservation, musicContext, pickActiveSession, selfSessionIds, isSelfSession, filterSelfSessions } from '../src/core/signals/music.js'
 import { buildFallbackObservation, mergeMediaObservations } from '../src/core/signals/players.js'
 
 test('音乐信号默认不读取；授权、勿扰和撤销各自生效', async () => {
-  const dir = mkdtempSync(join(process.cwd(), '.nagi-music-test-'))
   let calls = 0
   let dnd = false
-  try {
-    const signal = new MusicSignal(dir, {
-      probe: async () => { calls++; return { available: true, title: '测试歌曲', artist: '测试歌手',
-        app: 'test-player', playbackStatus: 'Playing' } },
-      doNotDisturb: () => dnd
-    })
-    assert.equal((await signal.status({ refresh: true })).authorized, false)
-    assert.equal(calls, 0)
-    signal.authorize(100)
-    const active = await signal.status({ refresh: true, now: 200 })
-    assert.equal(active.observation.playbackStatus, 'playing')
-    assert.equal(calls, 1)
-    assert.match(signal.context(200)[0], /不能推断用户心情/)
-    dnd = true
-    assert.equal((await signal.status({ refresh: true, now: 300 })).paused, 'do-not-disturb')
-    assert.equal(calls, 1)
-    assert.deepEqual(signal.context(300), [])
-    dnd = false
-    signal.revoke()
-    assert.equal((await signal.status({ refresh: true })).authorized, false)
-    assert.equal(calls, 1)
-    assert.deepEqual(signal.context(300), [])
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  const signal = new MusicSignal({
+    io: createMemoryDocumentIo(),
+    now: () => 1000, // B7（P2-05）：时钟注入
+    probe: async () => { calls++; return { available: true, title: '测试歌曲', artist: '测试歌手',
+      app: 'test-player', playbackStatus: 'Playing' } },
+    doNotDisturb: () => dnd
+  })
+  assert.equal((await signal.status({ refresh: true })).authorized, false)
+  assert.equal(calls, 0)
+  signal.authorize(100)
+  const active = await signal.status({ refresh: true, now: 200 })
+  assert.equal(active.observation.playbackStatus, 'playing')
+  assert.equal(calls, 1)
+  assert.match(signal.context(200)[0], /不能推断用户心情/)
+  dnd = true
+  assert.equal((await signal.status({ refresh: true, now: 300 })).paused, 'do-not-disturb')
+  assert.equal(calls, 1)
+  assert.deepEqual(signal.context(300), [])
+  dnd = false
+  signal.revoke()
+  assert.equal((await signal.status({ refresh: true })).authorized, false)
+  assert.equal(calls, 1)
+  assert.deepEqual(signal.context(300), [])
 })
 
 test('撤销发生在异步媒体读取中时，旧结果不能重新进入上下文', async () => {
-  const dir = mkdtempSync(join(process.cwd(), '.nagi-music-test-'))
   let finish
-  try {
-    const signal = new MusicSignal(dir, { probe: () => new Promise((resolve) => { finish = resolve }) })
-    signal.authorize()
-    const pending = signal.status({ refresh: true, now: 100 })
-    await new Promise((resolve) => setImmediate(resolve))
-    signal.revoke()
-    finish({ available: true, title: '撤销前歌曲', playbackStatus: 'Playing' })
-    assert.equal((await pending).authorized, false)
-    assert.deepEqual(signal.context(101), [])
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  const signal = new MusicSignal({
+    io: createMemoryDocumentIo(),
+    now: () => 1000,
+    probe: () => new Promise((resolve) => { finish = resolve })
+  })
+  signal.authorize()
+  const pending = signal.status({ refresh: true, now: 100 })
+  await new Promise((resolve) => setImmediate(resolve))
+  signal.revoke()
+  finish({ available: true, title: '撤销前歌曲', playbackStatus: 'Playing' })
+  assert.equal((await pending).authorized, false)
+  assert.deepEqual(signal.context(101), [])
 })
 
 test('多会话选择：播放中优先，其次暂停；同级标题非空优先，再按更新时间', () => {
@@ -109,22 +108,21 @@ test('窗口标题兜底来源：必须挡住「正在播放」的越界断言�
 })
 
 test('缓存新鲜度：fresh() 与 status() 复用阈值一致（60 秒）', async () => {
-  const dir = mkdtempSync(join(process.cwd(), '.nagi-music-test-'))
   let calls = 0
-  try {
-    const signal = new MusicSignal(dir, {
-      probe: async () => { calls++; return { available: true, sessions: [
-        { app: 'cloudmusic', title: '约定', artist: '王菲', playbackStatus: 'unknown', source: 'window-title' }
-      ] } }
-    })
-    signal.authorize(1) // authorizedAt 必须 > 0 才算已授权（authorize(0) 会被 authorized() 判为未授权）
-    assert.equal(signal.fresh(0), false, '没探过之前不算新鲜')
-    await signal.status({ refresh: true, now: 1010 })
-    assert.equal(signal.fresh(1010), true)
-    assert.equal(signal.fresh(1010 + 59999), true, '60 秒内视为新鲜')
-    assert.equal(signal.fresh(1010 + 60001), false, '超过 60 秒必须重新探')
-    assert.equal(calls, 1)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  const signal = new MusicSignal({
+    io: createMemoryDocumentIo(),
+    now: () => 1000,
+    probe: async () => { calls++; return { available: true, sessions: [
+      { app: 'cloudmusic', title: '约定', artist: '王菲', playbackStatus: 'unknown', source: 'window-title' }
+    ] } }
+  })
+  signal.authorize(1) // authorizedAt 必须 > 0 才算已授权（authorize(0) 会被 authorized() 判为未授权）
+  assert.equal(signal.fresh(0), false, '没探过之前不算新鲜')
+  await signal.status({ refresh: true, now: 1010 })
+  assert.equal(signal.fresh(1010), true)
+  assert.equal(signal.fresh(1010 + 59999), true, '60 秒内视为新鲜')
+  assert.equal(signal.fresh(1010 + 60001), false, '超过 60 秒必须重新探')
+  assert.equal(calls, 1)
 })
 
 test('用户实测场景：SMTC 只有一条 Edge 暂停会话，网易云靠窗口标题兜底仍要知道在放什么', () => {

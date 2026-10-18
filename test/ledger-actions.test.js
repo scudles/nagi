@@ -1,7 +1,10 @@
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import { ExperienceLedger } from '../src/core/ledger/store.js'
+import { realRecordPorts } from './helpers/store-ports.js'
 
 const userData = mkdtempSync(join(process.cwd(), '.nagi-ledger-actions-'))
 mock.module('electron', { exports: {
@@ -58,5 +61,9 @@ test('纠错与忘记清理提示词、待嵌 RAG、旧流水和历史，重启�
   assert.equal(readFileSync(join(userData, 'ledger', 'entries.jsonl'), 'utf8').includes('旧对话秘密词甲乙丙'), false)
   assert.equal(rag.io.readPending().some((item) => item.text.includes('旧对话秘密词甲乙丙')), false)
   assert.equal(ledger.get(diary.id).text, '')
-  assert.equal(new (ledger.constructor)(userData).get(chat.id).text, '')
+  // B7（P2-05）：重开账本要按新规矩装配端口，不能再拿 userData 路径直接构造
+  const reopened = new ExperienceLedger(
+    realRecordPorts(userData, { now: () => Date.now(), rng: randomUUID })
+  )
+  assert.equal(reopened.get(chat.id).text, '')
 })

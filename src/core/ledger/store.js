@@ -1,12 +1,20 @@
 // 统一经历账本：正常新增顺序追加，纠错/删除时重写当前态以移除旧正文。
-// 不依赖 Electron；目录由主进程注入，便于迁移和故障恢复测试。
-import { createHash, randomUUID } from 'node:crypto'
-import { reportCatch, CATCH_CLASS } from '../maintenance/reporter.js'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+// 不依赖 Electron；存储端口（追加/重写）与迁移源（只读）由主进程注入。
+//
+// B7（P2-05）：本文件不再引用 node:fs，也不读全局时钟或全局随机——
+//   写盘走行式端口（recIo）、迁移走只读源（legacy）、「此刻」与 id 走 now()/rng()。
+//   createHash 保留：它是确定性摘要（同一来源永远得同一 id），属纯计算，不是随机。
+import { createHash } from 'node:crypto' /* B7:allow:directCrypto — 确定性摘要（同来源永远同 id），属纯计算不是随机 */
+import { assertPorts } from '../store/document-io.js'
+import { isRecordIo } from '../store/record-io.js'
+import { isLegacyReader } from '../store/legacy-reader.js'
 
 const CATEGORIES = new Set(['experience', 'claim', 'subjective', 'aggregate'])
 const MIGRATION_VERSION = 1
+
+/** 端口文档键；真实路径由 main 侧登记（ledger/entries.jsonl、ledger/migration.json） */
+export const LEDGER_ENTRIES_KEY = 'entries'
+export const LEDGER_MIGRATION_KEY = 'migration'
 
 export function trustTier(entry) {
   if (entry?.category === 'subjective') return 'subjective'
@@ -18,24 +26,11 @@ function sourceId(type, ref) {
   return 'e_' + createHash('sha256').update(`${type}:${ref}`).digest('hex').slice(0, 20)
 }
 
-function readJson(path, fallback) {
-  if (!existsSync(path)) return fallback
-  try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return fallback }
-}
-
-function readLegacyJson(path, fallback) {
-  if (!existsSync(path)) return fallback
-  return JSON.parse(readFileSync(path, 'utf8'))
-}
-
-function readJsonLines(path) {
-  if (!existsSync(path)) return []
-  const rows = []
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    if (!line.trim()) continue
-    try { rows.push(JSON.parse(line)) } catch (__err) { reportCatch('store.readJsonLines', CATCH_CLASS.MUST_PERSIST, __err) }
-  }
-  return rows
+/** 迁移源读 JSON：不存在 → fallback；存在但坏 → 如实抛出（B8：不许悄悄标记迁移完成） */
+function readLegacyJson(reader, ref, fallback) {
+  const raw = reader.read(ref)
+  if (raw === null || raw === undefined) return fallback
+  return JSON.parse(raw)
 }
 
 function valid(record) {
@@ -44,26 +39,22 @@ function valid(record) {
     record.source && typeof record.source.type === 'string' && typeof record.source.ref === 'string'
 }
 
-function atomicWrite(path, value) {
-  const temp = path + '.' + randomUUID() + '.tmp'
-  writeFileSync(temp, value, 'utf8')
-  renameSync(temp, path)
-}
-
 export class ExperienceLedger {
-  constructor(userDataDir) {
-    this.userDataDir = userDataDir
-    this.dir = join(userDataDir, 'ledger')
-    this.entriesFile = join(this.dir, 'entries.jsonl')
-    this.markerFile = join(this.dir, 'migration.json')
+  constructor({ recIo, legacy, now, rng } = {}) {
+    assertPorts('ExperienceLedger', { now, rng }, ['now', 'rng'])
+    if (!isRecordIo(recIo)) throw new TypeError('ExperienceLedger 缺少注入依赖：recIo（行式存储端口）')
+    if (!isLegacyReader(legacy)) throw new TypeError('ExperienceLedger 缺少注入依赖：legacy（迁移源只读端口）')
+    this.recIo = recIo
+    this.legacy = legacy
+    this.now = now
+    this.rng = rng
     this.entries = new Map()
     this.loaded = false
   }
 
   load() {
     if (this.loaded) return this
-    mkdirSync(this.dir, { recursive: true })
-    for (const row of readJsonLines(this.entriesFile)) if (valid(row)) this.entries.set(row.id, row)
+    for (const row of this.recIo.readObjects(LEDGER_ENTRIES_KEY)) if (valid(row)) this.entries.set(row.id, row)
     this.loaded = true
     return this
   }
@@ -86,30 +77,29 @@ export class ExperienceLedger {
     return this.get(sourceId(String(type), String(ref)))
   }
 
-  deleteBySource(type, ref, at = Date.now()) {
+  deleteBySource(type, ref, at = this.now()) {
     this.load()
     const id = sourceId(type, String(ref))
     const entry = this.entries.get(id)
     if (!entry || entry.deletedAt) return false
     const updated = { ...entry, text: '', meta: {}, revision: entry.revision + 1, deletedAt: at }
-    const rows = [...this.entries.values()].map((row) => JSON.stringify(row.id === id ? updated : row)).join('\n') + '\n'
-    atomicWrite(this.entriesFile, rows)
+    this.recIo.rewrite(LEDGER_ENTRIES_KEY, [...this.entries.values()].map((row) => (row.id === id ? updated : row)))
     this.entries.set(id, updated)
     return true
   }
 
-  forget(id, at = Date.now()) {
+  forget(id, at = this.now()) {
     this.load()
     const entry = this.entries.get(String(id || ''))
     return entry ? this.deleteBySource(entry.source.type, entry.source.ref, at) : false
   }
 
-  correct(id, text, at = Date.now(), ragIds = []) {
+  correct(id, text, at = this.now(), ragIds = []) {
     this.load()
     const original = this.entries.get(String(id || ''))
     const body = String(text || '').trim()
     if (!original || original.deletedAt || !body) return null
-    const source = { type: 'correction', ref: randomUUID() }
+    const source = { type: 'correction', ref: String(this.rng()) }
     const corrected = {
       id: sourceId(source.type, source.ref), category: original.category, text: body,
       source, occurredAt: null, recordedAt: at, certainty: 'user-corrected',
@@ -118,9 +108,9 @@ export class ExperienceLedger {
     }
     const old = { ...original, text: '', meta: { correctedBy: corrected.id },
       revision: original.revision + 1, correctedAt: at, deletedAt: at }
-    const rows = [...this.entries.values()].map((row) => row.id === original.id ? old : row)
+    const rows = [...this.entries.values()].map((row) => (row.id === original.id ? old : row))
     rows.push(corrected)
-    atomicWrite(this.entriesFile, rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
+    this.recIo.rewrite(LEDGER_ENTRIES_KEY, rows)
     this.entries.set(original.id, old)
     this.entries.set(corrected.id, corrected)
     return this.get(corrected.id)
@@ -128,29 +118,29 @@ export class ExperienceLedger {
 
   exportBundle() {
     return {
-      schemaVersion: 1, exportedAt: Date.now(),
+      schemaVersion: 1, exportedAt: this.now(),
       trustTiers: { recorded: '有来源的实际记录或用户确认', unverified: '未经用户核实的模型整理', subjective: '凪的日记、情绪或创作' },
       entries: this.list({ includeDeleted: true })
     }
   }
 
-  record({ category, text, source, occurredAt = null, recordedAt = Date.now(), certainty = 'observed', ragIds = [], meta = {} }) {
+  record({ category, text, source, occurredAt = null, recordedAt = this.now(), certainty = 'observed', ragIds = [], meta = {} }) {
     this.load()
     const body = String(text || '').trim()
     if (!CATEGORIES.has(category) || !body || !source?.type) return null
-    const ref = String(source.ref || randomUUID())
+    const ref = String(source.ref || this.rng())
     const id = sourceId(source.type, ref)
     if (this.entries.has(id)) return this.get(id)
     const entry = {
       id, category, text: body,
       source: { type: String(source.type), ref },
       occurredAt: Number.isFinite(occurredAt) ? occurredAt : null,
-      recordedAt: Number.isFinite(recordedAt) ? recordedAt : Date.now(),
+      recordedAt: Number.isFinite(recordedAt) ? recordedAt : this.now(),
       certainty, ragIds: [...new Set(ragIds.filter(Boolean).map(String))],
       meta: meta && typeof meta === 'object' ? meta : {},
       revision: 1, correctedAt: null, deletedAt: null
     }
-    appendFileSync(this.entriesFile, JSON.stringify(entry) + '\n', 'utf8')
+    this.recIo.append(LEDGER_ENTRIES_KEY, entry)
     this.entries.set(id, entry)
     return structuredClone(entry)
   }
@@ -158,19 +148,18 @@ export class ExperienceLedger {
   /** 一次性迁移旧文件；保留原件，不根据无时间戳的历史猜测发生时间。 */
   migrateLegacy() {
     this.load()
-    const marker = readJson(this.markerFile, { version: 0 })
-    if (marker.version >= MIGRATION_VERSION) return { migrated: false, count: 0 }
+    const marker = this.recIo.readObjects(LEDGER_MIGRATION_KEY)[0] || { version: 0 }
+    if (Number(marker.version) >= MIGRATION_VERSION) return { migrated: false, count: 0 }
     let count = 0
     const add = (fields) => {
       if (!fields.text || this.entries.has(sourceId(fields.source.type, fields.source.ref))) return
       if (this.record(fields)) count++
     }
-    const dir = this.userDataDir
+    const read = this.legacy
 
-    const journalDir = join(dir, 'journal')
-    if (existsSync(journalDir)) {
-      for (const name of readdirSync(journalDir).filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))) {
-        const data = readLegacyJson(join(journalDir, name), { entries: [] })
+    if (read.exists('journal')) {
+      for (const name of read.list('journal').filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))) {
+        const data = readLegacyJson(read, `journal/${name}`, { entries: [] })
         for (const [i, event] of (Array.isArray(data.entries) ? data.entries : []).entries()) {
           const text = event.kind === 'chat'
             ? [event.user && `他：${event.user}`, event.reply && `我：${event.reply}`].filter(Boolean).join('\n')
@@ -181,11 +170,10 @@ export class ExperienceLedger {
       }
     }
 
-    const diaryDir = join(dir, 'monologue')
-    if (existsSync(diaryDir)) {
-      for (const name of readdirSync(diaryDir).filter((name) => /^diary-\d{4}-\d{2}-\d{2}\.md$/.test(name))) {
+    if (read.exists('monologue')) {
+      for (const name of read.list('monologue').filter((name) => /^diary-\d{4}-\d{2}-\d{2}\.md$/.test(name))) {
         const day = name.slice(6, 16)
-        for (const [i, line] of readFileSync(join(diaryDir, name), 'utf8').split('\n').entries()) {
+        for (const [i, line] of String(read.read(`monologue/${name}`) ?? '').split('\n').entries()) {
           const match = line.match(/^- (\d{2}:\d{2}) ［[^］]*］\s*(.*)$/)
           if (!match?.[2]) continue
           const at = new Date(`${day}T${match[1]}:00`).getTime()
@@ -195,14 +183,14 @@ export class ExperienceLedger {
       }
     }
 
-    const memory = readLegacyJson(join(dir, 'memory.json'), { entries: [] })
+    const memory = readLegacyJson(read, 'memory.json', { entries: [] })
     const memoryEntries = Array.isArray(memory) ? memory : memory?.entries
     for (const [i, item] of (Array.isArray(memoryEntries) ? memoryEntries : []).entries()) {
       add({ category: 'claim', text: item.text, source: { type: 'memory', ref: String(item.id || i) },
         occurredAt: Number.isFinite(item.at) ? item.at : null, certainty: 'unverified', meta: { legacy: true } })
     }
 
-    const history = readLegacyJson(join(dir, 'history.json'), { messages: [] })
+    const history = readLegacyJson(read, 'history.json', { messages: [] })
     const historyMessages = Array.isArray(history) ? history : history?.messages
     for (const [i, item] of (Array.isArray(historyMessages) ? historyMessages : []).entries()) {
       if (!['user', 'assistant'].includes(item.role)) continue
@@ -211,10 +199,9 @@ export class ExperienceLedger {
         certainty: 'legacy-undated', meta: { legacy: true } })
     }
 
-    const ragDir = join(dir, 'rag')
     const ragRows = [
-      ...readJsonLines(join(ragDir, 'chunks.jsonl')),
-      ...readJsonLines(join(ragDir, 'pending.jsonl'))
+      ...read.readObjects('rag/chunks.jsonl'),
+      ...read.readObjects('rag/pending.jsonl')
     ]
     const dead = new Set(ragRows.filter((row) => row.tombstone && row.id).map((row) => row.id))
     for (const chunk of ragRows) {
@@ -225,17 +212,16 @@ export class ExperienceLedger {
         ragIds: [chunk.id], meta: { ragKind: chunk.kind, legacy: true } })
     }
 
-    const relation = readLegacyJson(join(dir, 'relation.json'), null)
+    const relation = readLegacyJson(read, 'relation.json', null)
     if (relation && typeof relation.interactionCount === 'number') {
       add({ category: 'aggregate', text: `旧版关系统计：互动 ${relation.interactionCount} 次。`,
         source: { type: 'relation', ref: 'relation.json#migration-v1' }, occurredAt: null,
         certainty: 'aggregate', meta: { firstMetAt: relation.firstMetAt || null, legacy: true } })
     }
 
-    const timelineDir = join(dir, 'timeline')
-    if (existsSync(timelineDir)) {
-      for (const name of readdirSync(timelineDir).filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))) {
-        const data = readLegacyJson(join(timelineDir, name), { points: [] })
+    if (read.exists('timeline')) {
+      for (const name of read.list('timeline').filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))) {
+        const data = readLegacyJson(read, `timeline/${name}`, { points: [] })
         for (const [i, point] of (Array.isArray(data?.points) ? data.points : []).entries()) {
           if (!point?.mood) continue
           add({ category: 'subjective', text: `凪当时的情绪采样：${point.mood}`,
@@ -245,7 +231,7 @@ export class ExperienceLedger {
       }
     }
 
-    atomicWrite(this.markerFile, JSON.stringify({ version: MIGRATION_VERSION, completedAt: Date.now() }))
+    this.recIo.rewrite(LEDGER_MIGRATION_KEY, [{ version: MIGRATION_VERSION, completedAt: this.now() }])
     return { migrated: true, count }
   }
 }

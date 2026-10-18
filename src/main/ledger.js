@@ -1,10 +1,20 @@
 import { app } from 'electron'
+import { randomUUID } from 'node:crypto'
+import { calendarNow } from './clock.js'
+import { ledgerRecordIo } from './store/record-io.js'
+import { userDataLegacyReader } from './store/legacy-reader.js'
 import { ExperienceLedger } from '../core/ledger/store.js'
 
 let ledger = null
 
 export function getLedger() {
-  if (!ledger) ledger = new ExperienceLedger(app.getPath('userData')).load()
+  // B7（P2-05）：core 侧只认端口；真实 fs 的端口在这里装配
+  if (!ledger) ledger = new ExperienceLedger({
+    recIo: ledgerRecordIo(app.getPath('userData')),
+    legacy: userDataLegacyReader(app.getPath('userData')),
+    now: calendarNow,
+    rng: randomUUID
+  }).load()
   return ledger
 }
 

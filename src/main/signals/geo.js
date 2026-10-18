@@ -14,6 +14,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { resourcesDir } from '../paths.js'
+import { calendarNow } from '../clock.js'
+import { signalsDocumentIo } from '../store/document-io.js'
 import { getSettings } from '../settings-store.js'
 import { runPowerShell } from '../voice/ps.js'
 import { GeoSignal } from '../../core/signals/geo-store.js'
@@ -75,7 +77,9 @@ async function probeGeo() {
 let geo = null
 let timer = null
 export function getGeoSignal() {
-  if (!geo) geo = new GeoSignal(app.getPath('userData'), {
+  if (!geo) geo = new GeoSignal({
+    io: signalsDocumentIo(app.getPath('userData')), // B7（P2-05）：落盘端口由 main 注入
+    now: calendarNow,
     probe: probeGeo,
     doNotDisturb: () => Boolean(getSettings().privacy?.doNotDisturb || getSettings().privacy?.onlyPresence)
   })

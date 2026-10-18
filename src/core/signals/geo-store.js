@@ -6,16 +6,20 @@
 // 并要求她不主动提位置。
 //
 // 数据源（main 侧组装）：Windows 定位 API 优先，失败回退 IP 定位（城市级）。
-// 纯逻辑、无 Electron 依赖，可被 node --test 直接跑。
-import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+//
+// B7（P2-05）：本文件不再引用 node:fs / node:crypto，也不读全局时钟——
+//   落盘走文档端口（io）、「此刻」走注入的 now()。temps 文件名由 io 侧负责，
+//   因此 core 里连 randomUUID 都不需要。
+import { assertPorts } from '../store/document-io.js'
+
+/** 授权文件的文档键；真实路径由 main 侧 src/main/store/document-io.js 登记 */
+export const GEO_CONSENT_KEY = 'geo-consent'
 
 /** 坐标缓存有效期：30 分钟内不重复探测 */
 export const GEO_TTL_MS = 30 * 60 * 1000
 
 /** 归一化探针原始输出：{ available, lat, lon, city, country, accuracyMeters, source, observedAt } */
-export function normalizeGeoObservation(raw, at = Date.now()) {
+export function normalizeGeoObservation(raw, at) {
   if (!raw || raw.available !== true) {
     return { available: false, reason: String(raw?.reason || 'unavailable'), observedAt: at }
   }
@@ -40,7 +44,7 @@ export function normalizeGeoObservation(raw, at = Date.now()) {
  * 「此刻」附注：她知道的他的大致位置。
  * 过期（超过 TTL）或不可用 → 空数组；措辞必须守住「粗定位、别主动提」。
  */
-export function geoContext(observation, now = Date.now()) {
+export function geoContext(observation, now) {
   if (!observation || !Number.isFinite(now - observation.observedAt)) return []
   if (now - observation.observedAt > GEO_TTL_MS) return []
   if (!observation.available) return []
@@ -51,9 +55,10 @@ export function geoContext(observation, now = Date.now()) {
 }
 
 export class GeoSignal {
-  constructor(userDataDir, { probe, doNotDisturb = () => false } = {}) {
-    this.dir = join(userDataDir, 'signals')
-    this.consentFile = join(this.dir, 'geo.json')
+  constructor({ io, now, probe, doNotDisturb = () => false } = {}) {
+    assertPorts('GeoSignal', { io, now }, ['io', 'now'])
+    this.io = io
+    this.now = now
     this.probe = probe
     this.doNotDisturb = doNotDisturb
     this.last = null
@@ -62,16 +67,14 @@ export class GeoSignal {
   }
 
   authorized() {
-    if (!existsSync(this.consentFile)) return false
-    try { return Number(JSON.parse(readFileSync(this.consentFile, 'utf8')).authorizedAt) > 0 }
+    const raw = this.io.read(GEO_CONSENT_KEY)
+    if (raw === null || raw === undefined) return false
+    try { return Number(JSON.parse(raw).authorizedAt) > 0 }
     catch { return false }
   }
 
-  authorize(at = Date.now()) {
-    mkdirSync(this.dir, { recursive: true })
-    const temp = this.consentFile + '.' + randomUUID() + '.tmp'
-    writeFileSync(temp, JSON.stringify({ version: 1, authorizedAt: at }), 'utf8')
-    renameSync(temp, this.consentFile)
+  authorize(at = this.now()) {
+    this.io.write(GEO_CONSENT_KEY, JSON.stringify({ version: 1, authorizedAt: at }))
     this.generation++
     this.inflight = null
     return { authorized: true, authorizedAt: at }
@@ -80,14 +83,14 @@ export class GeoSignal {
   revoke() {
     this.generation++
     this.inflight = null
-    rmSync(this.consentFile, { force: true })
+    this.io.remove(GEO_CONSENT_KEY)
     this.last = null
     return { authorized: false }
   }
 
-  async status({ refresh = false, now = Date.now() } = {}) {
+  async status({ refresh = false, now = this.now() } = {}) {
     if (!this.authorized()) return { authorized: false, observation: null }
-    const authorizedAt = JSON.parse(readFileSync(this.consentFile, 'utf8')).authorizedAt
+    const authorizedAt = JSON.parse(this.io.read(GEO_CONSENT_KEY)).authorizedAt
     if (this.doNotDisturb()) {
       this.last = null
       return { authorized: true, authorizedAt, paused: 'do-not-disturb', observation: null }
@@ -109,7 +112,7 @@ export class GeoSignal {
     return this.authorized() ? { authorized: true, authorizedAt, observation: this.last } : { authorized: false, observation: null }
   }
 
-  context(now = Date.now()) {
+  context(now = this.now()) {
     if (!this.authorized() || this.doNotDisturb()) return []
     return geoContext(this.last, now)
   }
