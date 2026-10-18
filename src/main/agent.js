@@ -86,6 +86,7 @@ import { startMonitor, stopMonitor } from './monitor/index.js'
 import { getRag } from './rag/index.js'
 import { getLedger } from './ledger.js'
 import { runRecordedTool } from './promises.js'
+import { forgetGuard } from './forget-guard.js'
 import { upcomingCalendarContext } from './signals/calendar.js'
 import { currentObservationContext, musicStatus } from './signals/music.js'
 import { titleOutboundAllowed } from '../core/signals/title-outbound.js'
@@ -1074,6 +1075,15 @@ function extractMemoriesAsync({ client, llm, useCloud, userText, assistantText, 
     .then((raw) => {
       if (turnRef && getLedger().bySource('journal-live', turnRef)?.deletedAt) return
       const ops = parseMemoryOps(raw)
+      // C5-BG-02：模型返回前用户可能已经忘了这条经历。命中遗忘片段的**新增项**一律丢弃，
+      // 无关的新内容照常写入（不能因为一次遗忘就把整轮抽取作废）。
+      if (ops.add?.length) {
+        const kept = forgetGuard.filterAdds(ops.add)
+        if (kept.length !== ops.add.length) {
+          console.warn('[memory] 抽取结果命中已遗忘内容，丢弃 ' + (ops.add.length - kept.length) + ' 条')
+          ops.add = kept
+        }
+      }
       if (!ops.add.length && !ops.remove.length) return
       const r = mergeMemoryOps(ops, Date.now(), { userText: u })
       console.log('[memory] 记忆更新：', r.before, '→', r.after, ops.add.length ? '新增 ' + ops.add.join(' / ') : '')
@@ -1490,8 +1500,10 @@ export function timelineData(days) {
 export function reminderList() {
   return listReminders()
 }
-export function reminderAdd(payload) {
-  const r = addReminder(payload || {})
+export function reminderAdd(payload, opts = {}) {
+  const input = payload || {}
+  const sourceIds = Array.isArray(input.sourceIds) ? input.sourceIds : (opts.sourceIds || [])
+  const r = addReminder(input, Date.now(), { sourceIds })
   return r.ok ? { ok: true, item: r.item, items: listReminders() } : { ok: false, error: r.error }
 }
 export function reminderRemove(payload) {

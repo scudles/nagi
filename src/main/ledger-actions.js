@@ -2,8 +2,10 @@
 import { getLedger } from './ledger.js'
 import { getYearbook } from './yearbook.js'
 import { pruneNotesReferencing } from './presence-notes.js'
+import { forgetGuard } from './forget-guard.js'
 import { getRag } from './rag/index.js'
 import { removeJournalEntry } from './journal.js'
+import { detachForgottenSource } from './promises.js'
 import { removeDiaryEntry } from './diary.js'
 import { addMemory, flushPersist, listMemories, loadHistory, purgeHistoryFragments, removeMemory } from './persist.js'
 
@@ -49,6 +51,9 @@ function scrub(entry) {
   // 失败不阻断：便签是派生展示层，清不掉也不该让整次遗忘失败（与上面必须成功的六处不同）。
   const notePruned = pruneNotesReferencing([entry.text, ...parts])
   if (notePruned.removed > 0) console.log('[forget] 便签已清理 ' + notePruned.removed + ' 条')
+  // C5-BG-02：把片段记进进程级遗忘表。
+  // 主对话的异步记忆抽取可能正拿着旧输入等模型返回，结果回来时要靠这张表拦住复活。
+  forgetGuard.noteForget([entry.text, ...parts])
   const memory = listMemories().filter((item) => item.text === entry.text ||
     (entry.source.type.startsWith('memory') && item.id === entry.source.ref))
   for (const item of memory) removeMemory({ id: item.id }, { updateLedger: false })
@@ -90,10 +95,28 @@ export function forgetExperience(id) {
     forgetDerived(ledger, entry)
     markRagCopies(ledger, dropped, id)
     getYearbook().pruneSource(id)
+    // §11.4：承诺边界在账本状态写入之前处理，失败要如实回给用户（不能漏、也不能假装没关联）。
+    const promiseOutcome = detachForgottenSource(entry.id)
     if (!ledger.forget(id)) throw new Error('账本状态未写入')
-    return { ok: true }
+    return withPromiseNotice({ ok: true }, promiseOutcome)
   } catch (err) {
     return { ok: false, error: err?.message || String(err) }
+  }
+}
+
+/**
+ * 把「关联的提醒还在」如实说给用户：没有静默取消，也没有让用户浑然不知。
+ * 只回提醒的 id / 时间，正文由管理界面在本地读（不外扩给模型上下文）。
+ */
+function withPromiseNotice(base, { kept = [], redacted = [], unknownHint = false } = {}) {
+  return {
+    ...base,
+    promises: { kept, redacted, unknownHint },
+    note: [
+      kept.length ? `这条经历关联着 ${kept.length} 个你单独设的提醒，已保留；可在提醒里一并取消。` : '',
+      redacted.length ? `已清理 ${redacted.length} 条关联履约记录（只留时间与类别）。` : '',
+      unknownHint ? '另有一些较早的承诺没有记录来源，无法确认是否关联，建议你到提醒里自己看一眼。' : ''
+    ].filter(Boolean).join(' ')
   }
 }
 

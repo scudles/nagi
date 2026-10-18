@@ -19,6 +19,8 @@ import { randomUUID } from 'node:crypto'
 import { getSettings } from './settings-store.js'
 import { listMemories, loadRelationStats } from './persist.js'
 import { getPromiseBook } from './promises.js'
+import { selectForContext } from '../core/promises/book.js'
+import { getLedger } from './ledger.js'
 import { considerNote, normalizeNoteState, emptyNoteState } from '../core/presence/notes.js'
 import { normalizeActionTrace, appendTrace, normalizeTraceList, TRACE_LIMITS } from '../core/presence/traces.js'
 import { listAnchors, normalizeAnchorState, emptyAnchorState, ANCHOR_LIMITS } from '../core/presence/anchors.js'
@@ -273,6 +275,21 @@ export function clearNotes(now = Date.now()) {
  * 每个锚点的 sourceIds 都能在 evidence 里查到，才可能被引用——删除过的来源查不到，
  * 整条锚点就不出现（契约 §4 的「引用前重验」）。
  */
+/**
+ * 已被遗忘的账本条目 ID（含派生承诺一起忘的那些）。
+ * 建锚点前用它重验承诺的 sourceIds——"引用前重验该来源仍可用"（§11.4）。
+ */
+function forgottenLedgerIds() {
+  try {
+    // 必须带 includeDeleted：账本默认把已遗忘条目藏起来了，
+    // 不取墓碑就永远重验不出"来源已遗忘"，这条护栏形同虚设。
+    return getLedger().list({ includeDeleted: true })
+      .filter((e) => e?.deletedAt).map((e) => e.id)
+  } catch {
+    return []
+  }
+}
+
 export function listAnchorCandidates(now = Date.now()) {
   const p = presenceCfg()
   if (p.anchorsEnabled !== true) return { anchors: [], level: null }
@@ -312,15 +329,18 @@ export function listAnchorCandidates(now = Date.now()) {
   }
   // 承诺簿：把他要求过的、我说过会做的事留成承诺锚点
   try {
-    for (const item of getPromiseBook().list()) {
+    for (const item of selectForContext(getPromiseBook().list(), { forgottenIds: forgottenLedgerIds() })) {
       if (!item?.id || !item.title) continue
+      // §11.4：经历被遗忘后仍保留的提醒（detached）/已降级的最小履约记录（无正文），
+      // 都不许被人格回忆、关系锚点或模型上下文读到——它们只归提醒交付与管理界面。
+      const link = item.linkStatus || 'unknown'
       evMap.set(`promise:${item.id}`, { id: `promise:${item.id}` })
       anchors.push({
         id: `anchor:promise:${item.id}`,
         kind: 'promise',
         sourceIds: [`promise:${item.id}`],
         occurredAt: Number.isFinite(item.at) ? item.at : now,
-        trust: 'user-stated',
+        trust: link === 'linked' ? 'user-stated' : 'subjective',
         text: item.title
       })
     }

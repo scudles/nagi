@@ -662,3 +662,28 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
   `npm run build` 退出 0。
 - **工具**：`scripts/verify-depth.mjs` 里写死的旧期望值（420ms/1440ms/±4.5/±2.5/0.02/2400ms）全部改为 `import DEPTH_ACTIONS/DEPTH_AMBIENT` 实读 —— D40「验收脚本自己会烂」的第四次实例。
 - **未验证**：用户重启后的体感（频率/幅度是否还嫌晃、衔接是否自然）。日常档数值：常态摆动 ±0.35% 缩放、±0.5px 位移、15 秒一个来回。
+
+## D61（2026-10-18）C5 收口：异步抽取迟回复活 + 承诺簿边界（蓝区 阶段二）
+
+- **任务**：EVAL §3.10 `C5-BG-02` / `C5-PROMISE-01..04`，CONTRACTS §11.4（作者裁决 2026-10-18）。
+- **C5-BG-02（旧模型迟回复活）**：主对话 `extractMemoriesAsync` 拿到旧轮输入后模型才返回，这期间用户可能已经把那条经历忘了。
+  做法是进程级遗忘表 `src/core/memory/forget-guard.js`（纯逻辑、有界 300 片段）：
+  `forgetExperience → scrub()` 时 `noteForget()` 记片段，`agent.js` 在 `parseMemoryOps` 之后 `filterAdds()` 拦住命中项。
+  **只丢命中的那一条，无关新内容照常写**（一次遗忘不作废整轮抽取）。
+  - 片段口径 4 字下限：与 `presence-notes.js` 的匹配口径一致，避免 2 字片段误杀。
+  - 这是**进程级**表，重启即空；跨重启的硬保证由 `scrub()` 的物理清除 + tombstone 负责（`C5-RESTART-01` 已覆盖）。
+- **C5-PROMISE-*（§11.4 承诺簿边界）**：`promises.json` 原先只记提醒 ID，没有账本经历 ID，且 `presence-notes.js` 会把承诺标题直接制成关系锚点 → 遗忘后仍可被复述。
+  落实作者裁决的四条：
+  1. **新建承诺必须记可核验 `sourceIds`**：`PromiseBook.create({sourceIds})`、`runRecordedTool(..., {sourceIds})`、`addReminder(input, now, {sourceIds})` 三条入口都能带。
+  2. **遗忘时保留用户单独设的提醒**：`detachForgottenSource()` 只把未结束的 reminder 标 `detached`（`detachedAt`），状态与正文一律不动，并在 `forgetExperience` 返回值的 `note` 里明确提示"可在提醒里一并取消"。
+  3. **已结束记录自动降级为最小履约记录**：`redact()` 只留 `id/kind/source.type/status/时间/证据{kind,at}`，正文与 `detail/path/bytes/tool` 全部清除（`minimalEvidence` 是纯函数，可单测）。删除入口 `remove()` **只允许删除已结束记录**，仍在执行/待交付的必须走取消流程；删除不重放外部操作。
+  4. **未取消的提醒不进人格回忆/锚点/上下文**：`presence-notes.js` 建锚点前先过 `selectForContext(items, {forgottenIds})`，命中已遗忘来源或自身已脱钩的排除。
+- **旧数据不做猜测**：没有 `sourceIds` 的承诺一律 `linkStatus: 'unknown'`，遗忘时不动它，只在 `note` 里提示用户自行检查。**禁止按正文相似度匹配后静默取消**——``selectForContext`` 刻意只做 ID 精确命中。
+- **踩到的两个坑（都是"断言假绿"）**：
+  1. `rag.recall()` 返回的是 Promise，`rag.recall(x).results` 恒为 undefined → 原断言恒真。改为读 `store.liveChunks()` **并** `io.readPending()`（无嵌入引擎时 `ingestFact` 进的是待嵌队列，不在 liveChunks）。
+  2. `getLedger().list()` **默认过滤掉已遗忘条目**，`forgottenLedgerIds()` 首版因此永远重验不出"来源已遗忘"（护栏形同虚设）→ 必须 `list({ includeDeleted: true })`。
+     另：承诺锚点属"私密锚点"，`relationLevel` 要到 `familiar` 才进候选；测试里不先推熟悉度的话，"找不到它"和"它被排除了"看起来一模一样。
+- **依据**：新增 `test/c5-bg02.test.js` 5/5、`test/c5-promise.test.js` 8/8（两条都带口径自检，先证明"能读到"再断言"读不到"）；
+  隔离复跑 `promises-main` / `forget-e2e` / `promise-book` / `anchors` 共 43/43；`npm run build` 退出 0。
+  全量 938 项 917 过，失败项全部是已知的 safe-delete `rmSync` 环境噪音（临时测试目录清理被回收站守卫拦截）+ `persist.test.js` 一条沙箱 `rename EPERM`，隔离复跑均通过，与本次改动无关。
+- **未验证**：绿区尚未按 `C5-PROMISE-*` 实测复核；提醒管理界面的"提示用户自行检查/一并取消"UI 接线（IPC `promise:cancel-linked` / `promise:remove` 已就绪，界面未做）；真机走一遍未完成。

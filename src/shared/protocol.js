@@ -60,6 +60,9 @@ export const IPC = {
   REMINDER_REMOVE: 'reminder:remove',
   REMINDER_DONE: 'reminder:done',
   PROMISE_LIST: 'promise:list',
+  // §11.4：关联提醒的「一并取消」入口，以及已结束记录的删除入口（不重放外部操作）
+  PROMISE_CANCEL_LINKED: 'promise:cancel-linked',
+  PROMISE_REMOVE: 'promise:remove',
   CALENDAR_STATUS: 'calendar:status',
   CALENDAR_IMPORT: 'calendar:import',
   CALENDAR_REVOKE: 'calendar:revoke',

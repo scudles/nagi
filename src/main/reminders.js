@@ -120,7 +120,7 @@ function enforceLimit() {
  * @param {{text:string, when?:string|number, at?:number, repeat?:string, say?:string}} input
  * @returns {{ok:boolean, item?:object, error?:string}}
  */
-export function addReminder(input = {}, now = Date.now()) {
+export function addReminder(input = {}, now = Date.now(), { sourceIds = [] } = {}) {
   initReminders()
   const text = String(input.text || '').trim()
   if (!text) return { ok: false, error: '缺少提醒内容' }
@@ -158,7 +158,8 @@ export function addReminder(input = {}, now = Date.now()) {
   enforceLimit()
   try {
     save()
-    createReminderPromise(item)
+    // §11.4：新建提醒若引用某条经历，必须记录可核验的来源 ID，将来遗忘时按 ID 精确判定。
+    createReminderPromise(item, { sourceIds })
   } catch (err) {
     items = before
     try { save() } catch { /* 下次启动会从承诺簿与提醒文件恢复可见状态 */ }
