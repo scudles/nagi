@@ -7,6 +7,10 @@ import { getLedger } from '../ledger.js'
 import { correctExperience, forgetExperience } from '../ledger-actions.js'
 
 async function confirm(event, message, detail) {
+  // 验收专用：无头环境点不了原生确认框，整条"忘记"链路就没法真机走完。
+  // 仅在**显式**设置 NAGI_SELFTEST_AUTO_CONFIRM=1 时自动确认（与 NAGI_SELFTEST* 系列同一惯例）；
+  // 生产环境不设这个变量，行为与之前逐字一致——每次 destructive 操作仍然弹框问人。
+  if (process.env.NAGI_SELFTEST_AUTO_CONFIRM === '1') return true
   const parent = BrowserWindow.fromWebContents(event.sender)
   const options = {
     type: 'warning', title: '确认记忆操作', message, detail,

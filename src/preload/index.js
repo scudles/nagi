@@ -145,7 +145,11 @@ const api = {
     done: (id) => ipcRenderer.invoke(IPC.REMINDER_DONE, { id })
   },
   promises: {
-    list: () => ipcRenderer.invoke(IPC.PROMISE_LIST)
+    list: () => ipcRenderer.invoke(IPC.PROMISE_LIST),
+    /** 「一并取消」：经历已遗忘、用户选择把关联提醒一起取消（不静默取消，也不按正文猜来源） */
+    cancelLinked: (id) => ipcRenderer.invoke(IPC.PROMISE_CANCEL_LINKED, { id }),
+    /** 已结束记录（最小履约记录）的删除入口：只删本地记录，不重放外部操作 */
+    remove: (id) => ipcRenderer.invoke(IPC.PROMISE_REMOVE, { id })
   },
   calendar: {
     status: () => ipcRenderer.invoke(IPC.CALENDAR_STATUS),

@@ -954,6 +954,12 @@ details.sp-adv h3 { margin-top: 0; }
 .rm-item .rm-text { flex: 1; color: var(--text); user-select: text; }
 .rm-item .rm-remain { flex: 0 0 auto; font-size: 10px; color: var(--text-dim); }
 .rm-item .rm-rep { flex: 0 0 auto; font-size: 10px; color: var(--text-dim); }
+/* §11.4 关联状态提示（detached / unknown）：要看得见，但不抢正文的位置 */
+.rm-item .rm-hint {
+  flex: 0 0 auto; font-size: 10px; line-height: 1.5; color: var(--warn, #d9a441);
+  border: 1px dashed currentColor; border-radius: 6px; padding: 1px 6px;
+  max-width: 220px;
+}
 .rm-item button {
   flex: 0 0 auto; background: transparent; border: none; color: var(--text-dim);
   cursor: pointer; font-size: 12px; padding: 0 3px;

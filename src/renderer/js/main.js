@@ -1691,7 +1691,28 @@ async function refreshLedger(reset = true) {
       forget.className = 'danger'
       forget.addEventListener('click', async () => {
         const result = await window.nagi.ledger.forget(entry.id)
-        if (result.ok) { status.textContent = '已忘记这条记录'; await refreshLedger(); await refreshYearbook() }
+        if (result.ok) {
+          status.textContent = '已忘记这条记录'
+          await refreshLedger()
+          await refreshYearbook()
+          // §11.4：关联承诺的处理结果必须真的说给用户——
+          // 保留了几个提醒、清理了几条履约记录、有没有"关联未知"需要她自己去看。
+          // 必须写在刷新**之后**：refreshLedger 在列表空掉时会往同一条状态栏写
+          // 「还没有可查看的共同经历。」，写在前面会被它冲掉（用户就看不到 note）。
+          const panel = document.getElementById('ledger-status')
+          const note = typeof result.note === 'string' ? result.note.trim() : ''
+          const kept = result.promises?.kept?.length || 0
+          const unknown = Boolean(result.promises?.unknownHint)
+          if (panel) {
+            panel.textContent = note ? `已忘记这条记录。${note}` : '已忘记这条记录'
+            if (kept || unknown) {
+              const jump = document.createElement('button')
+              jump.textContent = '去「她的日程」处理'
+              jump.addEventListener('click', () => openReminder())
+              panel.append(' ', jump)
+            }
+          }
+        }
         else if (!result.cancelled) status.textContent = result.error || '忘记失败'
       })
       actions.append(correct, forget)
@@ -3177,6 +3198,19 @@ async function renderReminders() {
       text.className = 'rm-text'
       text.textContent = it.text
       row.append(when, text)
+      // §11.4：这条关联的经历已被遗忘，但用户选择保留它——界面上要看得见，
+      // 并指向承诺簿里的「一并取消」；关联未知的旧数据也要提示自行核对。
+      if (it.promiseLinkStatus === 'detached') {
+        const hint = document.createElement('span')
+        hint.className = 'rm-hint'
+        hint.textContent = '关联的经历已遗忘，仍保留；可在下方承诺簿一并取消'
+        row.appendChild(hint)
+      } else if (it.promiseLinkStatus === 'unknown' && it.promiseStatus !== 'legacy-unknown') {
+        const hint = document.createElement('span')
+        hint.className = 'rm-hint'
+        hint.textContent = '较早的记录，没有来源信息，请自行核对是否与已忘记的经历关联'
+        row.appendChild(hint)
+      }
       if (it.repeat && it.repeat !== 'none') {
         const rep = document.createElement('span')
         rep.className = 'rm-rep'
@@ -3214,14 +3248,24 @@ async function renderReminders() {
 
 async function renderPromises() {
   const box = document.getElementById('promise-list')
+  const result = document.getElementById('promise-result')
   if (!box || !window.nagi.promises) return
   const labels = { scheduled: '已记下', attempting: '正在尝试', attempted: '已尝试，效果待核实',
     delivered: '通知已发出', completed: '已完成', failed: '失败', missed: '未送达',
     cancelled: '已取消', 'legacy-unknown': '旧记录，结果未知' }
+  // §11.4：只有这些状态算"已经结束"——结束的记录走删除入口，其余走取消流程
+  const FINISHED = new Set(['completed', 'delivered', 'failed', 'cancelled', 'missed'])
+  // 注意：**不要**在这里清空 #promise-result —— 点击后的结果消息会被紧随的重渲染抹掉，
+  // 用户就看不到"取消失败了"。消息留到下一次操作时自然被覆盖。
   try {
-    const result = await window.nagi.promises.list()
+    const data = await window.nagi.promises.list()
+    const items = data.items || []
     box.replaceChildren()
-    for (const it of result.items || []) {
+    if (!items.length) {
+      box.textContent = '还没有承诺记录。'
+      return
+    }
+    for (const it of items) {
       const row = document.createElement('div')
       row.className = 'rm-item'
       const status = document.createElement('span')
@@ -3229,15 +3273,62 @@ async function renderPromises() {
       status.textContent = labels[it.status] || it.status
       const title = document.createElement('span')
       title.className = 'rm-text'
-      title.textContent = it.title
+      // 降级成最小履约记录后正文已清：如实说"清过了"，不要显示成空白像没加载出来
+      title.textContent = it.title || '（正文已按隐私策略清除，只保留时间与类别）'
       const proof = document.createElement('span')
       proof.className = 'rm-remain'
       const last = it.evidence?.at(-1)
       proof.textContent = last ? `${new Date(last.at).toLocaleString()} · ${last.kind}` : '暂无结果证据'
       row.append(status, title, proof)
+
+      // §11.4 关联状态：detached = 关联经历已遗忘、用户选择保留；unknown = 旧数据无来源 ID，
+      // 只能提示用户自行核对，禁止按正文相似度猜。
+      if (it.linkStatus === 'detached') {
+        const hint = document.createElement('span')
+        hint.className = 'rm-hint'
+        hint.textContent = '关联的经历已遗忘，这条仍保留着'
+        row.appendChild(hint)
+      } else if (it.linkStatus === 'unknown') {
+        const hint = document.createElement('span')
+        hint.className = 'rm-hint'
+        hint.textContent = '较早的记录，没有来源信息，无法确认是否与已忘记的经历关联'
+        row.appendChild(hint)
+      }
+
+      if (it.kind === 'reminder' && !FINISHED.has(it.status)) {
+        // detached = 已知关联、用户选择保留 → 「一并取消」；
+        // linked / unknown = 只是普通提醒（unknown 时我们并不知道它是否关联）→ 措辞退回「取消提醒」，
+        // §11.4：旧记录"可提示用户自行检查和取消"，但不该用"一并"暗示我们已经确认过关联。
+        const detached = it.linkStatus === 'detached'
+        const cancel = document.createElement('button')
+        cancel.textContent = detached ? '一并取消' : '取消提醒'
+        cancel.title = detached
+          ? '取消这条提醒并清除其正文与派生内容'
+          : '取消这条提醒（它是否与已忘记的经历关联，我们无法确认，由你自己判断）'
+        cancel.addEventListener('click', async () => {
+          const r = await window.nagi.promises.cancelLinked(it.id)
+          if (result) {
+            result.textContent = r.ok
+              ? (r.reminderMissing ? '提醒已不在列表里，这条记录已清理。' : '已取消这条提醒，正文与派生内容已清除。')
+              : (r.error || '取消失败')
+          }
+          await renderPromises()
+          await renderReminders()
+        })
+        row.appendChild(cancel)
+      } else if (FINISHED.has(it.status)) {
+        const del = document.createElement('button')
+        del.textContent = '删除'
+        del.title = '删除这条最小履约记录（不重放任何外部操作）'
+        del.addEventListener('click', async () => {
+          const r = await window.nagi.promises.remove(it.id)
+          if (result) result.textContent = r.ok ? '已删除这条记录。' : (r.error || '删除失败')
+          await renderPromises()
+        })
+        row.appendChild(del)
+      }
       box.appendChild(row)
     }
-    if (!result.items?.length) box.textContent = '还没有承诺记录。'
   } catch (err) {
     box.textContent = `承诺簿读取失败：${err.message}`
   }

@@ -97,13 +97,20 @@ export function initReminders() {
 /** 列表：附带展示字段，未完成在前 */
 export function listReminders(now = Date.now()) {
   initReminders()
-  return sortItems(load()).map((x) => ({
-    ...x,
-    when: formatWhen(x.at, now),
-    remain: remainingText(x.at, now),
-    repeatLabel: REPEAT_LABEL[x.repeat] || REPEAT_LABEL.none,
-    promiseStatus: getPromiseBook().get(`reminder:${x.id}`)?.status || 'legacy-unknown'
-  }))
+  return sortItems(load()).map((x) => {
+    const promise = getPromiseBook().get(`reminder:${x.id}`)
+    return {
+      ...x,
+      when: formatWhen(x.at, now),
+      remain: remainingText(x.at, now),
+      repeatLabel: REPEAT_LABEL[x.repeat] || REPEAT_LABEL.none,
+      promiseStatus: promise?.status || 'legacy-unknown',
+      // §11.4：界面要能区分"这条关联的经历已被遗忘（用户选择保留）"与"关联未知（旧数据）"。
+      // 只在交付/管理界面可读，不进人格回忆/锚点/模型上下文。
+      promiseLinkStatus: promise?.linkStatus || 'unknown',
+      promiseRedacted: Boolean(promise?.redactedAt)
+    }
+  })
 }
 
 /** 待提醒（未完成）条数，供上下文注入等轻量使用 */
