@@ -12,7 +12,7 @@ import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createPersonaGuard } from '../core/agent/persona-guard.js'
 import { classifyCrisis } from '../core/agent/crisis.js'
 import { composeOfflineReply } from '../core/agent/offline.js'
-import { resolveIntent, intentDirective } from '../core/agent/intent.js'
+import { resolveIntent, intentDirective, hasGroundedRefs } from '../core/agent/intent.js'
 import { assembleTurnMessages, isObservationMessage } from '../core/agent/messages.js'
 import {
   GENERATION_CHANNEL,
@@ -533,11 +533,13 @@ async function handleReunion(event) {
       try {
         let candidate = await presenceHooks.provideProactiveContent({event,context,signal})
         if (!candidate && !signal.aborted) {
-          const llm=resolveLlm(getSettings().llm||{}), local=isLocalLlm(llm), useCloud=llm.provider==='workbuddy'
-          const hasKey=hasSecret(SECRET_KEYS.LLM_API_KEY)
-          if (process.env.NAGI_FAKE_LLM==='1' || (!useCloud&&!local&&!hasKey) || (useCloud&&!cloudBrainStatus().ok)) return false
-          const client=useCloud?null:createClient({apiKey:apiKeyForLlm(llm,hasKey&&!local?getSecret(SECRET_KEYS.LLM_API_KEY):null),baseURL:llm.baseURL})
-          const text=await callModelOnce({client,llm,useCloud,signal,messages:[
+          // D2：主动开口属 'proactive' 用途；缺省温度仍是这一路原本的 0.2（与改造前逐字一致）
+          const llm = resolveLlm(getSettings().llm || {}, 'proactive', { defaultTemperature: 0.2 })
+          const local = isLocalLlm(llm), useCloud = llm.provider === 'workbuddy'
+          const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
+          if (process.env.NAGI_FAKE_LLM === '1' || (!useCloud && !local && !hasKey) || (useCloud && !cloudBrainStatus().ok)) return false
+          const client = useCloud ? null : createClient({ apiKey: apiKeyForLlm(llm, hasKey && !local ? getSecret(SECRET_KEYS.LLM_API_KEY) : null), baseURL: llm.baseURL })
+          const text = await callModelOnce({ client, llm, useCloud, signal, temperature: llm.temperature, messages: [
             {role:'system',content:buildSystemPrompt({nativeTools:true,context})+'\n【事件输出契约】仅回应归来事件；没有工具执行，模拟活动不是实际读书/外界经历；未知时间不补造，不索取解释、回来或安慰。'},
             {role:'user',content:JSON.stringify({request:'reunion-response',event})}
           ]})
@@ -742,7 +744,8 @@ async function composeProactiveLine({ intent, vars = {}, mood = 'calm', timeoutM
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const llm = resolveLlm(getSettings().llm || {})
+    // D2：主动开口属 'proactive' 用途；缺省 0.9 = 这一路原本写死的温度
+    const llm = resolveLlm(getSettings().llm || {}, 'proactive', { defaultTemperature: 0.9 })
     const local = isLocalLlm(llm)
     const useCloud = llm.provider === 'workbuddy'
     const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
@@ -775,7 +778,8 @@ async function composeProactiveLine({ intent, vars = {}, mood = 'calm', timeoutM
         const messages = correction && baseMessages[0]?.role === 'system'
           ? [{ ...baseMessages[0], content: baseMessages[0].content + '\n\n' + correction }, ...baseMessages.slice(1)]
           : baseMessages
-        const out = await callModelOnce({ client, llm, useCloud, signal: controller.signal, temperature: 0.9, messages })
+        // 缺省 0.9（来自上面 'proactive' 用途的缺省）；配了 purposeParams.proactive.temperature 才偏离
+        const out = await callModelOnce({ client, llm, useCloud, signal: controller.signal, temperature: llm.temperature, messages })
         return sanitizeDiaryLine(String(out || ''))
       }
     })
@@ -982,10 +986,12 @@ async function buildMessages(userText, supportsNative, { turnId = '', crisis = f
     relevantMemoryRefs: memoryRefs,
     userNeed: null
   })
+  // 只看本轮召回的可追溯引用。"记忆里存过东西"不等于"记得这句问的事"，
+  // 把长期记忆算进来会让 reminisce 的引用门槛形同虚设（D2 核对 2026-10-18）。
   const intent = resolveIntent({
     userText,
     crisis,
-    hasGroundedMemory: memoryRefs.length > 0 || memoryLines().length > 0
+    hasGroundedMemory: hasGroundedRefs(memoryRefs)
   })
   scene.userNeed = intent.kind
   lastIntent = { ...intent, scene }
@@ -1307,7 +1313,14 @@ export async function runTurn(userText, emit, turnRef = null) {
     console.warn('[memory] 历史落盘失败：', err.message)
   }
   // 长期记忆抽取：异步、不阻塞、失败静默（她记笔记不该拖慢说话）
-  extractMemoriesAsync({ client, llm, useCloud, userText, assistantText: r.text, turnRef })
+  // D2：抽取是独立用途 'extract'（温度缺省 0.2 = callModelOnce 原本的缺省）。
+  // 注意 client 仍来自主对话通道：跨 provider/baseURL 的抽取覆盖不支持，
+  // 不支持就说清楚，不能让用户以为配了就换通道。
+  const extractLlm = resolveLlm(settings.llm || {}, 'extract', { defaultTemperature: 0.2 })
+  if (extractLlm.baseURL !== llm.baseURL) {
+    console.warn('[d2] extract 用途换了 baseURL 但抽取仍走主对话客户端（暂不支持换通道），以主对话为准')
+  }
+  extractMemoriesAsync({ client, llm: extractLlm, useCloud, userText, assistantText: r.text, turnRef })
   return createGenerationResult({
     turnId,
     text: r.text,

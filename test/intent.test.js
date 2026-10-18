@@ -14,6 +14,7 @@ import {
   INTENT_SOURCE,
   INTENT_KINDS,
   detectUserNeed,
+  hasGroundedRefs,
   intentDirective,
   isIntentKind,
   parseIntentHint,
@@ -166,4 +167,33 @@ test('危机压过情绪倾诉（L2/L3 仍走 crisis 来源，不走 user 规则
   const r = resolveIntent({ userText: '我不开心，我不想活了', crisis: true })
   assert.equal(r.kind, INTENT.LISTEN)
   assert.equal(r.source, INTENT_SOURCE.CRISIS)
+})
+
+test('hasGroundedRefs：只有本轮召回且带来源的引用才算「确已记得」', () => {
+  assert.equal(hasGroundedRefs([]), false)
+  assert.equal(hasGroundedRefs(null), false)
+  assert.equal(hasGroundedRefs(undefined), false)
+  // 缺 id 或缺来源标识：不可追溯，不能拿来触发回忆
+  assert.equal(hasGroundedRefs([{ text: '去海边' }]), false)
+  assert.equal(hasGroundedRefs([{ id: 'c1' }]), false)
+  assert.equal(hasGroundedRefs([{ source: 'rag' }]), false)
+  assert.equal(hasGroundedRefs([{ id: '', source: 'rag' }]), false)
+  assert.equal(hasGroundedRefs([{ id: 'c1', source: 'rag', text: '去海边' }]), true)
+  // 一条够用就行，无需全部带来源
+  assert.equal(hasGroundedRefs([{ text: '噪音' }, { id: 'c1', source: 'rag' }]), true)
+})
+
+test('D2 核对：记忆里存过东西 ≠ 记得这句问的事（旧口径会让门槛形同虚设）', () => {
+  const question = '你还记得上次那家店吗'
+  // 旧口径把"长期记忆非空"也算进 hasGroundedMemory —— 这里用同样 TRUE 的输入模拟它，
+  // 断言在新口径下必须回退，否则模型会被要求引用一段往往为空的"记得的事"。
+  const storedButNotRecalled = hasGroundedRefs([])
+  assert.equal(storedButNotRecalled, false)
+  const r = resolveIntent({ userText: question, hasGroundedMemory: storedButNotRecalled })
+  assert.equal(r.kind, INTENT.BRIEF_ACK)
+  assert.equal(r.fallbackFrom, INTENT.REMINISCE)
+  // 真的召回出来才允许触发
+  const ok = resolveIntent({ userText: question, hasGroundedMemory: hasGroundedRefs([{ id: 'p1', source: 'rag' }]) })
+  assert.equal(ok.kind, INTENT.REMINISCE)
+  assert.equal(ok.fallbackFrom, null)
 })

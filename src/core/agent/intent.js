@@ -43,6 +43,20 @@ export function isIntentKind(kind) {
 }
 
 /**
+ * "确已拿到可追溯的相关往事"的唯一口径（D2 修复 2026-10-18）。
+ *
+ * 只认**本轮按这句话召回出来的**、带来源标识的引用。
+ * "记忆文件里有多少行"不算——那只能说明她存过东西，说明不了这一句问的事她记得。
+ * 之前 main 侧把长期记忆非空也算进来，等于把 reminisce 的门槛拆了：
+ * 只要存过任何一条，"你还记得吗"就会进 REMINISCE，模型被要求去引用"上面记得的事"，
+ * 而那一段往往是空的——正好是契约 §5 要挡的"无相关往事却触发回忆"。
+ */
+export function hasGroundedRefs(refs) {
+  if (!Array.isArray(refs)) return false
+  return refs.some((ref) => Boolean(ref) && Boolean(ref.id) && String(ref.source || '').length > 0)
+}
+
+/**
  * 规则层：用户**明确说出口**的需求。只认显式表达，不猜。
  * 顺序即优先级（先说"别分析、听我说"的人，比"帮我写"更该被听见）。
  */
