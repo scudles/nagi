@@ -1,47 +1,83 @@
-# 凪 Nagi：当前状态与恢复路径（HANDOFF）
+# 凪 Nagi：三栏交接本（HANDOFF）
 
-## 当前状态（2026-10-16 23:50）
+> 本文件是 🔴 Codex / 🔵 WorkBuddy / 🟢 豆包·绿区 三 Agent 协作的**交接本**。任一 agent 恢复上下文先读本页。
+> 任务卡清单与逐项状态见 [TASKS.md](TASKS.md)；契约见 [CONTRACTS.md](CONTRACTS.md)；评测场景见 [EVAL.md](EVAL.md)。
+> 源码：`E:\凪\凪_交接包_2026-10-16\02_工程源码_nagi`。评审基线：`nagi-review-2026-10-18.zip`（提交 `d59768c`）。
 
-- **单人开发制**：ChatGPT 侧额度耗尽后由 WorkBuddy 全权接手，双工具红蓝边界废止；架构契约、安全门与人格硬约束继续有效。
-- 源码：`E:\凪\凪_交接包_2026-10-16\02_工程源码_nagi`。实感 RED123 半成品已收口（见下节），分支 `main` 与 `wip/紧急收口-RED123-1016` 均为本地提交、无远程。
-- 验证基线（Node 24.19.0）：全量测试 **397 项，396 通过、0 失败、1 跳过**；`npm run build` 退出 0；`verify-presence` 11/11、`verify:s4` 9/9、`verify:m4` 19/19。日志在 `E:\凪\.tools\wip-presence-*.log`。
-- 本机环境要点：
-  - 跑测试/真机验证把 Node 24 目录前置 PATH（`E:\凪\.tools\node24\node-v24.19.0-win-x64`）；默认 node 22 会令 7 个 electron mock 测试假失败；
-  - 受限环境真机验证加 `NAGI_RENDERER_SANDBOX=0`（否则 GPU 进程沙箱内 0xC0000005 崩溃，主进程默认已强制 SwiftShader 软件渲染）；
-  - 手动起 electron 先 `unset ELECTRON_RUN_AS_NODE`（本机全局设了该变量，会让 electron 退化成 node）；
-  - 偶发环境噪音：`test/ledger.test.js` cleanup 被 safe-delete shim EPERM 打断，复跑即过，非代码问题。
+---
 
-## 实感系列状态（RED-1/2/3 已完成，BLUE-1~4 待办）
+## 当前交接快照（2026-10-18）
 
-**已完成并验证（2026-10-16）**：`docs/实感架构契约.md`（RED-1）；`core/presence/{circadian,away,reunion,engine,hooks}.js` + main 接线（RED-2）；契约第 5 节不完美机制方案（RED-3，业务未实现）。验证矩阵：presence 单测 22/22、定向 epoch 回归 5/5、全量 397/396/0/1、构建 0、真机 `verify-presence` 11/11、`verify:s4` 9/9、`verify:m4` 19/19 无回归。最后一笔 epoch 失效补丁（隐私暂停/再离开/配置撤销使已取走的归来快照失效）补验通过，消费者在 `agent.js handleReunion`（`epoch!==snapshot.epoch` 即放弃）。
+- **协作制重启**：由 2026-10-16 起的"单人开发制"恢复为三 Agent 协作。分工：🔴 Codex（架构/并发/契约落地）、🔵 WorkBuddy（常规实现+测试）、🟢 豆包（规格/评测/对账）。此版本**不以增加工具数量为路线**，重心是打通"情境理解—表达选择—可靠行动"的统一回路（评审 A 节）。
+- **验证基线**（Node 24.19.0，评审文档实跑 8 个包 112 项通过）：**2026-10-18 绿区实测全量 `npm test`（`--experimental-test-module-mocks`）= 786 项，785 通过、0 失败、1 跳过**（跳过为无符号链接权限环境项，依赖模型缺失的失败属预期但本轮未现）。`npm run build` 退出 0 沿用历史结论。历史基线（2026-10-17 收口）：全量 667/666/0/1。
+- **本机环境要点**（沿用）：
+  - Node 24 目录前置 PATH：`E:\凪\.tools\node24\node-v24.19.0-win-x64`；默认 node 22 会令 electron mock 测试假失败，**全量必须用 Node 24**；
+  - 受限环境真机验证加 `NAGI_RENDERER_SANDBOX=0`（GPU 沙箱内 0xC0000005 崩溃）；手动起 electron 先 `unset ELECTRON_RUN_AS_NODE`；
+  - 偶发环境噪音：safe-delete 批量守卫（阈值 50）与 trash 二进制超时，属本会话工具层，复跑即过，非代码缺陷。
 
-**半成品清理记录**：抢救提交 `f56b595` 误入的 74 个 `.nagi-*` 测试残留已移除并补 `.gitignore`；README「双工具协作入口」改写为「开发入口」并补第十九节实感说明；cloud-config.js 真实配置经审查为公开键保留；`emotion-map.js` 死代码删除保留。
+---
 
-**待办**（详见 TASKS A 节）：BLUE-1 语音情绪映射（下一步）→ BLUE-2 时段表现+设置页 → BLUE-3 环境留痕 → BLUE-4 不完美机制 → RED-4 复核。BLUE 任务输入/产出/验收以 `docs/实感补足任务书.md` 卡 B 与契约为准。
+## 🔴 红区交接（Codex · 契约/并发/架构实现）
 
-## 项目事实与保留约束
+**当前在办**：阶段 1 的 P0 缺陷修复（P1-01 提醒路径、P1-02 RAG 入队、P1-03 归来泄漏、P1-06 标题授权、P1-07 危机兜底），以及阶段 2 的 P2-03 钩子顺序 / P3-07 多模态快照。**P1-06（C4）绿区规格已定稿**（CONTRACTS §6 + EVAL §3.5，D63 已裁决），红区可直接施工。
 
-- 沿用 `core/main/renderer/shared` 四层。Agent 双通道（native tools / JSON 兜底）、确认门一次性 token、授权快照核验、IPC 来源校验、渲染沙箱、命令黑白名单、文件真实路径边界均为有效契约；改这些必须先复现并补回归。
+**契约红线**（实现必须遵守，详见 CONTRACTS.md）：
+- 重要提醒送达与角色措辞**解耦**：原样展示用户提醒内容，LLM 只做可选润色；勿扰是否拦重要提醒需产品规则（勿与普通闲聊默认共用）。
+- 人格边界跨提供商一致：主对话/主动/日记/工具四入口同一约束；高风险表达走同一护栏；失败系统状态明确展示，拒绝候选不入历史/RAG。
+- 危机兜底（D7）：L2/L3 禁用 liminal/自我怀疑/低气压/吃醋/依赖暗示；高风险回复先检查再显；无网仍给安全指引。
+- 标题感知（C4）：三种数据流如实展示；独立标题出站开关默认开启；出站前按当前设置+epoch 重验；已发远端不可撤回如实说明；标题不得提升为高权威指令。
+- 渲染层：固定有序钩子表 + 权重交叉淡变让位 + 眨眼/口型所有权 + 值域检查，验收须读整链终值（组合测试）。
+
+**勿动**：不改已冻结契约语义；不写规格定稿；不做作者已裁决之外的产品取舍。改 preload/IPC/安全门须先复现再补回归。
+
+---
+
+## 🔵 蓝区交接（WorkBuddy · 常规实现/测试）
+
+**当前可并行**（TASKS 中 🔵 且无前置依赖的卡）：
+- P1-05 情绪裁决统一（B5）：主进程产出 resolved 表达快照，renderer 不在 DONE 满强度重设，统一在线/离线衰减。
+- P2-04 空 catch 分类 + 事件轨迹（B8）：按后果分类，持久化/承诺失败不可静默；有界脱敏事件轨迹。
+- P3-04 常驻理由三时刻（C1）、P3-05 冷启动（C2）——均为入口与小流程，改动独立。
+- （完成规格回填后）P2-01 D2 表达意图 + P3-03 D6 负面情绪的蓝区实现部分。
+
+**每次续做先跑**：Node 24 前置 PATH 的 `npm test` → `npm run build` → 相关 `verify:*`。改动后回填 TASKS 状态与证据（测试命令/退出码/通过失败跳过数），待真机项不得标完成。
+
+---
+
+## 🟢 绿区交接（豆包 · 规格/评测/对账）
+
+**已完成的绿区规格草稿**（写入 CONTRACTS.md / EVAL.md）：
+- CONTRACTS §1 人格最小一致集（身份锚/表达铁律/事实边界/关系边界 + 验收）。
+- CONTRACTS §2 D7 危机兜底三层原则 + 红线（L1 低落 / L2 强烈绝望 / L3 立即危险）。
+- CONTRACTS §3 D6 负面情绪接住策略（倾诉/建议/执行/安静分类 + 行为契约）。
+- CONTRACTS §4 D4 liminal 短弧线（四拍弧线 + 一天一次 + 不冻结生命体征 + 触发须真实）。
+- CONTRACTS §5 D2 表达意图枚举（brief-ack/listen/clarify/solve/reminisce/boundary + 使用规则）。
+- CONTRACTS §6 C4 标题感知三种数据流 + 独立标题出站开关 + 出站前撤销重验（D63 已裁决）。
+- EVAL.md 24 场景框架（普通闲聊4/负面情绪4/工具提醒4/记忆纠错4/告别身份独占危机4/断网迟回忽略重启4）+ 评测方法 + 红线 + 对账表 + §3 可直接转测试断言（D7/D6/D4/C4/人格一致集，共 38 条）。
+
+**待补的绿区规格**（TASKS 中 🟢 标"待写/待验证"）：
+- P2-05 B7 分层契约（纯计算/IO 适配器/编排）规格；P2-06 C5 遗忘端到端验证；P2-08 B9 验收不变量；P3-01 D3 关系事件规格；P3-06 C3 主动开口时机规格。
+
+**对账职责**：维护 EVAL 对账区；定期跑场景集；对红/蓝区提交的验收结果做对账复核。
+
+---
+
+## 项目事实与保留约束（三区共享，改动须先复现）
+
+- 沿用 `core/main/renderer/shared` 四层。Agent 双通道（native tools / JSON 兜底）、确认门一次性 token、授权快照核验、IPC 来源校验、渲染沙箱、命令黑白名单、文件真实路径边界均为有效契约。
 - 记忆体系：账本（四类经历+信任分层+纠错/遗忘/导出）、RAG（只收新日记、崩溃自愈、tombstone）、关系层（熟悉度五档+情绪时间线）、年鉴（引用式）、承诺簿（完成需证据）。**只让之后的新日记进入 RAG**，不批量补录旧日记。
-- 人格：v2 为唯一基准；敏感场景有限重试护栏，重试不得执行工具；不得以固定台词替代生成，不设计催促/挽留/愧疚机制。v2 已删毒舌人设。
-- 语音：维持现有引擎与音色（edge 晓晓→SAPI 降级链、sherpa→SAPI）；注册表桩不算实现。实感语音 hook 默认关闭，显式试听永远优先。
-- 活动记录边界：默认仅内存；显式开启后只保存之后的新活动到 `userData/presence.json`；模拟活动**不是**用户离开期间的真实外界经历，不得升级为共同经历；休眠/关机不补造。
-- 打包：electron-builder NSIS+portable，asarUnpack playwright，模型走 extraResources；`npm run pack` 快速验证。历史 `dist/` 哈希证据见 `docs/演进验收记录.md`。
+- 人格：《灵魂与程序》为唯一基准；无固定台词；情绪标签只驱动表情；宕机是"短暂失去熟练"而非长时间失能；不设计催促/挽留/愧疚机制。
+- 语音：维持现有引擎与音色（edge 晓晓→SAPI 降级链、sherpa→SAPI）；注册表桩不算实现。
+- 活动记录边界：默认仅内存；模拟活动**不是**真实外界经历，不得升级为共同经历；休眠/关机不补造。
+- 打包：electron-builder NSIS+portable，asarUnpack playwright，模型走 extraResources；`npm run pack` 快速验证。
 
-## 安全债（详见 TASKS B 节，附 FIX-1 完整结论）
+## 安全债（详见 TASKS 历史 B 节）
 
-- **FIX-1 HA extra 覆盖目标（复现成立，未修）**：`core/tools/registry.js` `planHomeService()` 的 `state:'on'|'off'` 与仅 extra 兜底分支中 `data:{entity_id,...extra}` 允许 `extra.entity_id` 覆盖已核验目标。假客户端复现：`home_set(entity_id='light.living_room',state='off',extra={entity_id:'lock.front_door'})` 确认框显示关灯、实际对门锁下发 `light.turn_off`，结果摘要同样显示诱饵（证据 `docs/verify/b06-ha-extra-20261016.json`）。约定修法：extra 白名单且 entity_id 最后写入不可覆盖；确认描述/摘要读 post-plan；brightness 分支展开方式统一；修后补假客户端回归。**修复前不启用 HA 主动控制（契约 4 节 HA 规则保持禁用）。**
-- FIX-2 外部进程替换路径竞态、FIX-3 Playwright 生命周期：源码可见风险，先复现再修。
-
-## 历史：双工具协作期（2026-10-14 ~ 10-16，已完结）
-
-- R01 取消/确认/授权撤销：ChatGPT 修复（`831e980`），WorkBuddy 固化 22 项回归（`b3de4bf`）；外部路径竞态保留为 FIX-2。
-- B05 确认 UI 失效收尾（`ba44a56`）、B08 任务书恢复与对账（`d1db560`）、B06 HA extra 复现与建议（`2ab5530`）、蓝区收口（`d2aa65e`）；实感抢救（`f56b595`）与清理（`ffcf607`）。提交序列与证据以上述 git log 为准。
-- `docs/完善任务对账_2026-10-16.md`：旧完善任务书 22 ID 对账（✅9/🟡11/⬜3），🟡 项已归并 TASKS 各节。
+- FIX-1（HA extra 覆盖）**已修**（2026-10-17）；FIX-2（外部进程替换竞态）已评估未复现降级为已知限制；FIX-3（Playwright 生命周期）**已修**（2026-10-17）。FIX-4/5/6/7/8 均已修/澄清。历史详细结论见 TASKS.md 原 B 节。
 
 ## 恢复路径（如果再次中断）
 
-1. 留在 `main`；`wip/紧急收口-RED123-1016` 内容已全部审查并清理，实感功能已验证——**该分支已无未审查内容，可随时删除或归档**（删除前确认 `git log main` 含实感收口提交）。
-2. 续做入口：TASKS「下一步」节；当前是 BLUE-1（`core/voice/voice-profile.js` + hook 接线 + 单测）。
-3. 每次续做先跑：Node 24 前置 PATH 的 `npm test`（预期 397/396/0/1）→ `npm run build` → 相关 `verify:*`。
+1. 留在 `main`（本地提交、无远程）。续做入口：TASKS 顶部"2026-10-18 新版评审任务卡"，当前是阶段 1。
+2. 先读本页三栏 → 各自栏的待办 → 对应任务卡（TASKS）→ 契约（CONTRACTS）→ 评测（EVAL）。
+3. 每次续做先跑：Node 24 前置 PATH 的 `npm test` → `npm run build` → 相关 `verify:*`。
 4. 真机/发行版/设备验收清单见 `docs/阶段10人工验收清单.md` 与 TASKS D 节，未完成项不得标注完成。
