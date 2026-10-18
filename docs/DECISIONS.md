@@ -721,3 +721,57 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
   `npm run build` 退出 0。
 - **未验证**：renderer 那 ~70 处空 catch 未动（红区负责），只在审计脚本里注明需红区裁决；
   设置页的状态区目前接的是 `maintenance:health`，本次没有新增 UI 文案；真机走一遍未完成。
+
+## D63（2026-10-18）B7 收口：五个 store 边界拆分 + 注入 now/rng + 端口门禁（蓝区 阶段二）
+
+- **任务**：EVAL §3.11 `B7-*`，CONTRACTS §9。规格（🟢）此前已给出：五个待拆分 store 有 36 处直接依赖。
+- **为什么不一次搬**：`core/` 是纯计算层，一次大改会让"哪条回归挂了"归因不了。
+  路线是**每个 store 单独改构造签名 → 单独跑它的测试 → 单独过门禁**，顺序 signals（geo/music/calendar）→ ledger → yearbook。
+  第一个 geo-store 改通后 signals 三件套 14/14，才敢动 ledger/yearbook。
+- **端口三层（关键取舍：core 只认"键"，不认路径）**
+  1. **文档端口** `document-io.js` —— 一个键一个 JSON 文档。main 侧实现原子写（`${path}.${uuid}.tmp` + `renameSync`）；
+     `signalsDocumentIo(userDataDir)` 登记 `geo-consent`/`music-consent`/`calendar-ics`/`calendar-meta`，**未登记的键直接拒**（`pathOf()` 抛错）——防止以后有人随便拿端口写别处。
+  2. **行式端口** `record-io.js` —— JSONL 追加/重写。`ledgerRecordIo()` 登记 `entries`/`migration`。
+  3. **迁移源只读端口** `legacy-reader.js` —— 只读旧目录，做**越界 + 白名单双守卫**，白名单只放行
+     `journal/monologue/timeline/rag/memory.json/history.json/relation.json`。
+  时钟单点抽到 `src/main/clock.js`（`calendarNow`），随机数一律注入 `rng`（main 侧给 `randomUUID`）。
+- **门禁 vs 报告双轨**（防止"门禁一开就满屏红，于是没人开"）：
+  `npm run audit:b7:gate`（`--strict`）**只管本批已迁移的八个文件**，回潮即失败，当前**越界依赖 0、退出 0**；
+  `npm run audit:b7:core`（`--scope=core`）出**全量家底报告**到 `docs/b7-boundary-core-report.json`，只报告不出门禁。
+  确定性纯计算（如 `createHash`）用行内 `/* B7:allow:directCrypto — 理由 */` 豁免，**豁免必须写理由**，不允许裸 allow。
+- **失败注入怎么做的**（不靠"造一个不存在的路径"这种会误判 ENOENT 的手法）：
+  `test/helpers/store-ports.js` 里 `failPorts` 让端口**直接抛错**（`read`/`write` 按用例抛指定错误），
+  这样测的是"store 遇到 IO 失败时的行为"，而不是"路径拼错时的行为"。缺依赖的用例更直白：给 `{}` 当端口，
+  断言报的必须是缺哪个端口（`assertPorts` 逐个点名），不是后面某个 undefined 崩掉。
+- **自己踩的坑（这次最隐蔽的一个）**：迁移源端口的 `read('rag/chunks.jsonl')` 静默返回 null。
+  原因是 Windows `resolve()` 给反斜杠，白名单却用正斜杠比较 → 带子路径的引用被判为白名单外**悄悄跳过**。
+  迁移就会半途而废且没有任何报错。修法是把绝对路径切出来的相对段做 `split(sep).join('/')` 归一化。
+  这类"看着成功 + 静默跳过"的组合，比直接抛错危险得多。
+- **依据**：`npm run audit:b7:gate` 越界 0 / 退出 0；`test/b7-boundary.test.js` **10/10**
+  （`B7-GATE-01/02` 含**探针自检**——故意写一个四类违规的探针文件，门禁必须扫出来，否则测试自身就是假绿）；
+  `test/{geo,music,calendar}-signal / ledger / yearbook` 改写后隔离全绿；`npm run build` 退出 0；
+  全量 **956 项**，失败项隔离复跑（c5-promise / ledger-actions-flush / ha-consent / rag-revocation / forget-e2e / rag / persist / companion-budget / promises-main / reminder-delivery / reminder-recovery）**全部通过**，
+  确认是并发下 `rename EPERM` 与 safe-delete 批量守卫（threshold 50）的环境噪音。
+- **如实交代的家底**：`--scope=core` 扫出**全 core 还有 134 处**时钟/随机依赖。
+  和规格里写的"36 处"不是一回事——36 是**这五个 store 的直接依赖**，134 是**整个 `core/`**。
+  剩余部分排期另算，本条只用八个文件的门禁范围，**不虚报已完成**。
+- **未验证**：需要真机跑 `verify:local-llm` / `verify:stage10-lifecycle`（这两个脚本本次改了端口装配），以及用户日常重启后 store 读写无异常。
+
+## D64（2026-10-18）D2 核对：reminisce 引用门槛 + proactive/extract 用途接线（蓝区 阶段二）
+
+- **任务**：EVAL §3.5 `D2-*`，CONTRACTS §5（六意图）/ §8（优先级）。本轮是**核对已落地实现**，不是改生成架构。
+- **查出的两处有证据的行为缺口**
+  1. **reminisce 的引用门槛形同虚设**：原判定 `memoryRefs.length > 0 || memoryLines().length > 0`，
+     后半段 `memoryLines()` 是历史行数、**几乎恒为真** → 任何一轮都能算"有依据可回忆"，契约 §5 要求的"可追溯引用"没生效。
+     改为 `hasGroundedRefs(refs)`：必须至少一条同时有 `id` 和 `source` 才算落地。
+  2. **proactive / extract 两个用途是死配置**：`llm.purposeParams` 里配了，但代码两条路径都没透传，
+     归来主动表达走的是主对话参数；抽取永远走主对话客户端，配了别的 baseURL 也不会用。
+     现在两条都走 `resolveLlm(settings.llm, '<用途>')`；extract 若配到**跨 baseURL** 的端点，
+     明确 `console.warn` 说明"抽取仍走主对话客户端"，**不静默换端点**（换端点意味着 key 换了目标，这件事必须让人知道）。
+- **防回潮**：新增 `test/d2-purpose-wiring.test.js` 6/6，其中 `D2-WIRE-01/02` 用**源码正则**断言接线点还在 +
+  `modelHint` 仍为 `null`（等红区裁决的红线）——这类"接线"测试的价值在于改坏了立刻红，已做**反向验证**：改回旧写法测试立刻变红，还原后 6/6 绿。
+- **依据**：`npm run build` 退出 0；`test/intent.test.js` **19/19**（本轮 +2 条 `hasGroundedRefs` 口径）、
+  `test/d2-purpose-wiring.test.js` **6/6**、`test/llm-purpose-params.test.js` 7/7、`test/context.test.js`、`test/json-protocol.test.js` 合计 **52/52 通过**。
+  无台词铁律遵守：directive 只写"做什么/不做什么"，没有塞台词样本。
+- **未验证**：`modelHint` 仍为 null，按 2026-10-18 裁决暂缓（要先解"模型建议晚于 system 裁决"的时序），已用测试钉住现状；
+  P3-08 导出属阶段三，本阶段不做；真机 NLP 表现（`verify:local-llm` 等）未跑。
