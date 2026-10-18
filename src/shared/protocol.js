@@ -180,7 +180,11 @@ export const DEFAULT_SETTINGS = {
     provider: 'workbuddy',
     baseURL: PROVIDER_PRESETS.workbuddy.baseURL,
     model: PROVIDER_PRESETS.workbuddy.model,
-    temperature: 0.7
+    temperature: 0.7,
+    // D2「按模型/用途存参数」：按用途覆盖通用参数，例如
+    //   { diary: { temperature: 1.0 }, extract: { model: 'deepseek-chat' } }
+    // 空对象 = 各用途沿用上面的通用参数，行为与加这个字段之前完全一致。
+    purposeParams: {}
   },
   llmProfiles: {}, // 每个提供商最后保存的地址、模型与温度；密钥仍在 keystore
   live2d: {

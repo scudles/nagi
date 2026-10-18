@@ -370,7 +370,8 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
     const useCache = shouldOfferCache({ now, weekCount: cacheLeakCount(now) }) // 深夜残片：5% × 每周上限 1
     const fakeDiary = process.env.NAGI_FAKE_DIARY === '1'
     const settings = getSettings()
-    const llm = resolveLlm(settings.llm || {})
+    // D2「按模型/用途存参数」：日记有自己的温度缺省（0.9），可被 purposeParams.diary 覆盖
+    const llm = resolveLlm(settings.llm || {}, 'diary', { defaultTemperature: 0.9 })
     const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
     const local = isLocalLlm(llm)
     const useCloud = llm.provider === 'workbuddy' && process.env.NAGI_FAKE_LLM !== '1' && !fakeDiary
@@ -415,7 +416,7 @@ async function writeDiaryLine({ now = Date.now() } = {}) {
             const sent = correction && messages[0]?.role === 'system'
               ? [{ ...messages[0], content: messages[0].content + '\n\n' + correction }, ...messages.slice(1)]
               : messages
-            return sanitizeDiaryLine(await callModelOnce({ client, llm, useCloud, messages: sent, temperature: 0.9 }))
+            return sanitizeDiaryLine(await callModelOnce({ client, llm, useCloud, messages: sent, temperature: llm.temperature }))
           }
         })
         if (guardDecision.ok === false) {
@@ -1120,7 +1121,8 @@ export async function runTurn(userText, emit, turnRef = null) {
   toneState.beginTurn()
   ensureHistory()
   const settings = getSettings()
-  const llm = resolveLlm(settings.llm || {})
+  // D2：主对话按 'chat' 用途解析；没配 purposeParams 时与原来逐字一致
+  const llm = resolveLlm(settings.llm || {}, 'chat')
   const hasKey = hasSecret(SECRET_KEYS.LLM_API_KEY)
   const fakeLlm = process.env.NAGI_FAKE_LLM === '1'
   const useCloud = llm.provider === 'workbuddy' && !fakeLlm
