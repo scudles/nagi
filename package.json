@@ -48,7 +48,9 @@
     "verify:d9": "node scripts/verify-d9.mjs",
     "verify:d9:proxy": "node scripts/verify-d9-proxy-selftest.mjs",
     "verify:d9:quality": "node scripts/run-d9-quality.mjs",
-    "audit:b7": "node scripts/audit-b7-boundary.mjs"
+    "verify:d8:quality": "node scripts/run-d8-quality.mjs",
+    "audit:b7": "node scripts/audit-b7-boundary.mjs",
+    "verify:b9:sabotage": "node scripts/verify-b9-sabotage.mjs"
   },
   "dependencies": {
     "@tencent-ai/workbuddy-cloud-sdk": "^0.1.3-dev.c090db7.202610050023",

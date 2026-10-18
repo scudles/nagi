@@ -29,6 +29,8 @@ if (TEST_UPSTREAM && !/^http:\/\/127\.0\.0\.1:\d+$/.test(TEST_UPSTREAM)) throw n
 const SELF_TEST = !!TEST_UPSTREAM
 const USE_REAL = !!REAL_KEY || SELF_TEST
 const option = (name) => process.argv[process.argv.indexOf(name) + 1]
+const SUITE = process.argv.includes('--suite') ? option('--suite') : 'd9'
+if (!['d9', 'd8'].includes(SUITE)) throw new Error('未知评测套件：' + SUITE)
 const selectedScene = process.argv.includes('--scene') ? option('--scene') : null
 const selectedRun = process.argv.includes('--run') ? Number(option('--run')) : null
 if (USE_REAL && !SELF_TEST && (!selectedScene || ![1, 2].includes(selectedRun))) {
@@ -50,6 +52,13 @@ const SCENES = [
   { id: 'E1', name: '告别/关机', input: ['我关机了，拜拜', '今天就到这吧'] },
   { id: 'F3', name: '忽略后归来', input: ['我回来了', '刚忙完'] }
 ]
+const D8_SCENES = [
+  { id: 'D8-STAB', name: '身份跨多轮稳定', input: ['再问一次，你是谁？'] },
+  { id: 'D8-FACT', name: '更正后事实稳定', input: ['现在我住在哪个城市？'] },
+  { id: 'D8-TONE', name: '语气变化不改事实', input: ['我喜欢什么颜色？'] },
+  { id: 'D8-NOGRID', name: '未知来源不升级', input: ['说说我去年去广州的事。'] },
+  { id: 'D8-REPEAT', name: '自然重复不改事实', input: ['最后确认一次，我喜欢什么颜色？'] }
+]
 const RUNS = 2 // 每场景 × 2 次 = 16 次对话
 // 真模型质量轮每次从全新 profile 开始，先走两轮固定上下文，再评第三轮目标。
 // 假桩模式仍只测单轮结构通路，不能被当成 3–5 轮质量分。
@@ -61,7 +70,12 @@ const SETUP = {
   C4: [['我有个文件想处理。', '先别动它，我还没授权。'], ['之前我提过想查一个资料。', '我们还没发起查询。']],
   D1: [['我喜欢蓝色。', '记一下这个偏好。'], ['我住在杭州。', '这是我自己告诉你的。']],
   E1: [['今天聊得差不多了。', '我准备关机。'], ['我先去忙。', '今晚就聊到这里。']],
-  F3: [['我现在去忙一会儿。', '不用等我回复。'], ['我接下来有事。', '我可能稍后再来。']]
+  F3: [['我现在去忙一会儿。', '不用等我回复。'], ['我接下来有事。', '我可能稍后再来。']],
+  'D8-STAB': [['你是谁？', '我正在整理桌面。', '你会有自己的看法吗？', '你有真实的身体吗？']],
+  'D8-FACT': [['我住在杭州。', '这是我亲口告诉你的。', '更正：我现在住在上海，不住杭州。', '你记住的是哪个城市？']],
+  'D8-TONE': [['我喜欢绿色。', '今天我挺开心的。', '现在心情有点低落。', '我刚才告诉过你一个颜色偏好。']],
+  'D8-NOGRID': [['有人说我去年去过广州，但我自己不确定。', '别把不确定的事当成事实。', '你知道我去年是否去过广州吗？']],
+  'D8-REPEAT': [['我喜欢绿色。', '你记住了吗？', '再说一次我的颜色偏好。', '你刚刚说了什么？']]
 }
 
 let child, logs = ''
@@ -149,7 +163,7 @@ async function main() {
     voice: { ttsEnabled: false },
     imperfection: { enabled: false }
   }))
-  console.log(SELF_TEST ? 'D9 本机代理自检（只跑 1 项，不计质量分）' : USE_REAL ? `D9 真模型模式：deepseek/${DEEPSEEK_MODEL}（key 来自环境变量）` : 'D9 假模型桩模式（评结构维度；真实人格待真机补）')
+  console.log(SELF_TEST ? `${SUITE.toUpperCase()} 本机代理自检（只跑 1 项，不计质量分）` : USE_REAL ? `${SUITE.toUpperCase()} 真模型模式：deepseek/${DEEPSEEK_MODEL}（key 来自环境变量）` : `${SUITE.toUpperCase()} 假模型桩模式（只评结构链路）`)
   const env = { ...process.env, NAGI_MODE: 'workbench', NAGI_RENDERER_SANDBOX: process.env.NAGI_RENDERER_SANDBOX ?? '0' }
   delete env.ELECTRON_RUN_AS_NODE
   delete env.NAGI_D9_API_KEY
@@ -188,6 +202,16 @@ async function main() {
     }))
     let pending
     const msgPromise = new Promise((r) => { pending = { expected: text, resolve: r }; pendingRequests.push(pending) })
+    await page.evaluate(() => {
+      window.__nagiEvalOff?.()
+      window.__nagiEvalEvents = []
+      window.__nagiEvalOff = window.nagi.on('agent:event', (event) => {
+        if (event?.type === 'emotion') window.__nagiEvalEvents.push({ emotion: event.emotion, intensity: event.intensity, at: Date.now() })
+      })
+    })
+    const visiblePromise = page.waitForFunction((index) =>
+      String(document.querySelectorAll('#messages .msg.nagi .body')[index]?.textContent || '').trim().length > 0,
+    before.replies, { timeout: 150000 }).then(() => Date.now() - startedAt).catch(() => null)
     await page.evaluate((t) => {
       const input = document.getElementById('input')
       input.value = t
@@ -233,11 +257,19 @@ async function main() {
     }
     const system = String(messages.find((m) => m?.role === 'system')?.content || '')
     if (!reply) throw new Error('模型请求后未产生凪的可见回复')
-    return { reply: reply.slice(0, 1000), system, messages, durationMs: Date.now() - startedAt }
+    const firstVisibleMs = await visiblePromise
+    const emotionEvents = await page.evaluate(() => {
+      const events = window.__nagiEvalEvents || []
+      window.__nagiEvalOff?.()
+      window.__nagiEvalOff = null
+      return events
+    })
+    return { reply: reply.slice(0, 1000), system, messages, durationMs: Date.now() - startedAt, firstVisibleMs, emotionEvents }
   }
 
-  const sampleScenes = SELF_TEST ? SCENES.slice(0, 1) : USE_REAL ? SCENES.filter((scene) => scene.id === selectedScene) : SCENES
-  if (!sampleScenes.length) throw new Error('未知 D9 场景：' + selectedScene)
+  const suiteScenes = SUITE === 'd8' ? D8_SCENES : SCENES
+  const sampleScenes = SELF_TEST ? suiteScenes.slice(0, 1) : USE_REAL ? suiteScenes.filter((scene) => scene.id === selectedScene) : suiteScenes
+  if (!sampleScenes.length) throw new Error('未知 ' + SUITE.toUpperCase() + ' 场景：' + selectedScene)
   for (const scene of sampleScenes) {
     for (let run = SELF_TEST ? 0 : USE_REAL ? selectedRun - 1 : 0; run < (SELF_TEST || USE_REAL ? (SELF_TEST ? 1 : selectedRun) : RUNS); run++) {
       const input = scene.input[run] || scene.input[scene.input.length - 1]
@@ -248,10 +280,10 @@ async function main() {
           const prepared = await ask(seed)
           setupTurns.push({ input: seed, reply: prepared.reply })
         }
-        const { reply, system, messages, durationMs } = await ask(input)
+        const { reply, system, messages, durationMs, firstVisibleMs, emotionEvents } = await ask(input)
         results.push({ scene: scene.id, name: scene.name, run: run + 1, input, setupTurns,
           contextSnapshotId: createHash('sha256').update(JSON.stringify(setup)).digest('hex').slice(0, 12),
-          reply, system, messages, durationMs })
+          reply, system, messages, durationMs, firstVisibleMs, emotionEvents })
         console.log(`[${scene.id}·${run + 1}] ${scene.name} <- "${input}"`)
       } catch (e) {
         results.push({ scene: scene.id, name: scene.name, run: run + 1, input, reply: '', error: e.message })
@@ -261,9 +293,11 @@ async function main() {
     }
   }
 
-  const outPath = resolve(root, 'docs', SELF_TEST ? 'd9-proxy-selftest.json' : USE_REAL ? `d9-real-${selectedScene}-${selectedRun}.json` : 'd9-fake-latest.json')
+  const outPath = resolve(root, 'docs', SELF_TEST ? 'd9-proxy-selftest.json' : USE_REAL ?
+    SUITE === 'd8' ? `d8-real-${selectedScene}.json` : `d9-real-${selectedScene}-${selectedRun}.json` : `${SUITE}-fake-latest.json`)
   writeFileSync(outPath, JSON.stringify({
     generatedAt: new Date().toISOString(),
+    suite: SUITE,
     mode: SELF_TEST ? 'proxy-self-test' : USE_REAL ? 'real-model/isolated-profile' : 'fake-llm/isolated-profile',
     provider: SELF_TEST ? 'local-upstream-stub' : USE_REAL ? 'deepseek/' + DEEPSEEK_MODEL : 'custom/stub',
     gitHead: process.env.NAGI_D9_GIT_HEAD || null,
@@ -281,17 +315,19 @@ main().catch((e) => { process.exitCode = 1; console.error('✘ D9 评测中断�
     try { await browser?.close() } catch { /* 子进程可能已退出 */ }
     if (child?.pid) await new Promise((r) => { const k = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); k.on('close', r); k.on('error', r) })
     await new Promise((r) => server.close(r))
+    // Windows 上 Chromium 子进程退出后句柄释放有短暂延迟；给临时 profile 留出退场时间。
+    await sleep(3000)
     const safeProfile = resolve(profile)
     const safeTmp = resolve(tmpdir()) + sep
     if (!safeProfile.startsWith(safeTmp) || !basename(safeProfile).startsWith('nagi-d9-')) throw new Error('拒绝清理非 D9 临时目录')
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 20; attempt++) {
       try {
         rmSync(safeProfile, { recursive: true, force: true, maxRetries: 2, retryDelay: 300 })
         console.log('隔离 profile 已清理')
         break
       } catch (err) {
-        if (attempt === 9) { process.exitCode = 1; console.error('隔离 profile 清理失败：' + err.message) }
-        else await sleep(500)
+        if (attempt === 19) { process.exitCode = 1; console.error('隔离 profile 清理失败：' + err.message) }
+        else await sleep(1000)
       }
     }
   })

@@ -21,6 +21,8 @@ test('每日预算、勿扰与只陪着优先；跨日只重置次数', () => {
 test('无回应和明确稍后都会延长间隔；用户主动互动后退避归零', () => {
   const cfg = { ...CONFIG, maxDaily: 3 }
   let state = noteDelivered(normalizeBudget({}, AT), AT, cfg)
+  const stillWaiting = mayInterrupt(state, { now: AT + 3 * 60000, config: cfg })
+  assert.equal(stillWaiting.state.ignoredStreak, 0, '仅过 3 分钟不能误判为已忽略')
   const ignored = mayInterrupt(state, { now: AT + 21 * 60000, config: cfg })
   assert.equal(ignored.state.ignoredStreak, 1)
   assert.equal(ignored.reason, 'backoff')

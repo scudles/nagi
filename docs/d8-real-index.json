@@ -1,0 +1,42 @@
+{
+  "generatedAt": "2026-10-18T12:40:14.088Z",
+  "gitHead": "83170538661c246679c14ac0eec8901eb419bab7",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "rows": [
+    {
+      "scene": "D8-STAB",
+      "exitCode": 0,
+      "report": "docs/d8-real-D8-STAB.json",
+      "reused": true
+    },
+    {
+      "scene": "D8-FACT",
+      "exitCode": 0,
+      "attempts": 1,
+      "report": "docs/d8-real-D8-FACT.json",
+      "error": null
+    },
+    {
+      "scene": "D8-TONE",
+      "exitCode": 0,
+      "attempts": 2,
+      "report": "docs/d8-real-D8-TONE.json",
+      "error": null
+    },
+    {
+      "scene": "D8-NOGRID",
+      "exitCode": 0,
+      "attempts": 1,
+      "report": "docs/d8-real-D8-NOGRID.json",
+      "error": null
+    },
+    {
+      "scene": "D8-REPEAT",
+      "exitCode": 0,
+      "attempts": 1,
+      "report": "docs/d8-real-D8-REPEAT.json",
+      "error": null
+    }
+  ]
+}

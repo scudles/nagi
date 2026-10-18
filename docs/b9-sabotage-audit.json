@@ -1,0 +1,128 @@
+{
+  "generatedAt": "2026-10-18T12:28:21.671Z",
+  "kind": "policy/mock-io mutation audit",
+  "deviceCoverage": "not-run",
+  "total": 7,
+  "detected": 7,
+  "results": [
+    {
+      "id": "B9-KEY-crisis",
+      "tests": [
+        "test/offline-crisis.test.js"
+      ],
+      "baseline": {
+        "exitCode": 0,
+        "failed": 0
+      },
+      "sabotaged": {
+        "exitCode": 1,
+        "failed": 3,
+        "error": "ERR_ASSERTION]: Expected values to be strictly equal:",
+        "detail": "87%AA/%E5%87%AA_%E4%BA%A4%E6%8E%A5%E5%8C%85_2026-10-16/02_%E5%B7%A5%E7%A8%8B%E6%BA%90%E7%A0%81_nagi/.b9-sabotage-hflmcV/test/offline-crisis.test.js:58:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)\n      at Test.postRun (node:internal/test_runner/test:1522:19)\n      at Test.run (node:internal/test_runner/test:1447:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+      },
+      "detected": true
+    },
+    {
+      "id": "B9-KEY-dnd",
+      "tests": [
+        "test/companion-budget.test.js"
+      ],
+      "baseline": {
+        "exitCode": 0,
+        "failed": 0
+      },
+      "sabotaged": {
+        "exitCode": 1,
+        "failed": 1,
+        "error": "ERR_ASSERTION]: Expected values to be strictly equal:",
+        "detail": "  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  '' !== 'dnd'\n  \n      at TestContext.<anonymous> (file:///E:/%E5%87%AA/%E5%87%AA_%E4%BA%A4%E6%8E%A5%E5%8C%85_2026-10-16/02_%E5%B7%A5%E7%A8%8B%E6%BA%90%E7%A0%81_nagi/.b9-sabotage-hflmcV/test/companion-budget.test.js:10:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: '',\n    expected: 'dnd',\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+      },
+      "detected": true
+    },
+    {
+      "id": "B9-SABO-forget",
+      "tests": [
+        "test/forget-e2e.test.js"
+      ],
+      "baseline": {
+        "exitCode": 0,
+        "failed": 0
+      },
+      "sabotaged": {
+        "exitCode": 1,
+        "failed": 2,
+        "error": "ERR_ASSERTION]: 便签（本轮补上的那一跳）",
+        "detail": "E5%87%AA/%E5%87%AA_%E4%BA%A4%E6%8E%A5%E5%8C%85_2026-10-16/02_%E5%B7%A5%E7%A8%8B%E6%BA%90%E7%A0%81_nagi/.b9-sabotage-hflmcV/test/forget-e2e.test.js:95:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)\n      at Test.postRun (node:internal/test_runner/test:1522:19)\n      at Test.run (node:internal/test_runner/test:1447:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: true,\n    expected: false,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+      },
+      "detected": true
+    },
+    {
+      "id": "B9-SABO-title",
+      "tests": [
+        "test/title-outbound.test.js"
+      ],
+      "baseline": {
+        "exitCode": 0,
+        "failed": 0
+      },
+      "sabotaged": {
+        "exitCode": 1,
+        "failed": 1,
+        "error": "ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+        "detail": "%B7%A5%E7%A8%8B%E6%BA%90%E7%A0%81_nagi/.b9-sabotage-hflmcV/test/title-outbound.test.js:44:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)\n      at Test.postRun (node:internal/test_runner/test:1522:19)\n      at Test.run (node:internal/test_runner/test:1447:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: { send: true, reason: 'ok' },\n    expected: { send: false, reason: 'switch-off' },\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n"
+      },
+      "detected": true
+    },
+    {
+      "id": "B9-SABO-reminder",
+      "tests": [
+        "test/reminder-delivery.test.js"
+      ],
+      "baseline": {
+        "exitCode": 0,
+        "failed": 0
+      },
+      "sabotaged": {
+        "exitCode": 1,
+        "failed": 1,
+        "error": "ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+        "detail": "us> (file:///E:/%E5%87%AA/%E5%87%AA_%E4%BA%A4%E6%8E%A5%E5%8C%85_2026-10-16/02_%E5%B7%A5%E7%A8%8B%E6%BA%90%E7%A0%81_nagi/.b9-sabotage-hflmcV/test/reminder-delivery.test.js:20:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ [ '原始提醒正文', 'r1:123' ], [ '原始提醒正文', 'r1:123' ], [ '原始提醒正文', 'r1:123' ] ],\n    expected: [ [ '原始提醒正文', 'r1:123' ], [ '原始提醒正文', 'r1:123' ] ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n"
+      },
+      "detected": true
+    },
+    {
+      "id": "B9-X10-companion",
+      "tests": [
+        "test/companion-budget.test.js"
+      ],
+      "baseline": {
+        "exitCode": 0,
+        "failed": 0
+      },
+      "sabotaged": {
+        "exitCode": 1,
+        "failed": 1,
+        "error": "ERR_ASSERTION]: Expected values to be strictly equal:",
+        "detail": "%E5%87%AA/%E5%87%AA_%E4%BA%A4%E6%8E%A5%E5%8C%85_2026-10-16/02_%E5%B7%A5%E7%A8%8B%E6%BA%90%E7%A0%81_nagi/.b9-sabotage-hflmcV/test/companion-budget.test.js:27:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)\n      at Test.postRun (node:internal/test_runner/test:1522:19)\n      at Test.run (node:internal/test_runner/test:1447:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 0,\n    expected: 1,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+      },
+      "detected": true
+    },
+    {
+      "id": "B9-DIV10-companion",
+      "tests": [
+        "test/companion-budget.test.js"
+      ],
+      "baseline": {
+        "exitCode": 0,
+        "failed": 0
+      },
+      "sabotaged": {
+        "exitCode": 1,
+        "failed": 1,
+        "error": "ERR_ASSERTION]: 仅过 3 分钟不能误判为已忽略",
+        "detail": "E5%87%AA/%E5%87%AA_%E4%BA%A4%E6%8E%A5%E5%8C%85_2026-10-16/02_%E5%B7%A5%E7%A8%8B%E6%BA%90%E7%A0%81_nagi/.b9-sabotage-hflmcV/test/companion-budget.test.js:25:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)\n      at Test.postRun (node:internal/test_runner/test:1522:19)\n      at Test.run (node:internal/test_runner/test:1447:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: 1,\n    expected: 0,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+      },
+      "detected": true
+    }
+  ]
+}
