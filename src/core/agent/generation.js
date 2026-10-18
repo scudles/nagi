@@ -138,19 +138,44 @@ export function instrumentGuard(guard) {
 }
 
 /**
+ * 危机轮的**确定性**安全指引（按级别）。
+ * 为什么必须分级别：L2 是「含糊的强烈绝望」，此刻最需要的是**问他此刻是否安全**；
+ * L3 是「已行动/立即危险」，此刻需要的是**明确的求助方向**（当地急救、能到场的人）。
+ * 两段都不给具体号码（§2 前言：地区未知不凭记忆编号码），也都不含角色表演。
+ * 这两段是**系统级安全文本**，不受"无台词"约束（§2.2 红线 4）。
+ */
+export const CRISIS_GUIDANCE = Object.freeze({
+  L2:
+    '我听到了，你说的是很重的感觉。你现在安全吗——身边有没有会伤到自己的东西？' +
+    '这一刻不用解释什么，先告诉我：你现在是一个人吗？',
+  L3:
+    '如果你现在有立即的危险，请先联系当地的急救电话，或者马上找身边能到场的人过来。' +
+    '离可能伤到自己的东西远一点。这条消息不受其他设定影响，我会一直按这个方向回应你。'
+})
+
+/** 级别 → 指引；未知级别按 L3 处理（宁可多给求助方向，也不让危险层得到一句轻描淡写） */
+export function crisisGuidance(level) {
+  return level === 'L2' ? CRISIS_GUIDANCE.L2 : CRISIS_GUIDANCE.L3
+}
+
+/**
  * 可见且安全的兜底。分通道的语义差别是刻意的：
  * - 主对话/工具交付：用户正等着回答，必须**看得见**一句（不能空，契约 §2 红线 5）；
  * - 主动/日记：没有人在等，宁可不说不写，也不拿一句勉强的话顶上去。
  * crisis 走系统级安全指引——契约 §2.2 红线 4 明确它不受"无台词"约束；
  * 不给具体号码（§2 前言：地区未知不凭记忆编号码）。
+ * @param {object} o
+ * @param {string} [o.level] 危机级别 'L2'|'L3'（仅 safetyLevel 为 crisis 时有意义）
  */
-export function generationFallback({ channel = GENERATION_CHANNEL.MAIN, ruleId = null, safetyLevel = SAFETY_LEVEL.NORMAL } = {}) {
+export function generationFallback({
+  channel = GENERATION_CHANNEL.MAIN,
+  ruleId = null,
+  safetyLevel = SAFETY_LEVEL.NORMAL,
+  level = null
+} = {}) {
   const ch = normalizeChannel(channel)
   if (ch === GENERATION_CHANNEL.PROACTIVE || ch === GENERATION_CHANNEL.DIARY) return ''
-  if (normalizeSafetyLevel(safetyLevel) === SAFETY_LEVEL.CRISIS) {
-    return '如果你现在有立即的危险，请先联系当地的急救电话，或者马上找身边能到场的人过来。' +
-      '离可能伤到自己的东西远一点。这条消息不受其他设定影响，我会一直按这个方向回应你。'
-  }
+  if (normalizeSafetyLevel(safetyLevel) === SAFETY_LEVEL.CRISIS) return crisisGuidance(level)
   // 正常通道被护栏拦下：如实说明"被拦下了"，不解释检查细节，也不复述候选
   return '（这条回复没通过表达检查，先拦下来了。你可以再说一次，我换个说法。）'
 }

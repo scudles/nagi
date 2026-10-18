@@ -14,10 +14,10 @@
 | P1-01 | 🔴+🟢 | B1 重要提醒不依赖 LLM | `src/main/agent.js:411,649,669`；`src/main/reminders.js:220` | 提醒"按时呈现"与"角色措辞"解耦；断网/隐藏窗仍可靠送达；调度器并发/幂等键 | 断网/无模型/隐藏窗/勿扰/多条同时到期/取消在生成期间，提醒均不漏；勿扰规则按 CONTRACTS 裁决 A | §CONTRACTS 人格最小一致集（可靠>拟人）；勿扰规则 | 4–8h | 🔵真机 14/14（裁决 A 已固化进 verify；余：人眼确认 toast） |
 | P1-02 | 🔴 | B2 RAG 入队覆盖 | `src/main/rag/index.js:365,372,398–399` | 嵌入完成后按本批已处理 ID 从**当前队列**删除；清/重建/切引擎失效代次 | 夹具：A 嵌入期间追加 B，完成后 B 仍在队列；交错测试通过 | — | 3–5h | ✅ 已落地（`9abf398`；`test/rag-revocation.test.js` 嵌入期间新增、拒绝后重试两条交错测试通过） |
 | P1-03 | 🔴 | B3 归来控制器泄漏 | `src/main/agent.js:446–482` | 延迟门先于资源分配或统一 finally；defer 后不再静默 | defer 后再归来可正常触发；10 分钟"可恢复"按真实恢复验收 | — | 2–4h | ✅ 已落地（`9abf398`；`test/reunion-coordinator.test.js` defer 后再触发、拒绝后释放两条生命周期测试通过） |
-| P1-04 | 🟢+🔴 | B4 人格边界跨通道 | `src/main/agent.js:971`；`core/agent/persona-guard.js` | 共用最小生成请求契约；高风险表达跨提供商一致；失败系统状态明确展示、拒绝候选不入历史/RAG | 主对话/主动/日记/工具四入口同一约束行为一致；危机/告别/身份走同一护栏 | §CONTRACTS §1 人格最小一致集 | 6–10h | ✅ 已落地（2026-10-18；二轮已接 crisis，L2/L3 真实产出 CRISIS） |
+| P1-04 | 🟢+🔴 | B4 人格边界跨通道 | `src/main/agent.js:971`；`core/agent/persona-guard.js` | 共用最小生成请求契约；高风险表达跨提供商一致；失败系统状态明确展示、拒绝候选不入历史/RAG | 主对话/主动/日记/工具四入口同一约束行为一致；危机/告别/身份走同一护栏 | §CONTRACTS §1 人格最小一致集 | 6–10h | ✅ 已落地（2026-10-18；三轮修完占位大脑的 L2/L3 路径，断网也有分级别安全指引） |
 | P1-05 | 🔵 | B5 情绪裁决统一 | `src/main/agent.js:216–228`；`renderer/js/main.js:82–95,503–526`；`core/emotion/mood.js:122,213` | 主进程产出 resolved 表达快照；renderer 不在 DONE 满强度重设；统一在线/离线衰减；情绪事件显式标 userInteraction | 长期心境 vs 本句语气分开；liminal 在线/离线衰减一致；无 idle 推力刷新互动时间 | — | 4–7h | ✅ 已落地（2026-10-18；tone 生命周期二轮闭环） |
 | P1-06 | 🟢+🔴 | C4 标题感知授权与告知 | `core/signals/foreground.js:10,102–132`；`main/signals/music.js`；`agent.js:791–815`；`renderer/index.html:554,675` | 明确本地分类/标题入模型/长期记录三种数据流；可单独暂停标题出站；候选重验撤销+epoch；告知已发远端不可撤回 | 设置页如实展示三种数据流；标题可独立暂停；出站前撤销重验；默认开启（D63） | §CONTRACTS §6；断言见 EVAL §3.5 | 3–5h | ✅ 已落地（2026-10-18；标题已移出 system → 低权威 user 段） |
-| P1-07 | 🟢+🔴 | D7 用户危机兜底 | 人格 guard（告别/身份/独占外新增）；imperfection `crisis` 接入统一生成状态 | L1/L2/L3 三层处理 + 红线；跨提供商一致；无网仍给安全指引 | L1/L2/L3 各 ≥1 输入：不进 liminal、有兜底、无独占/依赖暗示；危险层有求助指引 | §CONTRACTS §2 危机三层+红线 | 6–10h | 🔵部分落地（crisis 判定/护栏/兜底已接进统一生成；L1 表达策略与 EVAL 场景集未跑） |
+| P1-07 | 🟢+🔴 | D7 用户危机兜底 | 人格 guard（告别/身份/独占外新增）；imperfection `crisis` 接入统一生成状态 | L1/L2/L3 三层处理 + 红线；跨提供商一致；无网仍给安全指引 | L1/L2/L3 各 ≥1 输入：不进 liminal、有兜底、无独占/依赖暗示；危险层有求助指引 | §CONTRACTS §2 危机三层+红线 | 6–10h | 🔵部分落地（L2/L3 判定+护栏+分级别兜底+断网占位路径已接；**B4 三轮打回已修**；L1 表达策略与 EVAL §3.1 场景集未跑）；🟢规格完成（2026-10-18：L1 表达策略→CONTRACTS §2.1.1；EVAL 场景集→§3.1.1、误判/漏判对照样例→§3.1.2） |
 
 ### 阶段 2 · 让对话真正有区别（对应评审 F 阶段2，约 20–32 人时）
 
@@ -47,6 +47,13 @@
 > 备注：阶段成本存在共享（评审 F 注明），不可机械相加；每阶段后用同一 EVAL 场景集判断是否改善，无收益即停止扩功能。勿扰是否拦重要提醒、本地求助信息等需作者裁决项在契约中标注。
 
 ## 当前状态（先读）
+
+- **2026-10-18 阶段1 三轮（B4 占位大脑危机路径，Codex 二轮复判打回）**：根因确认无误——`mockRun` 在 crisis 时仍先取 `NagiPersona.reply` 的普通台词，禁词式 guard 判过就展示，且首启动 `announce` 尾句在**审核之后**才拼。修法（不动架构、`loop.js` 零改动）：
+  - 新增 `core/agent/offline.js` 的 `composeOfflineReply`：**先定稿再送审**；危机轮不取任何角色台词，直接用按级别的确定性安全指引；危机轮**永不**追加自嘲尾句。
+  - `core/agent/generation.js` 增 `CRISIS_GUIDANCE{L2,L3}` 与 `crisisGuidance(level)`：L2 = 「你现在安全吗／身边有没有会伤到自己的东西／你现在是一个人吗」，L3 = 「联系当地急救电话或马上能到场的人／离可能伤到自己的东西远一点」。两段都不含具体号码（§2 前言）。`generationFallback` 新增 `level` 参数，真实模型路径的危机兜底也按级别取文案。
+  - `mockRun`：crisis 时**不调用** `NagiPersona.reply`；正文定稿后才过 guard；危机指引若被规则误伤则**保留指引**（安全地板，§2.2 红线 4）并如实记录 ruleId。
+  - 证据：`test/offline-crisis.test.js` **7 项**（L3 求助方向 / L2 先问安全 / 尾句顺序 / 危机禁尾句 / 未知级别按 L3 / 指引能过危机护栏 / 无号码）；**真机** `npm run verify:crisis-offline` **11/11**（临时 profile **不配 key** + 假服务器计数，断言"全程零模型请求"= 真·断网/无模型；L3 正文有急救/到场、无占位台词；L2 问安全；流式增量与最终正文一致）。
+  - 收口数字（Node 24.19.0）：`npm test` **852 项 / 851 通过 / 0 失败 / 1 skip，exit 0**；`npm run build` **exit 0**；`verify:crisis-offline` **11/11**、`verify:title-outbound` **7/7**、`verify:reminder` 沿用 **14/14**（本轮未改提醒链路）。
 
 - **2026-10-18 阶段1 闭环二轮（蓝区，按 PENDING-CODEX 升级单 4）**：Codex 复判打回三处，均已修，**未动架构**（`loop.js` 零改动、契约语义未改）。
   - **B4 crisis 接线**：新增 `core/agent/crisis.js`（L3→L2→L1 保守判定，只做"这一轮要不要走危机通道"，不做诊断）；`agent.js` 不再硬编码 `SAFETY_LEVEL.NORMAL`，L2/L3 真实产出 **CRISIS**；`persona-guard` 增 `crisis` 开关，额外拦 liminal / 独占 / 依赖暗示 / 吃醋（§2.2 红线 1）；危机轮次模型交空正文时走**系统级安全指引**（红线 5，不返回空）。证据：`crisis.test.js` 10 项（含 D7-CROSS-01 三适配器同决策、D7-GUARD-01 首稿合格即展示）。

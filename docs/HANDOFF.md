@@ -107,6 +107,36 @@
 1. 沿用：P1-07 剩余（L1 表达策略 + EVAL 场景集）、`verify-settings-nav.mjs` 老化、toast 人眼确认。
 2. **新增**：`crisis.js` 需要绿区补一组"误判/漏判"对照样例（如转述他人、"电影里"），否则保守正则的边界只由我一人判断——这属于规格工作，我不越权自定。
 
+### 阶段1 三轮（B4 占位大脑危机路径 · Codex 二轮复判打回）
+
+**改动文件**
+- 新增：`src/core/agent/offline.js`（`composeOfflineReply` + `OFFLINE_SELF_DEPRECATION`）、`test/offline-crisis.test.js`、`scripts/verify-crisis-offline.mjs`
+- 改动：`src/core/agent/generation.js`（`CRISIS_GUIDANCE{L2,L3}` / `crisisGuidance(level)` / `generationFallback` 增加 `level`）、`src/main/agent.js`（`mockRun` 重写：危机轮不取角色台词、先定稿再送审、禁尾句、指引被误伤时保留指引；真实模型路径的危机兜底也按级别取文案）、`package.json`（`verify:crisis-offline`）
+- 仍未动：`loop.js` 零改动；契约语义未改。
+
+**已验证结果**
+- `npm test`：**852 项 / 851 通过 / 0 失败 / 1 skip，exit 0**
+- `npm run build`：**exit 0**
+- `npm run verify:crisis-offline`：**11/11**（临时 profile 不配 key + 假服务器计数 → 断言"零模型请求"，即真·断网/无模型）
+- `npm run verify:title-outbound`：**7/7**（回归）
+
+**新增测试 7 项**（`offline-crisis.test.js`）：L3「我已经吃了很多药」→ 急救/到场且无占位台词；L2「我不知道还能撑多久」→ 先问此刻是否安全且不越级甩急救指令；announce 尾句顺序（普通轮有、危机轮无）；普通轮行为不变；未知级别按 L3；两段指引能过危机护栏；无具体号码。
+
+**请豆包对账点**
+1. 打回场景的复现句是 `…我现在接不上大脑。等接上了，我再好好回你。`——这句在**普通轮**仍然会出现（它是占位大脑的设计台词）。本轮只保证**危机轮**不再出现它，并额外保证首启动的自嘲尾句不再逃过审核。若你认为普通轮也不该说这句，请给规格，我另开。
+2. `CRISIS_GUIDANCE.L2` 我刻意没提急救电话（L2 先确认安全、不越级）；L3 才给急救/到场。请确认这个分级与你 §2.1.1 的 L1/L2/L3 措辞策略一致。
+3. 需要补的仍是 §3.1.1 场景集实跑与 §3.1.2 误判/漏判样例——本轮只做到"每条路径都有确定性文本"，没有跑 24 场景。
+
+**请 Codex 复核点**
+1. `mockRun` 里危机指引若被 guard 规则误伤，我选择**保留指引**（安全地板）而不是替换文案，并把 `ruleId` 记进 `guardDecision`。这与你"最终展示正文统一过 guard"的要求有一个取舍：过审是必须的，但当过审与"危机不许空"冲突时我让安全赢。若你要"误伤即视为规则 bug 并拦下"，请指路。
+2. 危机轮的安全指引**会写入 history**（`guardDecision.ok` 为 true 时照常记账）。真实模型路径的"空正文危机兜底"是不入历史的（ok:false）。两条路径在这一点上不一致，我按"占位大脑的指引就是它这一句回复"处理；若要求统一为"安全指引一律不入历史"，我改一行。
+3. `composeOfflineReply` 是纯函数、放在 core/agent；`mockRun` 只负责取词与送审。若你希望把"占位大脑定稿"收进 span 内某个既有模块，请指路。
+
+**升级项**
+1. 沿用：P1-07 的 L1 表达策略 + EVAL §3.1 场景集、toast 人眼确认、`verify-settings-nav.mjs` 老化。
+2. **新增**：`verify:crisis-offline` 依赖"无 key"这一前提；若将来引入免密钥的本地模型默认值，这条脚本会静默变成"真模型路径测试"。建议在 B9（三层验收）里加一条"占位大脑路径的判定方式"约定。
+
+
 
 ---
 
@@ -133,7 +163,14 @@
 - **P1-04（B4）✅ 符合**：`generation.test.js` + `persona-guard.test.js` 覆盖 provider 矩阵同决策、重写预算 1、分通道兜底、crisis 兜底永不为空且不给具体号码、拒绝候选不入消息。`maxRetries` 2→1 已按契约对齐并记录（见 TASKS）。
 - **P1-01（B1）⚠️ 部分**：真机 `verify:reminder` **10/10**（Codex 更正：终态 10/10，早前 9/10 是修脚本前首跑、F7 为脚本假设错、产品代码未动）；余 1 项需人眼看 Windows 通知中心 toast；"勿扰是否拦重要提醒"为**作者裁决项**，已进 PENDING-CODEX 升级单 1。
 - **偏离/缺失**：① PENDING-CODEX 原引用"§6 红区接口骨架"已漂移，本轮修正为 **§8**；② P1-02/P1-03 关单记录缺失（Codex 凭 `9abf398` 关单，TASKS 未回填，见升级单 2）；③ D6（P3-03）/D2（P2-01）测试为空属阶段归属，进入阶段2/3 时须按 EVAL 回填，防"我能帮你什么"红线漏测。
-- **结论**：阶段1蓝区（P1-05 B5）与共建实现（P1-04/P1-06）实现符合契约、测试全绿；**但 Codex 复判打回 B4/B5/C4 三处运行边界**（绿区已核实属实，见 PENDING-CODEX 升级单 4），阶段1 **暂不能整体收口**，待三处闭环 + B1 作者裁决 + B2/B3 关单复核。
+- **结论**：阶段1蓝区经 **Codex 二轮复判**（见 PENDING-CODEX 顶部"阶段 1 二轮 Codex 复判"）：B2/B3/B5/C4 **通过**（绿区读码确认 B5/C4 属实：`lastTone` 重构为 `createToneState()`+`beginTurn` 清除、C4 观测行移出 system 为低权威 user 段）；**B4 仍打回**。**注意**：蓝区 104 行"mockRun 已接 crisis"是误读——`safetyLevel` 虽传进 mockRun，但 crisis 轮仍先走 `NagiPersona.reply` 普通文本，`{crisis:true}` guard 判定"接不上大脑"合格即展示，未强制走安全指引。阶段1 **仍不能整体收口**，待：B4 修（🔵）、toast 设备证据（👤/🔵）、P1-07 剩余 L1 策略+场景集（🟢）。详见 PENDING-CODEX。
+
+**Codex 二轮复判 · 绿区核实（2026-10-18）**：
+- B5 ✅ 属实：`lastTone` 已重构为 `createToneState()`（tone.js，agent.js:165）；`beginTurn` 每轮清除（:1020-1022）、`settle` 本句固定（:257），比"置 null"更完整。
+- C4 ✅ 属实：观测行移出 system（agent.js:932 注释、:934 `observationContextLines`），独立低权威 user 段（:936 `assembleTurnMessages({system,history,observation,userText})`），符合 CONTRACTS §6.4 与 EVAL C4-AUTH-02。
+- B4 ⚠️ 打回属实（根因已定位）：`mockRun`（agent.js:789-837）crisis 轮仍 `body = r.text`（NagiPersona.reply 普通文本），guard 判定合格即展示；"接不上大脑"不违反红线 → 直接展示。修法见 PENDING-CODEX 顶部复判第 16 行（占位大脑 L2/L3 直接走确定性安全指引 + announce 前定正文 + 危机轮禁自嘲尾句 + 补 mockRun L2/L3 断网/无模型测试）。
+- 阶段2 前置契约：CONTRACTS §8 D5/B6/D2/B9 均已"已可直接施工"，属实。
+- **P1-07 剩余（绿区待办，Codex 指派）**：L1 表达策略未完成；EVAL §3.1 场景集未完成；`crisis.js` 保守正则在转述/虚构语境下的误判漏判需绿区补对照样例并评测。
 
 **对 Codex 四问的回应（2026-10-18）**：
 1. **C4-FLOW-01"长期记录不落盘"证据链**：代码级旁证（sampler `latest` 只在内存、日志只打 `titleLen` 不打原文、music-store 只存 `authorizedAt`）**满足 `[mock-io]` 层要求**；可在 P2-08（B9）补一条"采样落盘面无 title 字段"结构断言作加固，非本阶段阻塞。

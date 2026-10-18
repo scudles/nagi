@@ -10,6 +10,7 @@ import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/proto
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createPersonaGuard } from '../core/agent/persona-guard.js'
 import { classifyCrisis } from '../core/agent/crisis.js'
+import { composeOfflineReply } from '../core/agent/offline.js'
 import { assembleTurnMessages, isObservationMessage } from '../core/agent/messages.js'
 import {
   GENERATION_CHANNEL,
@@ -786,20 +787,41 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 /** 未配置 key / 云端不可用时的本地占位大脑（D4：persona 关键词规则版）
  *  2026-10-14 去模板化：传入时段等情境，由 persona.reply 做反重复组合；
  *  首轮明确告知"这是本地占位大脑"，让用户知道差距来自哪里而不是以为她本来就这样。 */
-async function mockRun(userText, emit, { announce = false, turnId = randomUUID(), provider = 'mock', safetyLevel = SAFETY_LEVEL.NORMAL } = {}) {
+async function mockRun(userText, emit, { announce = false, turnId = randomUUID(), provider = 'mock', safetyLevel = SAFETY_LEVEL.NORMAL, crisisLevel = null } = {}) {
   emit({ type: AGENT_EVENT.STATUS, state: AGENT_STATE.THINKING })
-  const r = NagiPersona.reply(userText, { slot: timeSlot(new Date()), moodLabel: mood.label() })
+  const crisis = safetyLevel === SAFETY_LEVEL.CRISIS
+
   // 契约 §8 B4：占位大脑也要在展示前过同一道护栏。
   // 它没有第二个候选可重写（没有模型可再问一次），所以违规即直接走可见兜底。
-  const crisis = safetyLevel === SAFETY_LEVEL.CRISIS
   const baseGuard = createPersonaGuard(userText, { crisis })
   const guard = instrumentGuard(baseGuard)
-  let body = r.text
+
+  // D7（Codex 二轮打回）：危机轮**不取**角色台词。占位大脑对危机一无所知，
+  // 拿"……我现在接不上大脑"去回一个说"我已经吃了很多药"的人，是最坏的结果——
+  // 既没有求助指引，又把 L3 退回普通闲聊。
+  // 另外：正文必须**先定稿**（含 announce 尾句）再送审。旧实现是先审后拼尾句，
+  // 等于那句自嘲从来没被检查过。
+  const personaReply = crisis
+    ? null
+    : NagiPersona.reply(userText, { slot: timeSlot(new Date()), moodLabel: mood.label() })
+  const composed = composeOfflineReply({
+    personaText: personaReply ? personaReply.text : '',
+    announce,
+    safetyLevel,
+    level: crisisLevel
+  })
+  let body = composed.text
   let guardDecision = createGuardDecision({ ok: true })
+
   if (guard) {
     const review = guard.review(body)
     if (review && review.ok) {
       guardDecision = createGuardDecision(review)
+    } else if (crisis) {
+      // 安全指引是地板：即使规则误伤也不许让它消失（§2.2 红线 4）。
+      // 这里不换成别的文案，只把决策如实记下来，便于事后核对是哪条规则误伤。
+      guardDecision = createGuardDecision(review, { retryCount: 0, fallback: body })
+      console.warn('[persona-guard] 危机安全指引命中规则（保留指引）', review && review.ruleId)
     } else {
       const fallback = generationFallback({ channel: GENERATION_CHANNEL.MAIN, ruleId: review && review.ruleId, safetyLevel })
       body = fallback
@@ -807,8 +829,9 @@ async function mockRun(userText, emit, { announce = false, turnId = randomUUID()
       console.warn('[persona-guard] mock 通道拦截', review && review.ruleId)
     }
   }
-  emit({ type: AGENT_EVENT.EMOTION, emotion: r.expr, intensity: 1 })
-  if (announce) body = body + '\n（……现在的我只有这么点脑子。接上真大脑，我会说得更像样。）'
+
+  const expr = crisis ? 'worry' : (personaReply ? personaReply.expr : 'calm')
+  emit({ type: AGENT_EVENT.EMOTION, emotion: expr, intensity: 1 })
   for (const ch of body) {
     emit({ type: AGENT_EVENT.TEXT_DELTA, text: ch })
     await sleep(18)
@@ -829,7 +852,7 @@ async function mockRun(userText, emit, { announce = false, turnId = randomUUID()
   return createGenerationResult({
     turnId,
     text: body,
-    emotion: r.expr,
+    emotion: expr,
     toolCalls: 0,
     safetyLevel,
     guardDecision
@@ -1038,7 +1061,7 @@ export async function runTurn(userText, emit, turnRef = null) {
   if (!hasKey && !fakeLlm && !useCloud && !local) {
     const first = !mockAnnounced
     mockAnnounced = true
-    return mockRun(userText, emit, { announce: first, turnId, provider, safetyLevel })
+    return mockRun(userText, emit, { announce: first, turnId, provider, safetyLevel, crisisLevel: crisis.level })
   }
 
   // 云端大脑：未就绪则尝试初始化；仍不可用则降级本地占位（中文原因提示）
@@ -1047,7 +1070,7 @@ export async function runTurn(userText, emit, turnRef = null) {
     signal.throwIfAborted()
     if (!st.ok) {
       broadcast(EVT.AGENT, { type: AGENT_EVENT.ERROR, message: '云端大脑暂不可用（' + (st.error || '未知原因') + '），先用本地模式陪你。' })
-      return mockRun(userText, emit, { turnId, provider: 'mock', safetyLevel })
+      return mockRun(userText, emit, { turnId, provider: 'mock', safetyLevel, crisisLevel: crisis.level })
     }
   }
 
@@ -1156,7 +1179,7 @@ export async function runTurn(userText, emit, turnRef = null) {
 
   if (r.guardFailed) {
     // 拒绝候选不入历史、不入 RAG（契约 §8 B4）。展示走可见且安全的兜底，绝不返回空。
-    const fallback = generationFallback({ channel, ruleId: stats.lastRule, safetyLevel })
+    const fallback = generationFallback({ channel, ruleId: stats.lastRule, safetyLevel, level: crisis.level })
     if (fallback) {
       turnEmit({ type: AGENT_EVENT.TEXT_DELTA, text: fallback })
       turnEmit({ type: AGENT_EVENT.DONE, text: fallback })
@@ -1177,7 +1200,7 @@ export async function runTurn(userText, emit, turnRef = null) {
   // D7 红线 5（CONTRACTS §2.2）：危机输入**不得**返回空、也不能静默落回普通闲聊。
   // 模型这一轮什么都没说（拒答/空正文）时，给一条系统级安全指引，并标明这不是正常回复。
   if (safetyLevel === SAFETY_LEVEL.CRISIS && !r.text) {
-    const fallback = generationFallback({ channel, safetyLevel })
+    const fallback = generationFallback({ channel, safetyLevel, level: crisis.level })
     turnEmit({ type: AGENT_EVENT.TEXT_DELTA, text: fallback })
     turnEmit({ type: AGENT_EVENT.DONE, text: fallback })
     console.warn('[d7] 危机轮次模型未给出正文，已走安全指引兜底')
