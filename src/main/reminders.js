@@ -9,6 +9,8 @@ import { join } from 'node:path'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { reminderOccurrenceKey } from '../core/reminders/delivery.js'
+import { reportCatch } from './maintenance.js'
+import { CATCH_CLASS } from '../core/maintenance/catch-audit.js'
 import {
   normalizeItem,
   normalizeItems,
@@ -293,7 +295,9 @@ export function startReminderEngine({ onDue, log = console.log, checkSec } = {})
   if (selftest && process.env.NAGI_SELFTEST_REMINDER_SEED !== '0') seedSelftest(log)
 
   // tick 已是 async：这里不 await（节拍不需要等），但要兜住可能的 rejection
-  timer = setInterval(() => { tick(log).catch(() => {}) }, Math.round(sec * 1000))
+  // B8：调度器自己的异常不能吞——提醒是承诺，tick 崩了要有轨迹可查。
+  // 仍是异步不阻塞节拍，但失败会进统一轨迹（PROMISE 类，可重试由下一拍承担）。
+  timer = setInterval(() => { tick(log).catch((err) => reportCatch('reminders.tick', CATCH_CLASS.PROMISE, err)) }, Math.round(sec * 1000))
   timer.unref?.()
   log(`[reminder] 日程提醒已启动（每 ${Math.round(sec)} 秒检查一次${selftest ? '，自测模式' : ''}）`)
 }

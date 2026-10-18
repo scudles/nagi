@@ -171,3 +171,98 @@ export function recentAssistantReplies(history, n = 1) {
   }
   return out.reverse()
 }
+
+/* ---------------- D2 场景化上下文（CONTRACTS §8 · 定版） ---------------- */
+
+/**
+ * 活动事实的允许来源（§8 白名单）：
+ *   monitor   —— 当前仍获授权的活动**分类**（不是标题）
+ *   media     —— 获授权的当前媒体状态（播放/暂停必须照实标）
+ *   simulated —— presence 的离线/模拟活动（必须标 origin，不得说成真实经历）
+ * 标题（foreground）**不在**这个白名单里：它只是 C4 的低权威观测数据，
+ * 不得升级成"他在做什么"的事实。
+ */
+export const SCENE_ACTIVITY_ORIGINS = Object.freeze(['monitor', 'media', 'simulated'])
+
+/** 活动事实的保鲜期：过期的观测不当事实用（宁缺勿造） */
+export const SCENE_ACTIVITY_TTL_MS = 10 * 60 * 1000
+
+/**
+ * 把一条候选活动归一成 `{kind, value, at, origin, authorizedAt}`；
+ * 未授权 / 来源不在白名单 / 过期 / 缺字段 一律返回 `null`（契约：未授权、过期或缺来源一律 null）。
+ *
+ * @param {object|null} activity
+ * @param {{now?:number, ttlMs?:number}} [opts]
+ * @returns {{kind:string,value:string,at:number,origin:string,authorizedAt:number}|null}
+ */
+export function normalizeSceneActivity(activity, { now = Date.now(), ttlMs = SCENE_ACTIVITY_TTL_MS } = {}) {
+  if (!activity || typeof activity !== 'object') return null
+  const origin = String(activity.origin || '')
+  if (!SCENE_ACTIVITY_ORIGINS.includes(origin)) return null
+  if (activity.authorized !== true) return null
+  if (!Number.isFinite(activity.authorizedAt)) return null
+  const at = Number(activity.at)
+  if (!Number.isFinite(at)) return null
+  if (now - at > ttlMs || at > now + 60 * 1000) return null
+  const value = String(activity.value || '').trim()
+  if (!value) return null
+  return {
+    kind: String(activity.kind || 'activity'),
+    value: value.slice(0, 120),
+    at,
+    origin,
+    authorizedAt: activity.authorizedAt
+  }
+}
+
+/**
+ * 记忆引用白名单：只保留**未撤销**且**可追溯**（有 id 与来源）的条目。
+ * 契约：relevantMemoryRefs 只含未撤销且与本轮相关的已确认事实/可追溯 RAG 引用。
+ */
+export function normalizeMemoryRefs(refs) {
+  if (!Array.isArray(refs)) return []
+  const out = []
+  for (const r of refs) {
+    if (!r || typeof r !== 'object') continue
+    const id = String(r.id || '').trim()
+    if (!id) continue
+    if (r.revoked === true) continue
+    if (r.traceable === false) continue
+    if (!r.source) continue
+    out.push({ id, source: String(r.source), text: String(r.text || '').slice(0, 200) })
+  }
+  return out.slice(0, 8)
+}
+
+/**
+ * 组一份可证实的场景上下文（`SceneContext`）。
+ * 注意：这里**只放有来源的事实**，不放推断、不放标题、不放模拟当真实。
+ *
+ * @param {object} o
+ * @param {string} o.turnId
+ * @param {string} [o.source]           'user'|'reunion'|'reminder'|'proactive'
+ * @param {object|null} [o.activity]    候选活动（会过白名单与 TTL）
+ * @param {Array} [o.relationship]      关系事实（原样保留，由调用方保证有来源）
+ * @param {Array} [o.relevantMemoryRefs]
+ * @param {string|null} [o.userNeed]    规则层判出的用户需求（意图 kind）
+ * @param {number} [o.now]
+ */
+export function buildSceneContext({
+  turnId = '',
+  source = 'user',
+  activity = null,
+  relationship = null,
+  relevantMemoryRefs = [],
+  userNeed = null,
+  now = Date.now()
+} = {}) {
+  return {
+    turnId: String(turnId || ''),
+    source: String(source || 'user'),
+    activity: normalizeSceneActivity(activity, { now }),
+    timeSlot: timeSlot(new Date(now)),
+    relationship: relationship || null,
+    relevantMemoryRefs: normalizeMemoryRefs(relevantMemoryRefs),
+    userNeed: userNeed && String(userNeed) ? String(userNeed) : null
+  }
+}

@@ -11,6 +11,7 @@ import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createPersonaGuard } from '../core/agent/persona-guard.js'
 import { classifyCrisis } from '../core/agent/crisis.js'
 import { composeOfflineReply } from '../core/agent/offline.js'
+import { resolveIntent, intentDirective } from '../core/agent/intent.js'
 import { assembleTurnMessages, isObservationMessage } from '../core/agent/messages.js'
 import {
   GENERATION_CHANNEL,
@@ -43,7 +44,7 @@ import { createThinkGate } from '../core/presence/reaction.js'
 import { createReactionEngine } from './reaction.js'
 import { modelsDir } from './paths.js'
 import { NagiPersona } from '../core/persona.js'
-import { buildContextBlock, recentAssistantReplies, timeSlot } from '../core/context.js'
+import { buildContextBlock, buildSceneContext, recentAssistantReplies, timeSlot } from '../core/context.js'
 import {
   buildDiaryMessages,
   formatMoodJourney,
@@ -164,6 +165,16 @@ function broadcastMood() {
  * 上一句语气会残留到下一轮），且绝不写回状态机（契约 D5）。
  */
 const toneState = createToneState()
+
+/**
+ * D2：最近一轮的意图裁决结果（调试/验收用）。
+ * 为什么留在主进程内存里：意图是**编排层**的决定，渲染层不该自己推断，
+ * 但验收与工作台需要一个能看到"这轮判成了什么、来自哪里"的出口。
+ */
+let lastIntent = null
+export function intentState() {
+  return lastIntent ? { ...lastIntent } : null
+}
 function resolvedMood() {
   const { tone, toneSource } = toneState.current()
   return resolveMoodSnapshot(mood.current(), { tone, toneSource })
@@ -929,9 +940,32 @@ async function observationContextLines() {
   return [...obs.media, ...(decision.send ? obs.foreground : [])]
 }
 
-async function buildMessages(userText, supportsNative) {
+async function buildMessages(userText, supportsNative, { turnId = '', crisis = false, source = 'user' } = {}) {
   ensureHistory()
   const snap = mood.current()
+  // D2（CONTRACTS §8）：先拿"可证实的事实材料"，再由编排层裁决本轮意图。
+  // 注意顺序——意图是**编排层**的决定，不能由模型反写；这里只把可追溯的引用交给它。
+  const recalled = await recalledPieces(userText)
+  const memoryRefs = (Array.isArray(recalled) ? recalled : [])
+    .filter((x) => x && x.piece && x.piece.id)
+    .map((x) => ({ id: x.piece.id, source: x.source || 'rag', text: x.piece.text || '' }))
+  const scene = buildSceneContext({
+    turnId,
+    source,
+    // activity 的白名单装配在 P2-01 二期（需要 monitor 分类 + 媒体状态的授权快照）；
+    // 本轮先固定 null——宁缺勿造，不用标题冒充"他在做什么"。
+    activity: null,
+    relationship: relationSummary(),
+    relevantMemoryRefs: memoryRefs,
+    userNeed: null
+  })
+  const intent = resolveIntent({
+    userText,
+    crisis,
+    hasGroundedMemory: memoryRefs.length > 0 || memoryLines().length > 0
+  })
+  scene.userNeed = intent.kind
+  lastIntent = { ...intent, scene }
   // 「此刻」上下文：时间/时段、距上次互动多久、当前情绪及强度、长期记忆、
   // 检索召回的往事、她最近说过的话。
   // 原先是在 user 消息前塞一句"（凪当前的情绪：担心）"，信息量太薄且会把模型钉在同一个
@@ -944,7 +978,7 @@ async function buildMessages(userText, supportsNative) {
     activities: presence.snapshot().activities,
     relation: relationSummary(),
     memories: memoryLines(),
-    recalled: await recalledPieces(userText),
+    recalled,
     // 2026-10-18：只喂 1 条。喂 4 条原话会让模型模仿自己的语域（见 context.js 说明）
     recentReplies: recentAssistantReplies(history, 1),
     // 她替你记着的提醒：让她知道「有这几件事等着」，别把答应过的事忘了
@@ -955,8 +989,16 @@ async function buildMessages(userText, supportsNative) {
   // C4（CONTRACTS §6.4 位置约束）：观测行**不进 system**。
   // 它们单独成一条 user 消息（低权威），不再随【此刻】混进人格/工具指令区。
   const observation = await observationContextLines()
-  const system = buildSystemPrompt({ nativeTools: supportsNative, context })
-  return assembleTurnMessages({ system, history, observation, userText })
+  // 意图 → 一条**功能性约束**（不写台词，只写"做什么/不做什么"），随 system 一起下发。
+  // 用模板字面量而不是转义：这里的换行是给模型看的段落分隔，写死成可见空行更不容易被改坏。
+  const intentLine = intentDirective(intent.kind)
+  const system = buildSystemPrompt({ nativeTools: supportsNative, context }) + `
+
+【本轮怎么回应】${intentLine}`
+  console.log('[d2] intent=' + intent.kind + ' source=' + intent.source +
+    (intent.fallbackFrom ? ' fallbackFrom=' + intent.fallbackFrom : ''))
+  const messages = assembleTurnMessages({ system, history, observation, userText })
+  return { messages, intent, scene }
 }
 
 /**
@@ -1121,7 +1163,12 @@ export async function runTurn(userText, emit, turnRef = null) {
     return runRecordedTool(tracedExecuteTool, name, args, opts)
   }
 
-  const messages = await buildMessages(userText, supportsNative)
+  const built = await buildMessages(userText, supportsNative, {
+    turnId,
+    crisis: safetyLevel === SAFETY_LEVEL.CRISIS,
+    source: 'user'
+  })
+  const messages = built.messages
   // 契约 §8 B4：云端 / OpenAI 兼容 / 本地 / 占位大脑**都**在展示前过同一道护栏。
   // 原来这里是 `local && !fakeLlm`——等于云端与兼容通道裸奔，这是评审 B4 指的入口洞。
   // createPersonaGuard 只在用户这轮触到敏感意图时才返回非空，所以普通闲聊仍然逐字流式。

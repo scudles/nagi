@@ -1,0 +1,98 @@
+// test/scene.test.js
+// D2 场景化上下文（CONTRACTS §8 定版）：**只放有来源的事实**。
+//
+// 保护的不变量：
+//   1) activity 只认三个白名单来源（monitor 分类 / media / simulated），且必须已授权、未过期；
+//   2) 标题（foreground）不能升级成"他在做什么"的活动事实；
+//   3) 未授权 / 过期 / 缺字段一律 null —— 宁缺勿造；
+//   4) relevantMemoryRefs 只留未撤销且可追溯的引用。
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  SCENE_ACTIVITY_TTL_MS,
+  buildSceneContext,
+  normalizeMemoryRefs,
+  normalizeSceneActivity
+} from '../src/core/context.js'
+
+const NOW = new Date('2026-10-18T15:00:00').getTime()
+
+const okActivity = (over = {}) => ({
+  kind: 'app-category',
+  value: '工作',
+  at: NOW - 5000,
+  origin: 'monitor',
+  authorized: true,
+  authorizedAt: NOW - 3600000,
+  ...over
+})
+
+test('白名单来源：monitor / media / simulated 都可作为活动事实', () => {
+  for (const origin of ['monitor', 'media', 'simulated']) {
+    const a = normalizeSceneActivity(okActivity({ origin }), { now: NOW })
+    assert.equal(a?.origin, origin)
+    assert.equal(a.kind, 'app-category')
+    assert.equal(a.value, '工作')
+  }
+})
+
+test('标题不是活动事实：foreground 来源一律拒绝', () => {
+  assert.equal(normalizeSceneActivity(okActivity({ origin: 'foreground', value: '某页面标题' }), { now: NOW }), null)
+  assert.equal(normalizeSceneActivity(okActivity({ origin: 'title' }), { now: NOW }), null)
+})
+
+test('未授权 / 缺授权时间 / 过期 / 未来时间 / 空值 一律 null', () => {
+  assert.equal(normalizeSceneActivity(okActivity({ authorized: false }), { now: NOW }), null)
+  assert.equal(normalizeSceneActivity(okActivity({ authorized: undefined }), { now: NOW }), null)
+  assert.equal(normalizeSceneActivity(okActivity({ authorizedAt: undefined }), { now: NOW }), null)
+  assert.equal(normalizeSceneActivity(okActivity({ at: NOW - SCENE_ACTIVITY_TTL_MS - 1 }), { now: NOW }), null)
+  assert.equal(normalizeSceneActivity(okActivity({ at: NOW + 5 * 60 * 1000 }), { now: NOW }), null)
+  assert.equal(normalizeSceneActivity(okActivity({ value: '   ' }), { now: NOW }), null)
+  assert.equal(normalizeSceneActivity(null, { now: NOW }), null)
+})
+
+test('活动值会被截断，不把长文本整段喂给模型', () => {
+  const a = normalizeSceneActivity(okActivity({ value: 'x'.repeat(500) }), { now: NOW })
+  assert.equal(a.value.length, 120)
+})
+
+test('记忆引用：撤权 / 不可追溯 / 无 id / 无来源 都剔除', () => {
+  const refs = normalizeMemoryRefs([
+    { id: 'm1', source: 'rag', text: '他喜欢下雨天' },
+    { id: 'm2', source: 'rag', revoked: true },
+    { id: 'm3', source: 'rag', traceable: false },
+    { id: '', source: 'rag' },
+    { id: 'm4' },
+    { id: 'm5', source: 'journal', text: '上周去过那家店' }
+  ])
+  assert.deepEqual(refs.map((r) => r.id), ['m1', 'm5'])
+  assert.equal(normalizeMemoryRefs(null).length, 0)
+  // 有上限，不无限膨胀
+  const many = Array.from({ length: 20 }, (_, i) => ({ id: 'r' + i, source: 'rag' }))
+  assert.equal(normalizeMemoryRefs(many).length, 8)
+})
+
+test('buildSceneContext：未授权时 activity 为 null，但仍给出时段与来源', () => {
+  const scene = buildSceneContext({
+    turnId: 't1',
+    source: 'user',
+    activity: okActivity({ authorized: false }),
+    relationship: { level: { label: '熟悉' } },
+    relevantMemoryRefs: [{ id: 'm1', source: 'rag' }],
+    userNeed: 'listen',
+    now: NOW
+  })
+  assert.equal(scene.turnId, 't1')
+  assert.equal(scene.source, 'user')
+  assert.equal(scene.activity, null, '未授权不得当事实')
+  assert.ok(scene.timeSlot && scene.timeSlot.length > 0)
+  assert.equal(scene.relationship.level.label, '熟悉')
+  assert.deepEqual(scene.relevantMemoryRefs.map((r) => r.id), ['m1'])
+  assert.equal(scene.userNeed, 'listen')
+})
+
+test('buildSceneContext：授权且新鲜的活动才进上下文', () => {
+  const scene = buildSceneContext({ turnId: 't2', activity: okActivity(), now: NOW })
+  assert.equal(scene.activity.origin, 'monitor')
+  assert.equal(scene.userNeed, null)
+})

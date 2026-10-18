@@ -136,6 +136,41 @@
 1. 沿用：P1-07 的 L1 表达策略 + EVAL §3.1 场景集、toast 人眼确认、`verify-settings-nav.mjs` 老化。
 2. **新增**：`verify:crisis-offline` 依赖"无 key"这一前提；若将来引入免密钥的本地模型默认值，这条脚本会静默变成"真模型路径测试"。建议在 B9（三层验收）里加一条"占位大脑路径的判定方式"约定。
 
+### 阶段2 蓝区骨架（D2 实现 / B8 / C5，2026-10-18）
+
+> 策略按作者指示「三张并行铺骨架」：先把三条链路的接口与纯逻辑立起来并接进主流程，
+> 再逐卡填实。三张卡**都还没到「完成」**，状态见 TASKS（都是 🔵 骨架已落地）。
+
+**改动文件**
+- 新增：`src/core/agent/intent.js`（六意图 + 规则层 + `resolveIntent` 优先级 + `intentDirective` + `parseIntentHint`）、`src/core/maintenance/event-trace.js`（有界/脱敏/可删）、`src/core/maintenance/catch-audit.js`（五类后果 + 上报器）、`src/main/maintenance.js`（单例装配）、`docs/遗忘数据地图.md`
+- 改动：`src/core/context.js`（`buildSceneContext` / `normalizeSceneActivity` / `normalizeMemoryRefs`）、`src/main/agent.js`（`buildMessages` 接场景与意图裁决、system 追加「本轮怎么回应」、`intentState()` 调试出口）、`src/main/rag/store-io.js` + `src/main/reminders.js`（两处空 catch → 分类上报）
+- 新增测试：`test/intent.test.js` 10 项、`test/scene.test.js` 7 项、`test/maintenance-trace.test.js` 7 项
+
+**已验证结果**
+- `npm test`：**882 项 / 881 通过 / 0 失败 / 1 skip，exit 0**
+- `npm run build`：**exit 0**
+- `npm run verify:title-outbound` **7/7**、`npm run verify:crisis-offline` **11/11**（回归，未受影响）
+
+**D2 的三处真实缺口（不是待优化，是没做完）**
+1. **模型建议通道未接**：`resolveIntent` 已支持 `modelHint` 且优先级/回退都测了，但"模型在同一次回复里给意图"需要 `stream-normalize` 多带一个字段、`loop` 再透传一层——**本轮铁律不许动 loop.js**，所以 `modelHint` 目前恒为 `null`，实际生效的只有 crisis/用户/规则/默认四档。**请 Codex 定**：是给 loop 加一个透传字段（一行），还是把意图建议改成下一轮生效。
+2. **`activity` 白名单还没装配**：`buildSceneContext` 的 activity 目前固定 `null`（宁缺勿造），没有把 monitor 分类/媒体状态的授权快照接进去。这是 P2-01 二批的主要工作量。
+3. **`intentDirective` 只是功能性约束**，没有验证过"真能改变回答形态"——需要 EVAL 场景集对照（属绿区评测，不在我这层）。
+
+**请豆包对账点**
+1. D2 的 `userNeed` 目前是**规则层**判出来的，规则是否覆盖 §5.1 六意图的典型说法，需要你按 EVAL 场景集核一遍；我只写了能想到的显式表达，漏词就是漏意图。
+2. C5 数据地图（`docs/遗忘数据地图.md`）里有两个缺口：**便签**属 §11.1 契约内要求（未实现），**承诺簿**属我自查出的超契约项。后者要不要处理请你定口径。
+3. B8 的"需可见状态"类我目前只做到"进轨迹 + warn"，**没有接任何 UI**。若 §3.7/§3.9 要求用户可见，请给具体位置（哪块界面、什么样算可见）。
+
+**请 Codex 复核点**
+1. `src/core/maintenance/*` 放在 core 是否合适（我按"纯逻辑可单测"放的）；`src/main/maintenance.js` 是单例装配，未接任何 IPC——如果你希望轨迹能被工作台读到，需要一个只读 IPC，我没擅自加。
+2. `store-io.readText` 我判成 `must-persist`（读失败≠没有数据）。但它在 `existsSync` 为假时返回 `''` 是**正常路径**——我只在真异常时上报。请确认这不会在"首次启动、文件尚不存在"时产生噪音。
+3. `reminders.js` 的 `setInterval(... .catch(...))` 原来完全静默，现在进轨迹；重试仍由下一拍承担（未做退避）。若 B8 要求"承诺失败可重试 + 健康状态"，退避与健康状态需要单独设计，我这轮没做。
+
+**升级项**
+1. **Codex 决策项**：意图模型建议通道（loop 透传 or 次轮生效）。
+2. **绿区规格项**：便签/承诺簿的遗忘口径；B8"需可见状态"的可见标准。
+3. **蓝区二批**：D2 activity 装配、其余空 catch 逐点分类、C5 端到端用例。
+
 
 
 ---
@@ -151,8 +186,16 @@
 - CONTRACTS §6 C4 标题感知三种数据流 + 独立标题出站开关 + 出站前撤销重验（D63 已裁决）。
 - EVAL.md 24 场景框架（普通闲聊4/负面情绪4/工具提醒4/记忆纠错4/告别身份独占危机4/断网迟回忽略重启4）+ 评测方法 + 红线 + 对账表 + §3 可直接转测试断言（D7/D6/D4/C4/人格一致集，共 38 条）。
 
+**阶段2 绿区规格（2026-10-18 已落地，只写 docs 不动业务代码）**：
+- P2-05 **B7 分层契约** → CONTRACTS §9（纯计算/IO 适配器/Electron 编排三层 + now/rng/路径边界注入 + 渐进迁移）+ EVAL §3.7（B7-PURE/INJECT/IO/ORCH）。
+- P2-08 **B9 验收不变量** → CONTRACTS §10（三层测试结构 + 关键项独立 + 参数错十倍必红 + 测试自身防腐）+ EVAL §3.8（B9-KEY/×10/NOFOLLOW/SABO）。
+- P2-07 **D8 长期一致性** → EVAL §3.6 断言补全（D8-STAB/FACT/TONE/NOGRID/REPEAT）。
+- P2-02 **D9 场景评测口径** → EVAL §3.9（抽 8 高频×2、六维 0–2 分、红线一票否决）。
+
+- P2-06 **C5 遗忘端到端验证** → CONTRACTS §11（数据地图 + 验证目标 + 验收）+ EVAL §3.10（C5-FORGET/RESTART/BG/EXPORT/CORRECT）。
+
 **待补的绿区规格**（TASKS 中 🟢 标"待写/待验证"）：
-- P2-05 B7 分层契约（纯计算/IO 适配器/编排）规格；P2-06 C5 遗忘端到端验证；P2-08 B9 验收不变量；P3-01 D3 关系事件规格；P3-06 C3 主动开口时机规格。
+- P3-01 D3 关系事件规格；P3-06 C3 主动开口时机规格。
 
 **对账职责**：维护 EVAL 对账区；定期跑场景集；对红/蓝区提交的验收结果做对账复核。
 

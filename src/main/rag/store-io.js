@@ -9,6 +9,8 @@
 // 崩溃会丢光旧数据，已改为直接 rename 替换）。
 
 import * as fsApi from 'node:fs'
+import { reportCatch } from '../maintenance.js'
+import { CATCH_CLASS } from '../../core/maintenance/catch-audit.js'
 import {
   existsSync,
   mkdirSync,
@@ -36,7 +38,12 @@ function atomicWrite(file, buf) {
 function readText(file) {
   try {
     return existsSync(file) ? readFileSync(file, 'utf8') : ''
-  } catch {
+  } catch (err) {
+    // B8：读存储失败**不等于**"这个文件本来就没有"。
+    // 旧实现直接返回空串，于是"meta 读不出来"会被上层当成"全新库"，
+    // 用户看到的现象是"记忆突然清空了"。这里按不可静默持久化上报，
+    // 让轨迹里能查到是哪一次读失败把空串喂上去的。
+    reportCatch('rag.store-io.readText', CATCH_CLASS.MUST_PERSIST, err)
     return ''
   }
 }
