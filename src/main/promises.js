@@ -1,6 +1,8 @@
 // 承诺簿只保存可核实的过程与结果；不保存命令正文、文件内容或网页查询参数。
 import { app } from 'electron'
 import { PromiseBook } from '../core/promises/book.js'
+import { reportCatch } from './maintenance.js'
+import { CATCH_CLASS } from '../core/maintenance/catch-audit.js'
 
 let book = null
 export function getPromiseBook() {
@@ -75,29 +77,59 @@ export function detachForgottenSource(sourceId, at = Date.now()) {
 /**
  * 用户选择「一并取消」：清正文 + 级联取消提醒本体与派生内容。
  * 只有仍在提醒链路里的（可执行取消流程）才走这里；已结束的用 `removePromise`。
+ *
+ * 顺序很关键（§11.4 + B8-PROMISE-01）：
+ *   ① 先取消**提醒本体**。外部动作没成就不动承诺簿——用户看到的仍是可管理的原状态，
+ *      可以原样重试；绝不能不取消提醒却把承诺记成"已取消"。
+ *   ② 再改承诺簿（标记取消 + 降级最小履约记录）。这一步写盘失败要如实说，
+ *      因为此时提醒可能已经取消了，记录却是旧的——半完成状态必须可见、可重试。
+ *
+ * @param {string} promiseId
+ * @param {{cancelReminder?:(arg:{id:string})=>{ok:boolean,removed?:number,error?:string}}} [deps]
+ * @returns {{ok:true,id:string,status:string,reminderMissing?:boolean}
+ *          |{ok:false,error:string,retryable?:boolean,reminderCancelled?:boolean,finished?:boolean}}
  */
 export function cancelLinkedPromise(promiseId, { cancelReminder } = {}, at = Date.now()) {
   const store = getPromiseBook()
   const item = store.get(promiseId)
   if (!item) return { ok: false, error: '找不到这条承诺' }
-  if (!FINISHED_STATES.has(item.status)) {
+  if (FINISHED_STATES.has(item.status)) {
+    // 已结束的记录不再走取消流程（取消一个"已完成"没有意义），
+    // 指向删除入口，避免用户点了没反应还以为取消了。
+    return { ok: false, finished: true, error: '这条记录已经结束，请改用删除入口' }
+  }
+
+  // ① 提醒本体先取消
+  let reminder = null
+  if (item.source?.type === 'reminder' && typeof cancelReminder === 'function') {
     try {
-      store.transition(promiseId, 'cancelled', { kind: 'cancelled-with-forgotten-source' }, at)
+      reminder = cancelReminder({ id: item.source.id })
     } catch (err) {
-      console.warn('[promise] 取消关联承诺失败：' + (err?.message || String(err)))
+      reportCatch('promises.cancelLinkedPromise.reminder', CATCH_CLASS.PROMISE, err)
+      return { ok: false, retryable: true, id: promiseId,
+        error: `提醒本体取消失败：${err?.message || err}。承诺没有改动，可以重试。` }
+    }
+    if (reminder && reminder.ok === false) {
+      reportCatch('promises.cancelLinkedPromise.reminder', CATCH_CLASS.PROMISE,
+        new Error(reminder.error || '取消返回失败'))
+      return { ok: false, retryable: true, id: promiseId,
+        error: `提醒本体取消失败：${reminder.error || '未知原因'}。承诺没有改动，可以重试。` }
     }
   }
+  // 提醒本来就不在列表里（removed === 0）不算失败：目标状态已经达成。
+  // 但要说出来，不能让用户以为刚删掉了什么。
+  const reminderMissing = Boolean(reminder && reminder.ok === true && reminder.removed === 0)
+
+  // ② 承诺簿：标记取消 + 降级为最小履约记录
   try {
+    store.transition(promiseId, 'cancelled', { kind: 'cancelled-with-forgotten-source' }, at)
     store.redact(promiseId, at)
   } catch (err) {
-    console.warn('[promise] 取消后降级最小记录失败：' + (err?.message || String(err)))
+    reportCatch('promises.cancelLinkedPromise.book', CATCH_CLASS.MUST_PERSIST, err)
+    return { ok: false, retryable: true, reminderCancelled: true, id: promiseId,
+      error: `承诺记录没能更新：${err?.message || err}。提醒本体已取消，可重试以补齐记录。` }
   }
-  if (item.source?.type === 'reminder' && typeof cancelReminder === 'function') {
-    try { cancelReminder({ id: item.source.id }) } catch (err) {
-      console.warn('[promise] 取消提醒本体失败：' + (err?.message || String(err)))
-    }
-  }
-  return { ok: true, id: promiseId, status: store.get(promiseId)?.status || 'cancelled' }
+  return { ok: true, id: promiseId, status: 'cancelled', reminderMissing }
 }
 
 /** 已结束记录的删除入口：删本地记录，**不重放**外部操作。 */
