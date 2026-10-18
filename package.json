@@ -41,7 +41,6 @@
     "verify:reminder": "node scripts/verify-reminder-delivery.mjs",
     "verify:title-outbound": "node scripts/verify-title-outbound.mjs",
     "verify:crisis-offline": "node scripts/verify-crisis-offline.mjs",
-    "verify:crisis-offline": "node scripts/verify-crisis-offline.mjs",
     "probe:media-real": "node scripts/probe-media-real-settings.mjs",
     "verify:rag": "node scripts/verify-rag.mjs",
     "verify:local-llm": "node scripts/verify-local-llm.mjs"
