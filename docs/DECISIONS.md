@@ -775,3 +775,103 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
   无台词铁律遵守：directive 只写"做什么/不做什么"，没有塞台词样本。
 - **未验证**：`modelHint` 仍为 null，按 2026-10-18 裁决暂缓（要先解"模型建议晚于 system 裁决"的时序），已用测试钉住现状；
   P3-08 导出属阶段三，本阶段不做；真机 NLP 表现（`verify:local-llm` 等）未跑。
+
+## D65（2026-10-19）阶段二蓝区第二轮收口：B8 提醒失败真上报 + C5 取消失败语义 + C5 界面接通（分支 `blue/stage2-c5-fix`，基线 `1b39654`）
+
+> 起因：绿区把 `test/acceptance-b8-promise-failure.test.js` 放到蓝区代码上复跑**失败**——`onDue` 抛错后 `firedAt` 保持 null，
+> 但 `maintenanceHealth().healthy` 仍是 `true`。同时 C5 的 `cancelLinkedPromise` 先改承诺簿再取消提醒本体、且忽略
+> `cancelReminder` 的 `{ok:false}`，界面侧则完全没有操作入口。本轮修这三件事，**不动 `loop.js`、不写任何 API key、
+> 不改绿区评测文档、不自行把 TASKS/EVAL 标 ✅**。
+
+### ① B8：提醒投递失败必须进健康状态（提交 `aa414c6`）
+
+- **根因**：`reminders.js` 的 `tick()` 把 `onDue` 回调的异常吞在 `try` 里——提醒留在列表里等下次重试（这部分是对的），
+  但**健康登记表什么都不知道**，于是"承诺类失败"按 B8 分类本该算红，设置页却显示一切正常。
+  另一条同等严重的路径：回调**返回 false**（未确认送达）时同样静默。
+- **修法**（都在调度入口 `tick()` 内，不新增旁路上报点）：
+  - 抛错 → `reportCatch('reminders.dispatch', CATCH_CLASS.PROMISE, …)`；返回非 `true` → 同样记 PROMISE（消息区分"未确认送达"）；
+    两种都 `continue` **保留提醒供下次重试**，`firedAt` 不动。
+  - 成功送达 → `maintenanceRecover('reminders.dispatch', …)`；**恢复不是删记录**，而是 `lastClass` 归零 + 记 `recoveredAt`（D62 的既有语义），
+    `count` 累计不清零——"反复红过"要看得见。
+  - 调度器节拍改为"正常跑完也恢复"：`tick().then(recover, reportCatch)`，避免一次偶发失败把 `reminders.tick` 站点永久留红。
+  - 提醒正文是用户内容，**不进健康快照**：新增 `safeDispatchMessage(err, text)` 在调用点把正文替换成 `[提醒正文]`
+    （`redactMessage` 只打码盘符/用户目录，不脱敏正文——这个分工必须写清楚，否则后来人会把用户原话写进健康记录）。
+- **测试**：绿区用例 `test/acceptance-b8-promise-failure.test.js` **逐字纳入**蓝区回归（`git show green-stage2-acceptance:…` 落地，`diff` 校验一致）；
+  新增 `test/b8-promise-dispatch.test.js` **3/3**，入口一律 `startReminderEngine` + `tick`（**不用直接调 `reportCatch` 的测试代替调度入口测试**）：
+  D1 回调返回 false、D2 连续两次抛错后成功（`recoveredAt>0` 且 count 不清零）、D3 失败消息与恢复说明都不含提醒正文。
+- **反向验证**：删掉抛错路径的上报 → D2/D3 立刻红；删掉"未送达"路径的上报 → D1 立刻红；还原后 3/3 绿。
+- **界面**：`refreshMaintStatus()` 把"曾出问题但已恢复"单独说出来（`一切正常（N 处曾出问题、已恢复：…）`），不再和"从没出过问题"混为一句。
+
+### ② C5：「一并取消」的失败语义（提交 `88abd02`）
+
+- **根因**：`cancelLinkedPromise` 的顺序是「先标记承诺取消 + 清正文 → 再调提醒本体取消」，并且**忽略 `cancelReminder` 返回的 `{ok:false}`**
+  → 用户看到"已取消"，实际上提醒还在响，而承诺正文已经被清掉、连重试的依据都没了。
+- **修法**：顺序整体反转成「**先提醒本体、后承诺簿**」：
+  1. 已结束记录直接 `{ok:false, finished:true}`，指向删除入口（不再走取消流程）；
+  2. 取消提醒本体——返回 `{ok:false}` 或抛错都**不动承诺簿**，返回 `{ok:false, retryable:true}`，承诺保持可管理、可重试；
+  3. `removed === 0` 不算失败，但返回 `reminderMissing:true` 如实说明"提醒已不在列表"；
+  4. 提醒取消成功后才 `transition + redact`；**承诺簿写盘失败** → 内存回滚 + 返回 `{ok:false, reminderCancelled:true, retryable:true}`，
+     把"半完成"状态如实告诉用户（提醒已取消、承诺簿没改成），下次重试能补齐。
+- **失败分类**（B8 五类）：提醒本体 → `CATCH_CLASS.PROMISE`（站点 `promises.cancelLinkedPromise.reminder`）；
+  承诺簿写盘 → `CATCH_CLASS.MUST_PERSIST`（站点 `…book`）。两类都进健康状态，设置页可查。
+- **测试**：`test/c5-promise-cancel-failure.test.js` **5/5**：返回 `{ok:false}`、抛错且进维护状态、成功取消后正文/证据/落盘全清
+  （且不再进 `selectForContext`、最小记录可删）、monkey-patch `book.persist` 造写盘失败（半完成 + 回滚 + 重试补齐）、已结束记录指向删除入口。
+  既有 `test/c5-promise.test.js` **8/8** 不退化。**反向验证**：换回旧实现 → 4/5 立刻变红。
+
+### ③ C5 用户界面接通（提交 `0cd327f`）
+
+- 此前 `promise:cancel-linked` / `promise:remove` 只在主进程注册，**preload 与 renderer 都没有入口**——功能存在但用户碰不到。
+- **遗忘结果 note**：`confirm()` 后把"已忘记这条记录。这条经历关联着 N 个你单独设的提醒，已保留；可在提醒里一并取消。
+  另有一些较早的承诺没有记录来源，无法确认是否关联，建议你到提醒里自己看一眼"写进 `#ledger-status`，
+  并附「去『她的日程』处理」跳转按钮。**注意一个真 bug**：note 必须写在 `refreshLedger()` **之后**——
+  列表空掉时它会往同一条状态位写"还没有可查看的共同经历。"，把 note 冲掉。
+- **承诺簿行**：按 `linkStatus` 分别渲染——`detached`（来源已遗忘但用户保留）给「**一并取消**」；
+  `linked`/`unknown` 给「取消提醒」（§11.4 原文是"提醒管理界面可提示用户自行检查和取消"，**不越权代劳**）；
+  已结束降级记录给「删除」，并显示"（正文已按隐私策略清除，只保留时间与类别）"。
+- **操作结果**写 `#promise-result`（`aria-live="polite"`），**不在重渲染开头清空**——否则"取消失败"的提示永远活不过一次刷新。
+- **无头环境挂起修复**：`ledger.confirm()` 先弹原生 `dialog.showMessageBox`，无头下 IPC 永久挂起。
+  加 `NAGI_SELFTEST_AUTO_CONFIRM === '1'` 显式开关（与既有 `NAGI_SELFTEST*` 同惯例，**生产不设该变量、行为逐字不变**）。
+- **红线遵守**：不静默取消旧提醒、不按正文相似度猜来源（§11.4 作者裁决原文）。
+- **验收**：新增 `scripts/verify-c5-promise-ui.mjs`（`npm run verify:c5-promise-ui`）**18/18**，全部走真实 Electron + 实际界面调用链
+  （设置 → 她的记忆 → 点「忘记」→ 看 note 与跳转 → 到「她的日程」点「一并取消」→ 注入真 EPERM 看不伪报成功 → 重试 → 删除）。
+  CDP 选窗必须认 `document.body.dataset.mode === 'workbench'`——应用同开桌宠窗与工作台窗，连错窗全部点击打空、断言假失败。
+
+### ④ 本轮交付证据（第 4 项，全部实测）
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| 阶段10 生命周期（B7 改过脚本） | `NAGI_RENDERER_SANDBOX=0 node scripts/verify-stage10-lifecycle.mjs` | **10/10**，退出 0 |
+| 本地 LLM 通道（B7 改过脚本） | `NAGI_RENDERER_SANDBOX=0 npm run verify:local-llm` | **5/7**，见下 |
+| D2 接线防回潮 | `node --test test/d2-purpose-wiring.test.js` | **6/6** |
+| D2 用途参数 | `node --test test/llm-purpose-params.test.js` | **7/7** |
+| D2 意图裁决 | `node --test test/intent.test.js` | **19/19** |
+| 维护状态界面 | `npm run verify:maintenance` | **12/12** |
+| 提醒投递 | `npm run verify:reminder` | **14/14** |
+| C5 界面链路 | `npm run verify:c5-promise-ui` | **18/18** |
+| 构建 | `npm run build` | 退出 0 |
+| **全量单测（可靠可写环境）** | `node --experimental-test-module-mocks --test` | **970 项 / 969 过 / 0 失败 / 1 条件 skip**，复现两次一致 |
+
+- **`verify:local-llm` 5/7 的三项失败全部是缺设备，不是代码回归**：本机**未安装 Ollama**
+  （`ollama` 不在 PATH、`AppData\Local\Programs\Ollama` 与 `Program Files\Ollama` 均无 `ollama.exe`、`127.0.0.1:11434` 连接被拒）。
+  ① `主进程探测本机已安装模型` 需要服务在跑；② `本机缺少所选模型时给出明确状态` 需要服务在跑且装了别的模型；
+  ③ 中断在设置页等 `已就绪`（第 113 行 `waitForFunction`），同样要真服务。**三条路径的文件都不在本批提交内**，
+  B7 对该脚本的改动只是把 `new CalendarSnapshot(profile)` 换成注入式 `new CalendarSnapshot({io, now})`——
+  而复跑中 `模拟日历事件经可信 IPC 只读可见` **通过**，正是这条注入构造在真实路径上的行为证据。
+- **D2 行为证据（不止断言，实跑）**：`resolveLlm(cfg, purpose)` 对 `llm.purposeParams` 的真实解析——
+  配了 `proactive:{temperature:0.2, model:'deepseek-chat-lite'}` / `extract:{temperature:0.2, model:'qwen2.5:7b', baseURL:'http://127.0.0.1:11434/v1/'}` 时，
+  `proactive`/`extract` 两行确实换了模型/温度/端点，`chat`/`diary` 不受影响；**未配 `purposeParams` 时与不传 purpose 逐字一致**；
+  入参对象不被修改。`hasGroundedRefs` 实测：空引用 / 只有正文无 `id` / 有 `id` 无 `source` 三种都返回 `false`，
+  只有 `id`+`source` 齐备才 `true`；`resolveIntent` 对"你还记得我们上次去海边吗"——有据走 `reminisce`、无据退 `brief-ack`（`fallbackFrom:'reminisce'`）、
+  **模型建议 reminisce 但无据同样被挡下**、危机优先于一切。
+- **`modelHint` 仍恒为 null**：`src/main/agent.js:991` 的实际调用点只传 `userText` / `crisis` / `hasGroundedMemory`，**不传 `modelHint`**；
+  `test/d2-purpose-wiring.test.js` 的 `D2-WIRE-02` 用源码正则钉住这一点。遵守既有暂缓裁决，**本轮不自行启用**。
+- **全量测试的环境口径（重要，不要把定向通过写成全量通过）**：
+  - 在沙箱内跑，`test/rag-revocation.test.js` 有 5 项报 `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]`（count 51–53 撞上阈值 50）
+    ——这是清理临时目录时撞上 WorkBuddy 的批量删除守卫，属环境噪音；**单独复跑 `test/rag-revocation.test.js` 5/5 全过**。
+  - 在可靠可写环境（关闭沙箱隔离）重跑全量：**970 项 / 969 过 / 0 失败 / 1 skip**，且**复现两次一致**。
+    那 1 个 skip 是 `pose-guard` / `redform` 里的模型档案条件跳过（`{ skip: skipArchive }` / `{ skip: skipNoModel }`），既有条件，非本批新增。
+  - 因此本轮的结论是**全量通过（可靠环境）**，不是"只有定向用例通过"。
+- **提交链**：`1b39654`（基线/上轮文档回填）→ `aa414c6`（B8）→ `88abd02`（C5 取消失败语义）→ `0cd327f`（C5 界面接通）。
+  交付给绿区后，由绿区在蓝区代码上**独立复验**，再决定阶段二是否关单。
+- **仍未做（不标完成）**：`modelHint` 等红区裁决；renderer ~70 处空 catch 归红区；C5-EXPORT-01 → 阶段三 P3-08；
+  `core/` 全量剩余 134 处边界依赖待排期；承诺簿忘口径待绿区实测；`verify:local-llm` 的 3 项需真机装 Ollama 后才算证据。
