@@ -76,7 +76,7 @@ import { createSystemTools } from '../core/tools/system.js'
 import { createBrowserTools } from '../core/tools/browser.js'
 import { getHa, stopHaSignals, canControlHa, haReadAllowed, haContext } from './signals/ha.js'
 import { createNativeTools } from './native-tools.js'
-import { getSettings, saveSettings } from './settings-store.js'
+import { getSettings } from './settings-store.js'
 import { getSecret, hasSecret } from './keystore.js'
 import { broadcast, getWorkbenchWindow, getPetWindow } from './windows.js'
 import { companionStatus, companionDelivered, companionInteracted } from './companion.js'
@@ -570,12 +570,8 @@ function handleProactive({ mood: hitMood, text, ruleId }) {
 
 /** 启动活动监测（app ready 后调用；幂等）。总开关在 settings.privacy.monitorEnabled */
 export function startActivityMonitor() {
-  // D2：给活动分类打一个**授权时间戳**（只在开启监测且尚未打过时写一次）。
-  // 场景上下文要用它证明"这条事实有授权来源"；用 Date.now() 现编一个授权时间是造假。
-  const privacy = getSettings().privacy || {}
-  if (privacy.monitorEnabled !== false && !privacy.monitorAuthorizedAt) {
-    try { saveSettings({ privacy: { monitorAuthorizedAt: Date.now() } }) } catch { /* 打戳失败就退回 null，不编造 */ }
-  }
+  // D2/裁决 B：授权戳由 monitor 模块统一维护（开启打戳、关闭清零），这里不再重复打，
+  // 免得两处时间戳漂移——设置页显示的那一行必须与场景事实用的是同一个值。
   startMonitor({
     onProactive: handleProactive,
     // 主动搭话的内容由 LLM 现场生成（新人设无台词铁律）；走注入避免循环依赖

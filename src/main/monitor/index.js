@@ -7,7 +7,7 @@ import { createSampler } from './sampler.js'
 import { createMonitorEngine } from '../../core/monitor/engine.js'
 import { collectionAllowed, isBlocked } from '../../core/monitor/privacy.js'
 import { NagiPersona } from '../../core/persona.js'
-import { getSettings } from '../settings-store.js'
+import { getSettings, saveSettings } from '../settings-store.js'
 
 const WINDOW_POLL_SEC = 5 // PowerShell 刷新率（窗口信息多久更新一次）
 
@@ -44,6 +44,9 @@ function createFakeSampler() {
  * 不传或生成失败都返回空串 → 引擎跳过、她这次不开口（不回退到任何预设句子）。
  */
 export function startMonitor({ onProactive, onPresenceSample, log = console.log, composeText = null } = {}) {
+  if (timer) return
+  // 裁决 B：启动时补齐授权戳（设置页读到的是主进程打的戳，不是界面现编的）
+  syncAuthorizationStamp()
   if (timer) return
   const selftest = process.env.NAGI_SELFTEST_MONITOR === '1'
   const cfg = getSettings().privacy || {}
@@ -130,7 +133,30 @@ export function stopMonitor() {
   syncSamplerNow = () => {}
 }
 
+/**
+ * 作者裁决 B（CONTRACTS 作者裁决登记）：维护 `privacy.monitorAuthorizedAt`。
+ *
+ * 设置页要显示「监测于 <时间> 授权」，就得有一个**可信的授权时刻**；
+ * 这个戳只能由主进程在"监测真的开着"时打，不能由界面拿当前时间去填。
+ * 规则：
+ *   · 开启监测且还没有戳 → 打一次；
+ *   · 关掉监测 → 清零（下次再开重新记）；
+ *   · 勿扰 / 只陪着是**临时**状态，不重置授权时间。
+ */
+function syncAuthorizationStamp() {
+  const privacy = getSettings().privacy || {}
+  const enabled = privacy.monitorEnabled !== false
+  const at = Number(privacy.monitorAuthorizedAt) || 0
+  try {
+    if (enabled && at <= 0) saveSettings({ privacy: { monitorAuthorizedAt: Date.now() } })
+    else if (!enabled && at > 0) saveSettings({ privacy: { monitorAuthorizedAt: 0 } })
+  } catch {
+    /* 打戳失败就退回"不显示"，绝不用当前时间冒充 */
+  }
+}
+
 export function refreshMonitorPrivacy() {
+  syncAuthorizationStamp()
   syncSamplerNow()
 }
 

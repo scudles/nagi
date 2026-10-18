@@ -564,6 +564,8 @@
         </ul>
         <label class="check"><input id="set-monitor" type="checkbox" /> 开启活动监测</label>
         <label class="check"><input id="set-title-outbound" type="checkbox" /> 允许窗口标题进入对话上下文（关掉后只保留类别判断）</label>
+        <!-- 作者裁决 B：让用户能确认"什么时候开的监测"。时间由主进程打戳，界面只负责如实显示。 -->
+        <div id="monitor-authorized-at" class="dim" aria-live="polite" hidden></div>
         <label>黑名单（每行一条，支持 * 通配）
           <textarea id="set-blacklist" rows="4" placeholder="例如：&#10;*密码*&#10;*银行*&#10;*1password*"></textarea>
         </label>

@@ -95,6 +95,39 @@ check('B2 默认显示"正常"（没有失败点）', /一切正常/.test(ui.tex
 const cleared = await page.evaluate(() => window.nagi.maintenance.clear())
 check('C1 清空返回成功', cleared?.ok === true, JSON.stringify(cleared))
 
+// ---- D：作者裁决 B —— 设置页显示「监测于 <时间> 授权」 ----
+// 走设置保存的真实通道改隐私设置，再由主进程打戳/清零，最后重开设置面板读那一行。
+async function reopenSettings() {
+  await page.evaluate(() => document.getElementById('btn-close-settings')?.click())
+  await sleep(300)
+  await page.evaluate(() => (document.getElementById('btn-open-settings') || document.getElementById('btn-pet-settings'))?.click())
+  await sleep(700)
+}
+const readAt = () => page.evaluate(() => {
+  const el = document.getElementById('monitor-authorized-at')
+  return { hidden: el?.hidden ?? null, text: el?.textContent || '' }
+})
+
+const d0 = await readAt()
+check('D1 未授权时不显示授权行', d0.hidden === true && d0.text === '', JSON.stringify(d0))
+
+await page.evaluate(() => window.nagi.settings.set({ privacy: { monitorEnabled: true } }))
+await sleep(500)
+const stamp = await page.evaluate(async () => (await window.nagi.settings.get())?.privacy?.monitorAuthorizedAt)
+check('D2 开启监测后主进程打了授权戳', Number(stamp) > 0, 'monitorAuthorizedAt=' + stamp)
+
+await reopenSettings()
+const d1 = await readAt()
+check('D3 授权行显示出来且格式为「监测于 … 授权」', d1.hidden === false && /^监测于 .+ 授权$/.test(d1.text), d1.text)
+
+await page.evaluate(() => window.nagi.settings.set({ privacy: { monitorEnabled: false } }))
+await sleep(500)
+const stampOff = await page.evaluate(async () => (await window.nagi.settings.get())?.privacy?.monitorAuthorizedAt)
+check('D4 关掉监测后授权戳清零', Number(stampOff) === 0, 'monitorAuthorizedAt=' + stampOff)
+await reopenSettings()
+const d2 = await readAt()
+check('D5 关掉后授权行重新隐藏', d2.hidden === true && d2.text === '', JSON.stringify(d2))
+
 const failed = checks.filter((c) => !c.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) {

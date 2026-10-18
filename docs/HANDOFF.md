@@ -222,6 +222,29 @@
 1. `pickSceneActivity` 放在 `core/context.js`；媒体状态走 `musicStatus(false)`（读缓存，不新起探针）——请确认不会每轮对话都拉起一次媒体探针进程。
 2. 设置页新增一块只读区域（连接组顶部），未改任何既有开关语义；若你认为设置页结构要冻结，我可以挪到工作台单独面板。
 
+### 阶段2 蓝区三批（2026-10-18，作者裁决 B：监测授权时间可见）
+
+**改动文件**
+- `src/renderer/index.html`（监测区新增 `#monitor-authorized-at`，默认 hidden）、`src/renderer/js/main.js`（`renderMonitorAuthorizedAt`；保存后即时刷新；**打开设置时重取 settings**）、`src/main/monitor/index.js`（`syncAuthorizationStamp`：开启打戳 / 关闭清零 / 勿扰不重置；`refreshMonitorPrivacy` 与 `startMonitor` 都经过它）、`src/main/agent.js`（撤掉重复打戳，避免两处时间戳漂移）
+- 新增测试：`test/monitor-authorized-visible.test.js` 4 项（展示位/位置/文案语义/打戳只在主进程）；`scripts/verify-maintenance-ui.mjs` 增 D 段 5 项
+
+**已验证结果**
+- `npm test`：**912 项 / 911 通过 / 0 失败 / 1 skip，exit 0**
+- `npm run build`：**exit 0**
+- `npm run verify:maintenance` **12/12**（原 7 + 裁决 B 5）、`verify:title-outbound` 7/7、`verify:crisis-offline` 11/11、`verify:reminder` 14/14
+
+**口径（按裁决 B 冻结，勿改语义）**
+- 文案固定为「监测于 <本地化时间> 授权」；无可信戳时**整行不显示**，不显示"未授权"也不拿当前时间凑。
+- 时间只来自主进程 `privacy.monitorAuthorizedAt`；界面不写这个字段。
+- 打戳规则：开启监测且无戳 → 打；关掉监测 → 清零；勿扰 / 只陪着是临时状态，**不重置**。
+
+**顺带修的真 bug（不是为测试改）**
+- 设置面板原来用渲染层缓存的 `settings` 填表，托盘/另一窗/主进程改过的字段会停在旧值上——裁决 B 这行正好暴露了它（真机上首次跑 D3/D5 失败就是这个）。现在 `openSettings()` 每次重取一次 settings。
+
+**请豆包对账**
+1. 这一行属于"状态展示"，没有任何动画/交互；若你说的"设置页监测区域"指的不是 `data-group="companion"` 里的「活动监测」块，请指出我挪。
+2. B8 即时提示的判定信号我按你给的口径**没有新增任何弹窗**（保存失败仍走内联 + 设置页状态），本轮只加了裁决 B 这一行。
+
 
 
 ---

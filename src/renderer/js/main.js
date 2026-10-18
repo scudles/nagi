@@ -1140,10 +1140,13 @@ function maybeShowMonitorNotice() {
 }
 
 /* ---------------- 设置页 ---------------- */
-function openSettings() {
+async function openSettings() {
   const overlay = document.getElementById('settings-overlay')
   if (!overlay) return
   overlay.classList.remove('hidden')
+  // 每次打开都重取一次设置：托盘/另一个窗口/主进程都可能改过它，
+  // 用缓存填表会让"监测于 … 授权"这类主进程写的字段停在旧值上（作者裁决 B 要显示的就是它）。
+  try { settings = await window.nagi.settings.get() } catch { /* 取不到就用旧缓存 */ }
   fillSettingsForm()
   refreshCalendarStatus()
   refreshMusicStatus()
@@ -1351,6 +1354,24 @@ async function refreshHotkeyStatus() {
   el.textContent = '热键已在系统层注册：Ctrl + Alt + O / Ctrl + Alt + Shift + O / Ctrl + Alt + E。若某个组合被其它软件占用，会在应用日志里列出。'
 }
 
+/**
+ * 作者裁决 B：显示「监测于 <时间> 授权」。
+ * 时间只来自主进程打的 `privacy.monitorAuthorizedAt`；没有值（从未授权）就整行不显示，
+ * 也不用当前时间凑一个——那不是"授权时间"，是编造。
+ */
+function renderMonitorAuthorizedAt(privacy) {
+  const el = document.getElementById('monitor-authorized-at')
+  if (!el) return
+  const at = Number(privacy?.monitorAuthorizedAt) || 0
+  if (at > 0) {
+    el.hidden = false
+    el.textContent = `监测于 ${new Date(at).toLocaleString()} 授权`
+  } else {
+    el.hidden = true
+    el.textContent = ''
+  }
+}
+
 function fillSettingsForm() {
   fillOutfitAndAmbient()
   // provider 下拉
@@ -1414,6 +1435,7 @@ function fillSettingsForm() {
   const privacy = settings?.privacy || {}
   const monEl = document.getElementById('set-monitor')
   if (monEl) monEl.checked = privacy.monitorEnabled !== false
+  renderMonitorAuthorizedAt(privacy)
   // C4：独立的「标题出站」开关，默认开启（D63）。不随监测总开关联动。
   const titleEl = document.getElementById('set-title-outbound')
   if (titleEl) titleEl.checked = privacy.titleOutbound !== false
@@ -2918,6 +2940,8 @@ function wireSettingsPage() {
       }
     })
     settings = await window.nagi.settings.get()
+    // 保存后主进程会给"刚打开监测"打授权戳，这里立刻把它显示出来
+    renderMonitorAuthorizedAt(settings?.privacy || {})
     await refreshCompanionStatus()
     ui.addToolLog('陪伴与监测设置已保存')
   })
