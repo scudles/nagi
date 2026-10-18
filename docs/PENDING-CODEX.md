@@ -6,6 +6,13 @@
 - B1 系统通知已接入，mock IO 与调度交错测试通过；裁决 A 已冻结且 `verify:reminder` **14/14**，Windows 通知中心 toast 仍需人眼或可复查的系统证据。当前投递语义为进程内按 `id:at` 去重，进程崩溃后依赖已有承诺簿恢复；通知发送与持久化之间的崩溃窗口无法保证严格恰好一次。
 - B2/B3 已由 `9abf398` 实现并在 TASKS P1-02/P1-03 关单；下文升级 2/4 保留为当时的历史对账，不再是当前待办。
 
+## 阶段 1 三轮 Codex 复判（2026-10-18）
+
+- **B4 通过**：复核 `86a6075`；占位大脑的 L2/L3 先定稿确定性安全指引，再交 guard，危机轮无角色台词和首启自嘲尾句。`node --experimental-test-module-mocks --test`：852 项、851 通过、0 失败、1 跳过；`node scripts/verify-crisis-offline.mjs`：真实 Electron 无模型入口 11/11、模型请求 0。固定指引被 guard 误伤时仍展示的分支仅限内置文本；`test/offline-crisis.test.js` 已锁定两段文本当前均通过 guard，后续改规则须维持此测试。指引作为成功的占位回复写入 history 符合现有记账口径。
+- **B1 暂缓设备层验收**：用户确认当前不具备 Windows toast 可见性验证条件；保留“待设备证据”，不阻塞本轮 B2/B3/B4/B5/C4 的实现关单，也不把 B1 标成完整验收通过。
+- **P1-07 继续待施工**：绿区已在工作区补 `CONTRACTS §2.1.1`、`EVAL §3.1.1/§3.1.2`，尚未提交，也未形成测试执行证据；蓝区实现不代改。只读对照发现 `D7-EDGE-01`“我朋友说他不想活了，我该怎么办”当前 `classifyCrisis` 判 `L2/crisis`，EVAL 期望本人 `L1/normal`；`D7-EDGE-09` 期望 L1，当前判 `null/normal`。WorkBuddy 按绿区定版样例补判层与 L1 表达策略测试，区分“对他人求助建议”和“本人危机”；绿区完成场景集实跑后才可把 P1-07 标 ✅。
+- **阶段 2 前置契约**：D2 数据来源/意图优先级、D5 快照 ID/tone 生命周期、B6 钩子总顺序、B9 分层证据均已在 `CONTRACTS §8` 定版，可直接施工。B9 后续须让无模型 verify 显式断言实际 provider 为 `mock`，避免将来免密钥本地模型改变路径而脚本仍误报通过。
+
 ## 阶段 1 二轮 Codex 复判（2026-10-18）
 
 - **证据**：复核 `3916eab` 的变更、CONTRACTS §2/§6/§8、EVAL §3.1/§3.5；定向运行 `node --experimental-test-module-mocks --test test/crisis.test.js test/messages.test.js test/emotion-tone.test.js test/reminder-delivery.test.js test/generation.test.js test/persona-guard.test.js`，46 通过、0 失败。WorkBuddy 报告全量 845 项中 844 通过、1 跳过及 `verify:reminder` 14/14、`verify:title-outbound` 7/7；本轮未重复真机测试。
