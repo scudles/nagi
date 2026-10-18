@@ -1386,6 +1386,9 @@ function fillSettingsForm() {
   const privacy = settings?.privacy || {}
   const monEl = document.getElementById('set-monitor')
   if (monEl) monEl.checked = privacy.monitorEnabled !== false
+  // C4：独立的「标题出站」开关，默认开启（D63）。不随监测总开关联动。
+  const titleEl = document.getElementById('set-title-outbound')
+  if (titleEl) titleEl.checked = privacy.titleOutbound !== false
   const dndEl = document.getElementById('set-dnd')
   if (dndEl) dndEl.checked = privacy.doNotDisturb === true
   const presenceEl = document.getElementById('set-only-presence')
@@ -2868,6 +2871,7 @@ function wireSettingsPage() {
     await window.nagi.settings.set({
       privacy: {
         monitorEnabled: document.getElementById('set-monitor').checked,
+        titleOutbound: document.getElementById('set-title-outbound').checked,
         doNotDisturb: document.getElementById('set-dnd').checked,
         onlyPresence: document.getElementById('set-only-presence').checked,
         blacklist

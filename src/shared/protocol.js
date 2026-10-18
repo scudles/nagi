@@ -219,6 +219,7 @@ export const DEFAULT_SETTINGS = {
   },
   privacy: {
     monitorEnabled: true, // 活动监测总开关（首次启动有告知弹窗，可一键关）
+    titleOutbound: true, // C4/D63：窗口标题可进上下文（独立开关，默认开启；关掉只保留类别判断）
     doNotDisturb: false, // 勿扰模式：临时停采，不落任何样本
     onlyPresence: false, // 只陪着：不监测活动、不主动开口；手动对话与戳击仍可用
     noticeShown: false, // 「她在观察你在用什么程序」的首次告知是否已展示

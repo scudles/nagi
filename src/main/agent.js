@@ -83,7 +83,8 @@ import { getRag } from './rag/index.js'
 import { getLedger } from './ledger.js'
 import { runRecordedTool } from './promises.js'
 import { upcomingCalendarContext } from './signals/calendar.js'
-import { currentMusicContext } from './signals/music.js'
+import { currentObservationContext } from './signals/music.js'
+import { titleOutboundAllowed } from '../core/signals/title-outbound.js'
 import { deferOptionalExpression } from './extensions/imperfection.js'
 import { currentGeoContext } from './signals/geo.js'
 import {
@@ -883,6 +884,26 @@ async function recalledPieces(query) {
  * 组装本轮消息。之所以是 async：开 RAG 时要先检索一次「相关往事」再拼上下文。
  * 检索自带超时与静默降级，不会拖慢回复（见 recalledPieces）。
  */
+/**
+ * C4（契约 §6.3）：媒体 + 前台两条观测，**出站前**按当前设置与 epoch 重验。
+ * 为什么在出站处而不是采样处：采样到拼进提示词之间隔着几百毫秒，
+ * 这期间用户可能刚关掉开关或切勿扰——"采样时合法"不等于"发出时合法"。
+ */
+async function observationContextLines() {
+  const beforeEpoch = presence.snapshot().epoch
+  const obs = await currentObservationContext()
+  const decision = titleOutboundAllowed({
+    settings: getSettings(),
+    beforeEpoch,
+    afterEpoch: presence.snapshot().epoch,
+    hasSample: obs.foreground.length > 0
+  })
+  if (obs.foreground.length && !decision.send) {
+    console.log('[c4] 标题这条没出站：' + decision.reason)
+  }
+  return [...obs.media, ...(decision.send ? obs.foreground : [])]
+}
+
 async function buildMessages(userText, supportsNative) {
   ensureHistory()
   const snap = mood.current()
@@ -904,7 +925,7 @@ async function buildMessages(userText, supportsNative) {
     // 她替你记着的提醒：让她知道「有这几件事等着」，别把答应过的事忘了
     // 媒体状态是 async（2026-10-18）：缓存过期时当场探一次（带 1.5 秒预算），
     // 否则她永远不知道自己现在在用哪个播放器听什么，只能去开网页猜。
-    extra: [...upcomingReminderLines(), ...upcomingCalendarContext(), ...(await currentMusicContext()), ...currentGeoContext(), ...haContext()]
+    extra: [...upcomingReminderLines(), ...upcomingCalendarContext(), ...(await observationContextLines()), ...currentGeoContext(), ...haContext()]
   })
   return [
     { role: 'system', content: buildSystemPrompt({ nativeTools: supportsNative, context }) },

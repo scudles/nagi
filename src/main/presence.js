@@ -24,7 +24,9 @@ export function createPresenceService({now=Date.now,getSettings=()=>({}),getMood
   function refresh() {
     if(!started)return
     const config=presenceConfig(getConfig()), privacy=getSettings().privacy||{}
-    const guard=JSON.stringify([config.enabled,config.awayEnabled,config.reunionEnabled,privacy.monitorEnabled,privacy.doNotDisturb,privacy.onlyPresence,privacy.blacklist])
+    // C4：titleOutbound 也是授权开关，改了必须让 epoch 变——否则采样之后、
+    // 出站之前的那一跳会拿旧授权把标题发出去（契约 §6.3）。
+    const guard=JSON.stringify([config.enabled,config.awayEnabled,config.reunionEnabled,privacy.monitorEnabled,privacy.titleOutbound,privacy.doNotDisturb,privacy.onlyPresence,privacy.blacklist])
     if(guard!==lastGuard) {epoch++;lastGuard=guard}
     const next=config.persistActivities
     if(next!==persistent) {

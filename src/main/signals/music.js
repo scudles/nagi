@@ -162,17 +162,30 @@ const CONTEXT_BUDGET_MS = 1500
  * 前台拿不到（监测没开/勿扰/黑名单命中）就静默跳过，绝不影响媒体那条。
  */
 export async function currentMusicContext(now = Date.now()) {
+  const { media, foreground } = await currentObservationContext(now)
+  return [...media, ...foreground]
+}
+
+/**
+ * C4：把媒体与前台**分开返回**，让出站处能分别裁决（契约 §6.3）。
+ * 标题那条要不要发，由 agent.js 在真正调用模型前用 titleOutboundAllowed() 再验一次；
+ * 这里只负责"在开关关掉时干脆不采"。
+ * @returns {Promise<{media:string[], foreground:string[]}>}
+ */
+export async function currentObservationContext(now = Date.now()) {
   const media = await mediaContext(now)
-  let fg = []
+  let foreground = []
+  // 独立开关：关掉即不进这条链（不采、不拼、不发）
+  if (getSettings().privacy?.titleOutbound === false) return { media, foreground }
   try {
     const { foregroundSample } = await import('../monitor/index.js')
     const sample = await foregroundSample()
-    fg = sample ? foregroundContext(sample, Date.now()) : []
+    foreground = sample ? foregroundContext(sample, Date.now(), { enabled: true }) : []
   } catch (err) {
     // 前台感知是加分项，任何异常都不能让媒体那条一起消失
     console.warn('[music] 前台窗口上下文不可用：', err?.message || err)
   }
-  return [...media, ...fg]
+  return { media, foreground }
 }
 
 async function mediaContext(now = Date.now()) {
