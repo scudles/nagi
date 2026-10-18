@@ -8,6 +8,7 @@
 // [mock-io] 层：真实文件系统 + 真实 RAG store，只 mock electron 的 userData 路径。
 import { test, mock, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -74,7 +75,7 @@ test('C5-FORGET-01：遗忘后便签也不再引用原文', async () => {
 
   // 五处都不可引用
   assert.equal(memoryLines().some((l) => l.includes('香菜')), false, '记忆')
-  assert.deepEqual(rag.recall('香菜').results || [], [], '检索')
+  assert.deepEqual((await rag.recall('香菜')).results, [], '检索')
   assert.equal(rag.io.readPending().some((p) => String(p.text || '').includes('香菜')), false, '待嵌队列')
   const histRaw = existsSync(join(userData, 'history.json')) ? readFileSync(join(userData, 'history.json'), 'utf8') : ''
   assert.equal(histRaw.includes('香菜'), false, '历史')
@@ -92,6 +93,15 @@ test('C5-RESTART-01：重新从磁盘加载后仍不可引用（tombstone 持久
   const histRaw = existsSync(join(userData, 'history.json')) ? readFileSync(join(userData, 'history.json'), 'utf8') : ''
   assert.equal(histRaw.includes('香菜'), false)
   assert.equal(readFileSync(join(userData, 'notes.json'), 'utf8').includes('香菜'), false)
+  // 真正启动一个全新的 Node 进程，重新 import 主进程模块并从相同 profile 读盘。
+  const check = spawnSync(process.execPath, [
+    '--experimental-test-module-mocks',
+    join(process.cwd(), 'scripts', 'fixtures', 'forget-restart-check.mjs'),
+    userData
+  ], { cwd: process.cwd(), encoding: 'utf8', timeout: 15000 })
+  assert.equal(check.status, 0, check.stderr || check.stdout)
+  const fresh = JSON.parse(check.stdout.trim().split(/\r?\n/).at(-1))
+  assert.deepEqual(fresh, { memory: false, history: false, notes: false, rag: false })
 })
 
 test('C5-BG-01：遗忘后再跑一次落盘/嵌入，不会把旧内容写回', async () => {
