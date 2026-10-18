@@ -74,3 +74,57 @@ test('嵌入推理进行中撤销，完成后不会把旧文字重新写回', as
     rag.dispose()
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+test('嵌入等待期间新增记忆，结算只移除已嵌入项', async () => {
+  const dir = mkdtempSync(join(process.cwd(), '.nagi-rag-revoke-'))
+  try {
+    const rag = service(dir)
+    const first = rag.ingestTurn({ user: '先入队', assistant: '收到', at: 1000 })
+    let resolveEmbed
+    let started
+    const began = new Promise((resolve) => { started = resolve })
+    const vec = new Float32Array(rag.store.dim)
+    vec[0] = 1
+    rag._pickEmbedder = () => ({ dim: rag.store.dim, embed: () => {
+      started()
+      return new Promise((resolve) => { resolveEmbed = resolve })
+    } })
+    const running = rag.embedPending()
+    await began
+    const added = rag.ingestTurn({ user: '嵌入时新入队', assistant: '收到', at: 2000 })
+    resolveEmbed([vec])
+    await running
+    assert.deepEqual(rag.io.readPending().map((x) => x.id), [added.id])
+    assert.equal(rag.store.chunkById(first.id)?.id, first.id)
+    assert.equal(rag.pendingCount, 1)
+    rag.dispose()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('嵌入拒绝后保留旧任务和等待期间新增任务，下一轮可重试', async () => {
+  const dir = mkdtempSync(join(process.cwd(), '.nagi-rag-revoke-'))
+  try {
+    const rag = service(dir)
+    const first = rag.ingestTurn({ user: '失败后重试', assistant: '收到', at: 1000 })
+    let rejectEmbed
+    let started
+    const began = new Promise((resolve) => { started = resolve })
+    rag._pickEmbedder = () => ({ dim: rag.store.dim, embed: () => {
+      started()
+      return new Promise((_resolve, reject) => { rejectEmbed = reject })
+    } })
+    const running = rag.embedPending()
+    await began
+    const added = rag.ingestTurn({ user: '失败时新入队', assistant: '收到', at: 2000 })
+    rejectEmbed(new Error('temporary failure'))
+    await running
+    assert.deepEqual(rag.io.readPending().map((x) => x.id), [first.id, added.id])
+    assert.equal(rag.pendingCount, 2)
+    const vec = new Float32Array(rag.store.dim)
+    vec[0] = 1
+    rag._pickEmbedder = () => ({ dim: rag.store.dim, embed: async () => [vec] })
+    assert.equal((await rag.embedPending()).embedded, 2)
+    assert.deepEqual(rag.io.readPending(), [])
+    rag.dispose()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})

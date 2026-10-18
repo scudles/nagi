@@ -8,6 +8,7 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { reminderOccurrenceKey } from '../core/reminders/delivery.js'
 import {
   normalizeItem,
   normalizeItems,
@@ -33,6 +34,7 @@ const STALE_MS = 12 * 3600000
 let items = null
 let timer = null
 let onDueCb = null
+const dispatching = new Set()
 
 const filePath = () => join(app.getPath('userData'), 'reminders.json')
 
@@ -212,7 +214,9 @@ export function completeReminder(id, now = Date.now()) {
 
 /* ---------------- 调度 ---------------- */
 
-function tick(log) {
+// 2026-10-17：改为 async —— 提醒的一句话已由 LLM 现场生成（新人设无台词铁律），
+// onDue 回调因此变成异步。同步回调仍完全兼容（下面判断了 thenable）。
+export async function tick(log) {
   initReminders()
   const now = Date.now()
 
@@ -234,23 +238,34 @@ function tick(log) {
     return
   }
   for (const it of due) {
-    let delivered = false
+    const occurrenceAt = it.at
+    const key = reminderOccurrenceKey(it)
+    if (dispatching.has(key)) continue
+    dispatching.add(key)
     try {
-      delivered = onDueCb?.({ ...it, when: formatWhen(it.at, now) }) === true
-    } catch (err) {
-      log && log('[reminder] 回调失败：' + (err && err.message ? err.message : err))
+      let delivered = false
+      try {
+        const r = onDueCb?.({ ...it, when: formatWhen(it.at, now), deliveryKey: key })
+        // 兼容同步（返回 boolean）与异步（返回 Promise<boolean>）两种回调
+        delivered = (r && typeof r.then === 'function' ? await r : r) === true
+      } catch (err) {
+        log && log('[reminder] 回调失败：' + (err && err.message ? err.message : err))
+      }
+      if (!delivered) continue
+      if (!items.includes(it) || it.doneAt || it.missedAt || it.firedAt || it.at !== occurrenceAt) continue
+      markReminder(it.id, 'delivered', { kind: 'notification-dispatched' }, now)
+      const next = advanceRepeat(it, now)
+      if (next) {
+        const idx = items.findIndex((x) => x.id === it.id)
+        if (idx >= 0) items[idx] = next
+      } else {
+        it.firedAt = now
+      }
+      save()
+      if (next) rescheduleReminder(it.id, next.at, now)
+    } finally {
+      dispatching.delete(key)
     }
-    if (!delivered) continue
-    markReminder(it.id, 'delivered', { kind: 'notification-dispatched' }, now)
-    const next = advanceRepeat(it, now)
-    if (next) {
-      const idx = items.findIndex((x) => x.id === it.id)
-      if (idx >= 0) items[idx] = next
-    } else {
-      it.firedAt = now
-    }
-    save()
-    if (next) rescheduleReminder(it.id, next.at, now)
   }
 }
 
@@ -277,7 +292,8 @@ export function startReminderEngine({ onDue, log = console.log, checkSec } = {})
   const sec = selftest ? 1.2 : Math.max(5, Number(checkSec) || DEFAULT_CHECK_SEC)
   if (selftest && process.env.NAGI_SELFTEST_REMINDER_SEED !== '0') seedSelftest(log)
 
-  timer = setInterval(() => tick(log), Math.round(sec * 1000))
+  // tick 已是 async：这里不 await（节拍不需要等），但要兜住可能的 rejection
+  timer = setInterval(() => { tick(log).catch(() => {}) }, Math.round(sec * 1000))
   timer.unref?.()
   log(`[reminder] 日程提醒已启动（每 ${Math.round(sec)} 秒检查一次${selftest ? '，自测模式' : ''}）`)
 }

@@ -395,7 +395,8 @@ export class RagService {
           break
         }
       }
-      const remain = queue.filter((x) => !done.has(x.id) && !this.revoked.has(x.id))
+      // 嵌入期间可能又追加了记忆；结算必须以当前队列为准，只摘掉本轮完成的 ID。
+      const remain = this.io.readPending().filter((x) => !done.has(x.id) && !this.revoked.has(x.id))
       this.io.rewritePending(remain)
       this.pendingCount = remain.length
       this._covered = null

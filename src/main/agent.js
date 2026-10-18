@@ -2,13 +2,15 @@
 // Agent 会话编排：组装 LLM 客户端 + 工具集 + 安全门 + 确认回路，跑 core/agent/loop。
 // 未配置 API Key 时回退到本地占位大脑，保证应用开箱可用。
 
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, Notification } from 'electron'
 import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AGENT_EVENT, AGENT_STATE, EVT, IPC, SECRET_KEYS } from '../shared/protocol.js'
 import { runAgentLoop, buildSystemPrompt } from '../core/agent/loop.js'
 import { createPersonaGuard } from '../core/agent/persona-guard.js'
+import { createReunionCoordinator } from '../core/agent/reunion-coordinator.js'
+import { createReminderDelivery } from '../core/reminders/delivery.js'
 import { createConfirmationGate } from '../core/safety/confirmation.js'
 import { createPresenceService, setPresenceService } from './presence.js'
 import { createPresenceStore } from './presence-store.js'
@@ -132,7 +134,7 @@ const presence = createPresenceService({
   onChange:snapshot=>broadcast(PRESENCE_EVENT,snapshot)
 })
 setPresenceService(presence)
-let reunionController = null
+const reunion = createReunionCoordinator()
 
 function broadcastMood() {
   broadcast(EVT.MOOD, mood.current())
@@ -446,40 +448,38 @@ function saySomething({ mood: hitMood, text, kind = 'proactive', source = 'monit
 async function handleReunion(event) {
   const eligible = () => presence.allowed() && presenceConfig(getSettings().presence).reunionEnabled && !busy &&
     [getPetWindow(),getWorkbenchWindow()].some(w=>w&&!w.isDestroyed()&&w.isVisible())
-  if (!eligible() || reunionController || !companionStatus().allowed) return false
-  const controller = new AbortController()
-  reunionController = controller
-  const timeout = setTimeout(()=>controller.abort(),15000)
+  if (!eligible() || reunion.active || !companionStatus().allowed) return false
   // BLUE-4（契约 §5）：归来开口属「可选表达」，概率门只在这一层；概率默认 0 → 恒不延迟。
   // 延迟只意味着「这次选择不说」，绝不是遗忘：决策记录保留、10 分钟内可恢复，且不说谎。
-  try {
-    const gate = deferOptionalExpression(`reunion:${event.id}`, { kind: 'optional-chat', domain: 'chat', text: '归来开口' })
-    if (gate.defer) return false
-  } catch { /* 门禁异常不能让她闭嘴：按不延迟处理 */ }
-  const snapshot = presence.snapshot(), epoch = snapshot.epoch
-  const context = buildContextBlock({mood:mood.current(),relation:relationSummary(),rhythm:snapshot.rhythm,
-    activities:snapshot.activities.filter(a=>event.activityIds.includes(a.id)),recentReplies:recentAssistantReplies(history,4)})
-  try {
-    let candidate = await presenceHooks.provideProactiveContent({event,context,signal:controller.signal})
-    if (!candidate && !controller.signal.aborted) {
-      const llm=resolveLlm(getSettings().llm||{}), local=isLocalLlm(llm), useCloud=llm.provider==='workbuddy'
-      const hasKey=hasSecret(SECRET_KEYS.LLM_API_KEY)
-      if (process.env.NAGI_FAKE_LLM==='1' || (!useCloud&&!local&&!hasKey) || (useCloud&&!cloudBrainStatus().ok)) return false
-      const client=useCloud?null:createClient({apiKey:apiKeyForLlm(llm,hasKey&&!local?getSecret(SECRET_KEYS.LLM_API_KEY):null),baseURL:llm.baseURL})
-      const text=await callModelOnce({client,llm,useCloud,signal:controller.signal,messages:[
-        {role:'system',content:buildSystemPrompt({nativeTools:true,context})+'\n【事件输出契约】仅回应归来事件；没有工具执行，模拟活动不是实际读书/外界经历；未知时间不补造，不索取解释、回来或安慰。'},
-        {role:'user',content:JSON.stringify({request:'reunion-response',event})}
-      ]})
-      const parsed=extractEmotionTag(text)
-      candidate={text:parsed.text,mood:parsed.emotion}
+  return reunion.run({
+    shouldDefer: () => deferOptionalExpression(`reunion:${event.id}`, { kind: 'optional-chat', domain: 'chat', text: '归来开口' }).defer,
+    work: async (signal) => {
+      const snapshot = presence.snapshot(), epoch = snapshot.epoch
+      const context = buildContextBlock({mood:mood.current(),relation:relationSummary(),rhythm:snapshot.rhythm,
+        activities:snapshot.activities.filter(a=>event.activityIds.includes(a.id)),recentReplies:recentAssistantReplies(history,4)})
+      try {
+        let candidate = await presenceHooks.provideProactiveContent({event,context,signal})
+        if (!candidate && !signal.aborted) {
+          const llm=resolveLlm(getSettings().llm||{}), local=isLocalLlm(llm), useCloud=llm.provider==='workbuddy'
+          const hasKey=hasSecret(SECRET_KEYS.LLM_API_KEY)
+          if (process.env.NAGI_FAKE_LLM==='1' || (!useCloud&&!local&&!hasKey) || (useCloud&&!cloudBrainStatus().ok)) return false
+          const client=useCloud?null:createClient({apiKey:apiKeyForLlm(llm,hasKey&&!local?getSecret(SECRET_KEYS.LLM_API_KEY):null),baseURL:llm.baseURL})
+          const text=await callModelOnce({client,llm,useCloud,signal,messages:[
+            {role:'system',content:buildSystemPrompt({nativeTools:true,context})+'\n【事件输出契约】仅回应归来事件；没有工具执行，模拟活动不是实际读书/外界经历；未知时间不补造，不索取解释、回来或安慰。'},
+            {role:'user',content:JSON.stringify({request:'reunion-response',event})}
+          ]})
+          const parsed=extractEmotionTag(text)
+          candidate={text:parsed.text,mood:parsed.emotion}
+        }
+        if (!candidate?.text || signal.aborted || !eligible() || epoch!==presence.snapshot().epoch) return false
+        if (recentAssistantReplies(history,8).some(line=>isTooSimilar(candidate.text,line))) return false
+        return saySomething({...candidate,source:'reunion',sourceRef:event.id,force:false,record:presence.snapshot().persistent})
+      } catch (err) {
+        if (!signal.aborted) console.warn('[presence] 归来生成失败，保持安静',err?.message)
+        return false
+      }
     }
-    if (!candidate?.text || controller.signal.aborted || !eligible() || epoch!==presence.snapshot().epoch) return false
-    if (recentAssistantReplies(history,8).some(line=>isTooSimilar(candidate.text,line))) return false
-    return saySomething({...candidate,source:'reunion',sourceRef:event.id,force:false,record:presence.snapshot().persistent})
-  } catch (err) {
-    if (!controller.signal.aborted) console.warn('[presence] 归来生成失败，保持安静',err?.message)
-    return false
-  } finally {clearTimeout(timeout);if(reunionController===controller)reunionController=null}
+  })
 }
 
 /** 活动监测触发：她看你在做什么，忍不住开口（正在对话时不抢话） */
@@ -634,16 +634,20 @@ export function stopActivityMonitor() {
 
 /* ---------------- 日程提醒（M4）：她替你记着的事，到点由她开口 ---------------- */
 
-/**
- * 到点提醒：优先用她自己想好的话（say），否则从 proactive.reminder 池临场挑一句。
- * 这是「不能错过」的事，force=true —— 正在对话时也开口。
- */
+const deliverReminder = createReminderDelivery({
+  present: (text) => saySomething({ mood: 'smile', text, kind: 'reminder', source: 'reminder', force: true }),
+  notify: (text) => {
+    if (Notification.isSupported && !Notification.isSupported()) return 'unavailable'
+    new Notification({ title: '凪 · 提醒', body: text }).show()
+    return true
+  }
+})
+
+/** 到点以原始提醒正文投递；生成服务的状态不影响提醒。 */
 function handleReminderDue(item) {
-  if (!item || !item.text) return false
-  const line = item.say || NagiPersona.pickProactive('reminder', { what: item.text }) || `……提醒你：${item.text}。`
-  const said = saySomething({ mood: 'smile', text: line, kind: 'reminder', source: 'reminder', force: true })
-  if (said) console.log(`[reminder] 已送达：${item.text}`)
-  return said
+  const delivered = deliverReminder(item)
+  if (delivered) console.log(`[reminder] 已送达：${item.text}`)
+  return delivered
 }
 
 /** 启动日程提醒调度器（app ready 后调用；幂等） */
@@ -953,7 +957,7 @@ export async function handleChatSend(text) {
   const t = String(text || '').trim()
   if (!t) return { ok: false, error: '空消息' }
   if (busy) return { ok: false, error: '正在处理上一条消息' }
-  reunionController?.abort()
+  reunion.abort()
   busy = true
   try { companionInteracted() } catch { /* 预算文件故障不影响主动发起的对话 */ }
   mood.noteInteraction() // 连聊 burst 统计 + 刷新互动时间
@@ -1048,7 +1052,7 @@ export function resolveConfirm(id, approved) {
 
 /** 中止当前回合 */
 export function abortChat() {
-  reunionController?.abort()
+  reunion.abort()
   if (currentAbort) currentAbort.abort()
   return { ok: true }
 }
