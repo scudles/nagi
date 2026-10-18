@@ -116,15 +116,15 @@ export function foregroundContext(sample, now = Date.now(), { staleMs = 15000, i
   // 离开超过 5 分钟：他在不在电脑前都不确定，别拿最后一个窗口当「正在看」
   const idleSec = Number(sample.idleSec)
   if (Number.isFinite(idleSec) && idleSec >= idleThresholdSec) {
-    return [`用户授权的活动感知：他已经离开 ${Math.round(idleSec / 60)} 分钟以上，最后活动在「${appDisplayName(app)}」。`]
+    return [`${DATA_PREFIX}他已经离开 ${Math.round(idleSec / 60)} 分钟以上，最后活动在「${appDisplayName(app)}」。`]
   }
 
   const name = appDisplayName(app)
   const rawTitle = clean(sample.title)
-  if (!rawTitle) return [`用户授权的活动感知：他当前的前台应用是 ${name}（窗口没有标题）。`]
+  if (!rawTitle) return [`${DATA_PREFIX}他当前的前台应用是 ${name}（窗口没有标题）。`]
 
   const title = isBrowser(app) ? cleanBrowserTitle(rawTitle) : rawTitle
-  if (!title) return [`用户授权的活动感知：他当前的前台应用是 ${name}。`]
+  if (!title) return [`${DATA_PREFIX}他当前的前台应用是 ${name}。`]
 
   const site = isBrowser(app) ? videoSiteOf(title) : ''
   if (site) {

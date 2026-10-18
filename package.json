@@ -38,6 +38,8 @@
     "verify:imperfection:ui": "node scripts/verify-imperfection-live.mjs",
     "verify:signals": "node scripts/verify-signals.mjs",
     "verify:media-chat": "node scripts/verify-media-chat.mjs",
+    "verify:reminder": "node scripts/verify-reminder-delivery.mjs",
+    "verify:title-outbound": "node scripts/verify-title-outbound.mjs",
     "probe:media-real": "node scripts/probe-media-real-settings.mjs",
     "verify:rag": "node scripts/verify-rag.mjs",
     "verify:local-llm": "node scripts/verify-local-llm.mjs"
