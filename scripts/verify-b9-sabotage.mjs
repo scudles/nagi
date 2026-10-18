@@ -54,7 +54,13 @@ const cases = [
   { id: 'B9-DIV10-companion', file: 'src/core/companion/budget.js',
     from: 'const IGNORE_AFTER_MS = 20 * 60000',
     to: 'const IGNORE_AFTER_MS = 2 * 60000',
-    tests: ['test/companion-budget.test.js'] }
+    tests: ['test/companion-budget.test.js'] },
+  { id: 'B9-X10-pose-angle', file: 'src/core/pose.js',
+    from: 'ParamAngleX: -4,', to: 'ParamAngleX: -40,',
+    tests: ['test/pose-guard.test.js'] },
+  { id: 'B9-DIV10-pose-angle', file: 'src/core/pose.js',
+    from: 'ParamAngleX: -4,', to: 'ParamAngleX: -0.4,',
+    tests: ['test/pose-guard.test.js'] }
 ]
 
 function run(tests) {

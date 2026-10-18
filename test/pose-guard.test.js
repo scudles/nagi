@@ -104,6 +104,8 @@ test('思考姿态覆盖 目光/头/身体 三类参数，且刻意保持轻微'
   assert.ok(ids.some((i) => /^ParamAngle/.test(i)), '要有头部角度')
   assert.ok(ids.some((i) => /^ParamBodyAngle/.test(i)), '身体要跟着一点点')
   assert.ok(isSubtlePose(t), '思考姿态必须是"轻微"的（角度 ≤10°、眼珠 ≤0.6）')
+  assert.ok(Math.abs(t.ParamAngleX) >= 2 && Math.abs(t.ParamAngleZ) >= 2,
+    '思考姿态的头部偏转也需可见，不能缩小十倍后近乎静止')
   // 方向口径：目光移开 + 下垂；头低 + 侧
   assert.ok(t.ParamEyeBallX > 0 && t.ParamEyeBallY < 0, '目光应偏移并微微下垂')
   assert.ok(t.ParamAngleX < 0 && t.ParamAngleZ !== 0, '头应略低且侧一点')
