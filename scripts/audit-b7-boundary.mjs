@@ -30,7 +30,16 @@ export const MIGRATED_GATE = [
   'src/core/signals/geo-store.js',
   'src/core/store/document-io.js',
   'src/core/store/record-io.js',
-  'src/core/store/legacy-reader.js'
+  'src/core/store/legacy-reader.js',
+  // —— core 边界存量迁移第一批（DECISIONS D69）：signals 纯函数层 + 导出组装层 ——
+  // 这一批的共同点是"只差一个 now 就能算"，因此替代路径统一是 requireNow()
+  // （src/core/clock.js）；缺 now 当场抛，不许退回全局时钟。
+  'src/core/clock.js',
+  'src/core/signals/calendar.js',
+  'src/core/signals/foreground.js',
+  'src/core/signals/music.js',
+  'src/core/signals/players.js',
+  'src/core/export/build.js'
 ]
 
 const COMMENT_LINE = /^\s*(?:\/\/|\*|\/\*)/

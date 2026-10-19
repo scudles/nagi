@@ -18,6 +18,8 @@
 //   （「你的音乐播放器还开着呢」，其实她根本不知道）。
 
 /** 浏览器进程名（小写）→ 展示名。用于把「标签页标题」说成人话 */
+import { requireNow } from '../clock.js'
+
 export const BROWSER_PROCESSES = [
   { process: 'msedge', name: 'Edge' },
   { process: 'chrome', name: 'Chrome' },
@@ -104,10 +106,12 @@ export function appDisplayName(app) {
  * @param {{staleMs?:number, idleThresholdSec?:number, enabled?:boolean}} opts
  * @returns {string[]} 0 或 1 条；任何异常/过期/无效都返回空数组，不抛错
  */
-export function foregroundContext(sample, now = Date.now(), { staleMs = 15000, idleThresholdSec = 300, enabled = true } = {}) {
+export function foregroundContext(sample, now, { staleMs = 15000, idleThresholdSec = 300, enabled = true } = {}) {
   // C4：开关关掉就当作没采到——不是"采了不发"，是根本不进这条链
   if (enabled === false) return []
   if (!sample || typeof sample !== 'object') return []
+  // 时钟：上面两条短路不需要"现在"就能判定（确定性），到这行才真的要算新鲜度
+  requireNow(now, 'foregroundContext')
   const ts = Number(sample.ts)
   if (!Number.isFinite(ts) || !Number.isFinite(now - ts) || now - ts > staleMs) return []
   const app = clean(sample.app)

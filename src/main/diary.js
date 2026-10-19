@@ -89,6 +89,20 @@ export function readDiary(file) {
   }
 }
 
+/**
+ * 全部日记文件（旧→新）与正文——C5 统一导出用（CONTRACTS §15）。
+ * 列得出却读不出 = 不一致，**抛出**：导出可以失败，不能悄悄少一篇。
+ */
+export function listDiaryFiles() {
+  const out = []
+  for (const file of listDiaryDates()) {
+    const text = readDiary(file)
+    if (text == null) throw new Error(`日记文件读取失败：${file}`)
+    out.push({ file, text })
+  }
+  return out
+}
+
 export function removeDiaryEntry(entry) {
   if (!['diary', 'diary-live'].includes(entry?.source?.type)) return false
   const name = entry.meta?.file || String(entry.source.ref).split('#')[0]

@@ -22,6 +22,7 @@ import { registerVoiceIpc } from './ipc/voice.js'
 import { registerRagIpc } from './ipc/rag.js'
 import { registerLedgerIpc } from './ipc/ledger.js'
 import { registerYearbookIpc } from './ipc/yearbook.js'
+import { registerExportIpc } from './ipc/export.js'
 import { registerCompanionIpc } from './ipc/companion.js'
 import { registerCalendarIpc } from './ipc/calendar.js'
 import { registerMusicIpc } from './ipc/music.js'
@@ -112,6 +113,7 @@ if (!gotLock) {
     registerRagIpc()
     registerLedgerIpc()
     registerYearbookIpc()
+    registerExportIpc()
     registerCompanionIpc()
     registerCalendarIpc()
     registerMusicIpc()

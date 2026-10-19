@@ -26,6 +26,15 @@
 
 ## 🔴 红区交接（Codex · 契约/并发/架构实现）
 
+### 2026-10-19 阶段3 合流-1（待绿区独立复验）
+
+- **受测提交**：`stage3-convergence-1`（双亲 `main 6d794b63`、`blue f52ab864`；merge-base `969c377`）。合流前两侧改动交集仅 `docs/HANDOFF.md`、`docs/TASKS.md`；代码交集为空。`TASKS` 冲突的红、蓝两侧 P3-07/P3-08 原行均原样保留，供绿区对账；未代改蓝区状态。
+- **契约断言**：蓝区独占的 23 个文件按去 BOM/CRLF 后与 `f52ab864` 一致；红区独占的 8 个文件与 `6d794b63` 一致；无代码冲突或语义取舍。合流提交是双亲，保留全部分支及证据目录。
+- **命令退出码**：Node24 全量 1046/1045/0/1、exit 0；build exit 0；B7 strict 0 越界、exit 0；B7 core 127、exit 0；B8 scan 50 已分级、exit 0；modelHint 8/8、exit 0；renderer 健康真机 19/19、exit 0；P3-08 真机产品断言 18/18。原蓝区评测器退出 1 发生在断言后立即清理临时 profile 的 Windows EPERM；仅在独立副本增加关窗后 1 秒清理等待，18/18、exit 0。
+- **证据路径**：`E:\凪\.tools\stage3-overlap-audit.json`、`stage3-byte-verify.mjs`、`stage3-merge-tests.tap`、`stage3-merge-build.log`、`stage3-merge-b7strict.log`、`stage3-merge-b7core.log`、`stage3-merge-b8.log`、`stage3-merge-hint.log`、`stage3-merge-health.log`、`stage3-merge-export.log`、`stage3-merge-export-local2.log`。
+- **结论**：合流树和产品断言通过；交绿区独立复验，不自行标绿。
+- **缺口**：原 `verify-p3-08-export.mjs` 清理竞态须单独修后复跑原命令；本轮暂不把蓝区文件修入合流锚点。主仓脏工作区未修改。
+
 ### 2026-10-19 阶段 2 物理合流复核（待绿区独立复验）
 
 - **受测提交**：`969c37786e5f8c57e73bf304b11fac51fb1d1798`；`main` 从 `853ea9a` 快进，tag `stage2-convergence-969c377` 指向该提交。`b2e63bf1` 在祖先链深度 3；蓝区阶段 2 无遗漏。逐字节核对 110 个受保护文件零差异，故选快进，无冲突和语义取舍。
@@ -386,6 +395,173 @@ index.html）+ `test/renderer-catch.test.js` + 2 份绿区文档，与本轮 10 
 **已满足**"不显示已授权/可重试"，不受此影响。
 
 
+
+---
+
+### 阶段3 P3-08 C5 统一导出（2026-10-19，分支 `blue/stage3-p3-08-export`，基线 `969c377`）
+
+**受测提交**：本块所在提交（`git log -1 --oneline`），基线 `969c377`（绿区阶段2 关单基线）。
+**契约断言**：CONTRACTS §15（统一导出、逐项来源、主观/模拟/已删标注、外部副本不静默删除）+
+EVAL §3.14 C5-EXPORT-01..04。
+
+**做了什么**
+- `src/core/export/build.js`（纯函数 497 行）：信任层五类（`user-confirmed`/`observed`/`subjective`/
+  `simulated`/`unverified`）、条目投影、**跨来源墓碑清洗**（拿账本已删条目正文去撞流水/日记/便签/痕迹/锚点）、
+  `buildExportBundle`/`serializeExport`/`parseExport`。不碰 fs、不读时钟。
+- `src/main/export.js`：取数复用 P2-06 数据地图同一批位置（账本含已删 / memory.json / 流水 / 独白日记 /
+  年鉴 / 便签+痕迹+锚点 / 承诺簿 / 对话历史），落盘走「系统保存框 → existsSync 预检 → `.partial` →
+  `linkSync` 原子占位」，失败清残局并按 B8 `degrade` 上报；**外部旧副本永不删改**；预览不写盘。
+- `src/main/ipc/export.js` + `IPC.DATA_EXPORT`/`DATA_EXPORT_PREVIEW` + preload `dataExport.run/preview`。
+- 只读辅助：`readAllJournalDays()`（`main/journal.js`）、`listDiaryFiles()`（`main/diary.js`）。
+
+**命令与退出码**
+| 命令 | 结果 |
+|---|---|
+| `node --experimental-test-module-mocks --test`（Node 24.19.0 前置 PATH） | **1030 项 / 1029 过 / 0 失败 / 1 条件 skip**，exit 0 |
+| `node_modules/.bin/electron-vite.cmd build` | **exit 0** |
+| `node scripts/b8-catch-audit.mjs scan` | **50 处全分级（degrade 50），exit 0** |
+| `node --test test/export-build.test.js` | **15/15** |
+| `node --test test/export-io.test.js` | **7/7** |
+| `npm run verify:p3-08-export`（真机 Electron） | **18/18** |
+
+**证据路径**：`test/export-build.test.js`、`test/export-io.test.js`、`scripts/verify-p3-08-export.mjs`、
+DECISIONS **D68**。真机脚本自带隔离 profile（`%TEMP%/nagi-p308-*`），跑完自清。
+
+**反向验证（用户要求）**：三处同时打断——① 已删条目不再输出墓碑；② 关掉跨来源正文清洗；
+③ 写盘去掉存在性预检直接覆盖 → **纯函数 3 红（A2/B1/B5）、IO 4 红（IO-1..IO-4）、
+真机 6 红（C6/C7/C8/C12/E1/E2）**；还原后三层全绿（15/15、7/7、18/18）。
+
+**结论**：实现完成，**未自行标 ✅**。C5-EXPORT-01/03/04 已由真机脚本走真实链路取证；
+C5-EXPORT-02（外部副本不静默删除）由"只写一个新文件、桌面选择器选目标、不触碰既有文件"结构性保证 +
+E1/E2（同日二次导出失败且原文件一字节不动）覆盖。
+
+**缺口（两件，都需别人接）**
+1. **设置页缺「导出全部数据」按钮**——主进程/IPC/preload 全通，用户当前无可视入口
+   （`#btn-ledger-export` 只导账本）。按纪律**不碰 `src/renderer/`**（红区同文件未合流），
+   接入片段见 DECISIONS D68 ⑦。
+2. **真机脚本里种子的 id 必须按 `sourceId()` 契约算**（`e_`+sha256(`type:ref`).slice(0,20)），
+   且种子 profile 必须带 `ledger/migration.json`，否则旧档迁移会掺副本。绿区若自造 profile 请照此办。
+
+---
+
+### 阶段3 core 边界迁移第一批（2026-10-19，分支 `blue/stage3-p3-08-export`）
+
+**受测提交**：本块所在提交。**契约**：B7 core 边界（`audit:b7:core` / `audit:b7:gate`）——core 不读全局时钟/随机、不碰 fs。
+
+**分批清单**：`docs/b7-core-batches.md`（127 处剩余 → 8 批，逐文件标 now/rng/crypto/fs 与风险）。
+
+**本轮做完的是批 1（8 处）**：`signals/{calendar,foreground,music,players}.js` 6 处 +
+`export/build.js` 2 处（本分支自己新欠的债，一并清掉）。做法：新增 `src/core/clock.js` 的
+`requireNow(now, site)`，签名去掉 `now = Date.now()` 默认值，缺依赖当场抛
+`TypeError: <site> 缺少注入依赖：now`。
+
+**为什么这批零语义风险**：所有调用点本来都显式传了 `now`，默认值是死重量；既有测试
+**一行没改**即全绿（calendar 3/3、foreground 8/8、music-signal 8/8、players 7/7、export 15/7）。
+
+**命令与退出码**
+| 命令 | 结果 |
+|---|---|
+| `node --test test/b7-batch1-now-injection.test.js` | **8/8** |
+| `node scripts/audit-b7-boundary.mjs --strict`（门禁 8→14 文件） | **0 处越界，exit 0** |
+| `node scripts/audit-b7-boundary.mjs --scope=core` | **135 → 127 处**（-8） |
+| 全量 `node --experimental-test-module-mocks --test`（关沙箱） | **1038 项 / 1037 过 / 0 失败 / 1 条件 skip** |
+| `electron-vite.cmd build` | **exit 0** |
+
+**证据路径**：`test/b7-batch1-now-injection.test.js`、`src/core/clock.js`、
+`docs/b7-core-batches.md`、`docs/b7-boundary-core-report.json`、DECISIONS **D69**。
+
+**反向验证**：把 `musicContext` 的默认值放回去并绕过 `requireNow` → **B7-1-04 与 B7-1-08 立刻变红**，还原后 8/8。
+
+**结论**：批 1 完成，**未自行标 ✅**；门禁已扩到本批文件（回潮即红）。
+
+**下一批建议**：批 2 `signals/ha-consent.js`（5 处，fs+crypto+隐私授权，**必须单独一批**）→
+批 3 `rag/chunk.js`+`rag/recall.js`（8 处，纯计算）。`loop.js` 按纪律不动；`face/*` 四处
+先评估再决定是硬迁还是行内 `B7:allow` 豁免（逐帧热路径）。
+
+---
+
+### 阶段3 无依赖入口小卡（P3-04 C1 / P3-05 C2）· 2026-10-19：**阻塞在规格，未写代码**
+
+**先说结论**：`CONTRACTS.md` 里**没有 C1/C2 的章节**（现有 1–15 节里既无「常驻理由三时刻」也无「冷启动」），
+`EVAL.md` 里**没有任何 C1-*/C2-* 断言编号**，`TASKS.md` 这两行的「规格」列本身写的就是 `—`。
+按纪律**不自定产品口径**，所以本轮交的是问题清单，不是实现。
+
+**已核实的现状（供绿区写规格时对齐现实，不是提案）**
+
+| 卡 | 代码里已经有的东西 |
+|---|---|
+| C1 三时刻 | `core/presence/{reunion,away,circadian,engine,hooks}.js`（回来/离开/时段判定与上下文注入）、`rhythm-pose.js`；`core/promises/book.js` + `main/reminders.js`（交办与提醒）；`core/tools/*`（工具产物）；设置页「勿扰 / 只陪着」与 `ambient.js` |
+| C2 冷启动 | `core/relation/familiarity.js`（`firstMetAt`/熟悉度分级）、`core/presence/anchors.js` 的 `nickname` 锚点、`main/presence-notes.js` 会把提到称呼的记忆归为 `nickname`；`core/persona.js` 已写「不说主人/用户，用名字或专属称呼」 |
+
+**P3-04 C1 · 需要产品口径的 5 个问题**
+
+1. **「回来」的判定边界**：多长不在算回来？沿用 `away.js` 现在的阈值，还是另设？「不审问」禁的是
+   疑问句本身，还是禁「盘问具体去哪」？（决定做成 prompt 约束还是固定文案——两种成本差一个量级）
+2. **「工作安静」与现有「勿扰 / 只陪着」是什么关系**：新增一档，还是复用？安静期间一次日程提醒算不算打扰？
+3. **「交办有结果」的形态**：对话里一句 / 工作台卡片 / 系统通知？**失败**算不算「有结果」
+   （按 B8 语义失败必须可见，但"可见"落在哪个面需要定）？
+4. **「工具产物可读」**：产物指路径、摘要还是正文？允许她把文件内容念出来吗（隐私边界）？
+5. **「工作台不冲淡陪伴」的可测口径**：没有可测口径就写不出 EVAL 断言。例如「工作台打开时，
+   主动开口频率不得低于 X」「她的形象区域不被工作台遮挡超过 Y%」——具体指标请绿区定。
+
+**P3-05 C2 · 需要产品口径的 6 个问题**
+
+1. **「首次」以什么为准**：`relation.firstMetAt` 为空？presence 首次启动？换 profile / 重装算不算首次？
+2. **「称呼偏好可跳」**：入口在哪（设置页 / 对话内一次性问）？**跳过后默认怎么称呼**
+   （"你"？省略主语？）——这条会直接进 persona，必须由作者/绿区定，我不猜。
+3. **「默认安静」**：新装默认关闭主动开口吗？现在 `DEFAULT_SETTINGS` 的默认值请绿区核一遍再定口径。
+4. **「一次可查看结果的小任务」**：具体是哪一个任务？结果展示在哪？（需要作者从现有能力里挑一个，
+   否则就是我在自定产品）
+5. **「允许纠正"你误会我了"」**：纠正之后要发生什么——撤回上一轮理解 / 记一条偏好 / 仅口头承认？
+   这是**数据层语义**（要不要写进 memory / ledger），不能由实现方猜。
+6. **「无打卡无登录压力」**：要不要一条可测断言（例如首启界面不出现任何签到/登录元素）？
+
+**需要绿区一并补的**：C1/C2 的 EVAL 断言编号（`C1-*`/`C2-*`）。没有断言编号，实现完也没有验收依据，
+这跟 C5 当初"无导出能力前保持待验"是同一个问题。
+
+**本轮未做**：未改任何代码、未改任何默认值、未新增文案。收到规格后这两张卡都属"入口与小流程"，
+改动面小（预估各 1 个提交）。
+
+---
+
+### 补证（2026-10-19 18:51，分支 `blue/stage3-p3-08-export`，受测提交 `c70a37e`）：本机**有** Ollama，`verify:local-llm` **44/44**
+
+**先认错**：我之前三次写「`verify:local-llm` 三项失败是缺设备（本机未安装 Ollama）」，**这是错的**。
+判断只看了 `ollama` 是否在 PATH、两个默认安装目录、`11434` 是否连通——便携版不注册 PATH、
+不在默认目录、没起服务，**观测结果与"未安装"完全同形**，我把"没看见"当成了"不存在"。
+更打脸的是 `docs/M6_端侧模型实测_2026-10-16.md` 第 29 行本来就写着这套 `verify:local-llm` **23/23 通过**，
+查一圈文档就能否掉这个结论。
+
+**实际有什么**：`E:\凪\.tools\ollama\`，27G。
+`runtime/ollama.exe` v0.34.0（同目录还留着 1.47G 的源 zip）+ `models/` 24G，6 个模型：
+`qwen2.5:latest`、`qwen3:4b`、`qwen3:4b-instruct`、`qwen3:8b`、`qwen3.5:4b`、`qwen3.5:9b-q4_K_M`。
+
+**为什么像没有**：`~/.ollama/` 下只有 `id_ed25519{,.pub}`，**没有 `models/` 目录**。
+默认模型目录是空的，直接 `ollama serve` 于是一个模型都列不出来。
+
+**复跑口径**（照抄即可）：
+
+```bash
+cd /e/凪/.tools/ollama/runtime
+OLLAMA_MODELS='E:\凪\.tools\ollama\models' OLLAMA_HOST=127.0.0.1:11434 ./ollama.exe serve
+# 另开一个终端
+cd E:/凪/凪_交接包_2026-10-16/02_工程源码_nagi
+NAGI_RENDERER_SANDBOX=0 node scripts/verify-local-llm.mjs
+```
+
+**结果（六要素）**
+
+| 项 | 内容 |
+|---|---|
+| 受测提交 | `c70a37e`；工作区无源码改动（`git diff HEAD --stat` 为空），本轮**零代码改动** |
+| 契约断言 | 脚本自带 44 项 M6 真机验收（EVAL 里无 `M6-*` 编号，脚本即口径） |
+| 命令与退出码 | `electron-vite build` → 0；`NAGI_RENDERER_SANDBOX=0 node scripts/verify-local-llm.mjs` → **44 ✔ / 0 ✘，退出 0** |
+| 证据路径 | `/e/凪/.tools/local-llm-verify-2026-10-19.log`（44 ✔ / 0 ✘）；userData `%TEMP%\nagi-local-llm-zA8Zci`；**DECISIONS D71** |
+| 结论 | 暂缓项消解，全链路真机通过；`模拟日历事件经可信 IPC 只读可见` 通过 = D69/B7 注入构造的行为证据 |
+| 缺口 | ① 待绿区独立复验，**蓝区不标 ✅**；② **只证接口与链路，不证模型人格质量**（B03 `benchmark-local-llm` 边界集未跑）；③ 服务是本会话手动起的，机器重启后要按上面命令重起 |
+
+**顺带纠正一条检索习惯**：判「某工具在不在本机」，除了 PATH 和默认安装目录，**必须查 `E:\凪\.tools\`**
+——本项目所有便携工具都在这儿（`node24/`、`ollama/`、`npm/`、`isogit-runtime/`）。
 
 ---
 

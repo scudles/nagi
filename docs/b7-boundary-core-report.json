@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-10-18T14:33:32.603Z",
+  "generatedAt": "2026-10-19T10:32:39.098Z",
   "mode": "audit",
   "scope": "src/core 全量：只报告不出门禁——剩余的缺的不是决心，是排期",
   "gate": false,
-  "total": 133,
+  "total": 127,
   "findings": [
     {
       "path": "src/core/agent/loop.js",
@@ -249,13 +249,13 @@
       "path": "src/core/memory.js",
       "violations": [
         {
-          "line": 76,
+          "line": 85,
           "rule": "globalClock",
           "why": "读全局时钟：时间必须由调用方注入 now()",
           "text": "export function mergeMemoryEntries(entries = [], ops = {}, now = Date.now()) {"
         },
         {
-          "line": 111,
+          "line": 123,
           "rule": "globalClock",
           "why": "读全局时钟：时间必须由调用方注入 now()",
           "text": "export function applyMemoryOps(entries = [], ops = {}, now = Date.now()) {"
@@ -739,34 +739,6 @@
       ]
     },
     {
-      "path": "src/core/signals/calendar.js",
-      "violations": [
-        {
-          "line": 37,
-          "rule": "globalClock",
-          "why": "读全局时钟：时间必须由调用方注入 now()",
-          "text": "export function parseCalendar(text, now = Date.now()) {"
-        },
-        {
-          "line": 70,
-          "rule": "globalClock",
-          "why": "读全局时钟：时间必须由调用方注入 now()",
-          "text": "export function calendarContext(events, now = Date.now()) {"
-        }
-      ]
-    },
-    {
-      "path": "src/core/signals/foreground.js",
-      "violations": [
-        {
-          "line": 107,
-          "rule": "globalClock",
-          "why": "读全局时钟：时间必须由调用方注入 now()",
-          "text": "export function foregroundContext(sample, now = Date.now(), { staleMs = 15000, idleThresholdSec = 300, enabled = true } "
-        }
-      ]
-    },
-    {
       "path": "src/core/signals/ha-consent.js",
       "violations": [
         {
@@ -798,34 +770,6 @@
           "rule": "globalClock",
           "why": "读全局时钟：时间必须由调用方注入 now()",
           "text": "allowControl(at = Date.now()) {"
-        }
-      ]
-    },
-    {
-      "path": "src/core/signals/music.js",
-      "violations": [
-        {
-          "line": 108,
-          "rule": "globalClock",
-          "why": "读全局时钟：时间必须由调用方注入 now()",
-          "text": "export function normalizeMediaObservation(raw, at = Date.now()) {"
-        },
-        {
-          "line": 133,
-          "rule": "globalClock",
-          "why": "读全局时钟：时间必须由调用方注入 now()",
-          "text": "export function musicContext(observation, now = Date.now()) {"
-        }
-      ]
-    },
-    {
-      "path": "src/core/signals/players.js",
-      "violations": [
-        {
-          "line": 68,
-          "rule": "globalClock",
-          "why": "读全局时钟：时间必须由调用方注入 now()",
-          "text": "export function buildFallbackObservation(windows = [], at = Date.now(), { processes = DEFAULT_PLAYER_PROCESSES } = {}) {"
         }
       ]
     },
