@@ -130,6 +130,12 @@ const api = {
     remove: (id) => ipcRenderer.invoke(IPC.YEARBOOK_REMOVE, { id }),
     export: () => ipcRenderer.invoke(IPC.YEARBOOK_EXPORT)
   },
+  /** C5 统一记忆/数据导出（P3-08）：run 由用户点按钮触发，弹系统保存框后写盘；
+   *  preview 只把导出范围取回来供展示，不写盘、不上传 */
+  dataExport: {
+    run: () => ipcRenderer.invoke(IPC.DATA_EXPORT),
+    preview: () => ipcRenderer.invoke(IPC.DATA_EXPORT_PREVIEW)
+  },
   companion: {
     status: () => ipcRenderer.invoke(IPC.COMPANION_STATUS),
     ignore: () => ipcRenderer.invoke(IPC.COMPANION_IGNORE)

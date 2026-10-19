@@ -46,6 +46,7 @@
     "verify:local-llm": "node scripts/verify-local-llm.mjs",
     "verify:maintenance": "node scripts/verify-maintenance-ui.mjs",
     "verify:c5-promise-ui": "node scripts/verify-c5-promise-ui.mjs",
+    "verify:p3-08-export": "node scripts/verify-p3-08-export.mjs",
     "verify:d9": "node scripts/verify-d9.mjs",
     "verify:d9:proxy": "node scripts/verify-d9-proxy-selftest.mjs",
     "verify:d9:quality": "node scripts/run-d9-quality.mjs",

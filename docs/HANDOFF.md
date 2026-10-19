@@ -362,6 +362,52 @@ index.html）+ `test/renderer-catch.test.js` + 2 份绿区文档，与本轮 10 
 
 ---
 
+### 阶段3 P3-08 C5 统一导出（2026-10-19，分支 `blue/stage3-p3-08-export`，基线 `969c377`）
+
+**受测提交**：本块所在提交（`git log -1 --oneline`），基线 `969c377`（绿区阶段2 关单基线）。
+**契约断言**：CONTRACTS §15（统一导出、逐项来源、主观/模拟/已删标注、外部副本不静默删除）+
+EVAL §3.14 C5-EXPORT-01..04。
+
+**做了什么**
+- `src/core/export/build.js`（纯函数 497 行）：信任层五类（`user-confirmed`/`observed`/`subjective`/
+  `simulated`/`unverified`）、条目投影、**跨来源墓碑清洗**（拿账本已删条目正文去撞流水/日记/便签/痕迹/锚点）、
+  `buildExportBundle`/`serializeExport`/`parseExport`。不碰 fs、不读时钟。
+- `src/main/export.js`：取数复用 P2-06 数据地图同一批位置（账本含已删 / memory.json / 流水 / 独白日记 /
+  年鉴 / 便签+痕迹+锚点 / 承诺簿 / 对话历史），落盘走「系统保存框 → existsSync 预检 → `.partial` →
+  `linkSync` 原子占位」，失败清残局并按 B8 `degrade` 上报；**外部旧副本永不删改**；预览不写盘。
+- `src/main/ipc/export.js` + `IPC.DATA_EXPORT`/`DATA_EXPORT_PREVIEW` + preload `dataExport.run/preview`。
+- 只读辅助：`readAllJournalDays()`（`main/journal.js`）、`listDiaryFiles()`（`main/diary.js`）。
+
+**命令与退出码**
+| 命令 | 结果 |
+|---|---|
+| `node --experimental-test-module-mocks --test`（Node 24.19.0 前置 PATH） | **1030 项 / 1029 过 / 0 失败 / 1 条件 skip**，exit 0 |
+| `node_modules/.bin/electron-vite.cmd build` | **exit 0** |
+| `node scripts/b8-catch-audit.mjs scan` | **50 处全分级（degrade 50），exit 0** |
+| `node --test test/export-build.test.js` | **15/15** |
+| `node --test test/export-io.test.js` | **7/7** |
+| `npm run verify:p3-08-export`（真机 Electron） | **18/18** |
+
+**证据路径**：`test/export-build.test.js`、`test/export-io.test.js`、`scripts/verify-p3-08-export.mjs`、
+DECISIONS **D68**。真机脚本自带隔离 profile（`%TEMP%/nagi-p308-*`），跑完自清。
+
+**反向验证（用户要求）**：三处同时打断——① 已删条目不再输出墓碑；② 关掉跨来源正文清洗；
+③ 写盘去掉存在性预检直接覆盖 → **纯函数 3 红（A2/B1/B5）、IO 4 红（IO-1..IO-4）、
+真机 6 红（C6/C7/C8/C12/E1/E2）**；还原后三层全绿（15/15、7/7、18/18）。
+
+**结论**：实现完成，**未自行标 ✅**。C5-EXPORT-01/03/04 已由真机脚本走真实链路取证；
+C5-EXPORT-02（外部副本不静默删除）由"只写一个新文件、桌面选择器选目标、不触碰既有文件"结构性保证 +
+E1/E2（同日二次导出失败且原文件一字节不动）覆盖。
+
+**缺口（两件，都需别人接）**
+1. **设置页缺「导出全部数据」按钮**——主进程/IPC/preload 全通，用户当前无可视入口
+   （`#btn-ledger-export` 只导账本）。按纪律**不碰 `src/renderer/`**（红区同文件未合流），
+   接入片段见 DECISIONS D68 ⑦。
+2. **真机脚本里种子的 id 必须按 `sourceId()` 契约算**（`e_`+sha256(`type:ref`).slice(0,20)），
+   且种子 profile 必须带 `ledger/migration.json`，否则旧档迁移会掺副本。绿区若自造 profile 请照此办。
+
+---
+
 ## 🟢 绿区交接（豆包 · 规格/评测/对账）
 
 **已完成的绿区规格草稿**（写入 CONTRACTS.md / EVAL.md）：

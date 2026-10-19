@@ -49,6 +49,10 @@ export const IPC = {
   YEARBOOK_EDIT: 'yearbook:edit',
   YEARBOOK_REMOVE: 'yearbook:remove',
   YEARBOOK_EXPORT: 'yearbook:export',
+  // C5 统一记忆/数据导出（P3-08，CONTRACTS §15）：只由用户发起写盘；
+  // 预览只取数不写盘（不弹框、不上传）
+  DATA_EXPORT: 'data:export',
+  DATA_EXPORT_PREVIEW: 'data:export-preview',
   COMPANION_STATUS: 'companion:status',
   COMPANION_IGNORE: 'companion:ignore',
   // 关系层（S4）：熟悉度 + 情绪时间线

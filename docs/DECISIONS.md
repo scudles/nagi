@@ -1066,3 +1066,87 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
   并按 `settings.privacy.noticeShown` 仍为 false 重显遮罩。设置页路径（`bindSaveButton`）不受影响——
   它已有 catch，按钮会显示"没成功"，且不会执行 `settings = await get()`。
   托盘路径同理：失败时不广播，菜单刷新回旧勾选，用户能看出"没翻过去"。
+
+---
+
+## D68（2026-10-19）阶段3 P3-08：C5 统一记忆/数据导出（分支 `blue/stage3-p3-08-export`，基线 `969c377`）
+
+**契约**：CONTRACTS §15 + EVAL §3.14（C5-EXPORT-01..04）。**没有自行标绿**，交绿区独立复验。
+
+### ① 分层：纯逻辑 / 落盘 / IPC 三段，各管一件事
+
+- `src/core/export/build.js`（497 行，纯函数）：信任层判定、条目投影、跨来源墓碑清洗、`buildExportBundle` /
+  `serializeExport` / `parseExport`。**不碰 fs、不读时钟**（`now` 一律由调用方注入）。
+- `src/main/export.js`（主进程桥接）：取数（复用 P2-06 数据地图的同一批位置）+ 落盘。
+- `src/main/ipc/export.js` + `IPC.DATA_EXPORT` / `DATA_EXPORT_PREVIEW` + preload `dataExport.run/preview`。
+- 新增 `readAllJournalDays()`（`main/journal.js`）、`listDiaryFiles()`（`main/diary.js`）：只读遍历，不改写入链路。
+
+**为什么不塞进 ledger 的导出**：`IPC.LEDGER_EXPORT` 只导账本一节、且是阶段2的产物口径。C5 要的是
+「四类数据齐全 + 逐项来源 + 主观/模拟/已删状态」，塞进旧通道会让两个口径互相污染。旧通道保留不动。
+
+### ② 已删不是"删掉不出现"，而是**墓碑**
+
+用户点过「忘记」的东西，导出里必须**看得见它被删过**（可审计），但**看不到正文**：
+
+- 账本条目：`deletedAt` 非空 → 只输出 `{id, status:'deleted', deletedAt, sourceType}`；
+- 流水/日记/便签/痕迹/锚点：没有"已删"字段，靠**账本条正文做跨来源清洗**——`deletedTexts` 命中即
+  降级成墓碑。这是第二道防线：即便 `pruneNotesReferencing` 之类漏删了便签里的复述，
+  **导出侧也不会把旧正文带出去**（真机 C6/C8 就是钉这个）；
+- 年鉴页：来源条目被删 → 整页标 deleted，不输出 `note`。
+
+**这条是本卡最容易做错的地方**：把"删掉的不要出现"实现成"过滤掉"，审计痕迹就没了；
+实现成"照常输出"，隐私就漏了。取的是「留痕不留文」。
+
+### ③ 写盘：不覆盖、不留残局、不碰旧副本
+
+与 `notes-file.js` 同一套文件安全纪律：
+
+- 目标由**系统保存框**选（`dialog.showSaveDialog`），**不接受渲染层传路径**；
+- 先 `existsSync` 预检 → 写 `.partial` → `linkSync` 原子占位（目标在两步之间出现必 EEXIST）；
+- 失败清理 `.partial`；清理也失败只留**带后缀的可识别残局**，且按 B8 `degrade` 上报；
+- 外部旧副本**永远不删、不改、不上传**（§15.1）——导出只写一个新文件。
+- 预览（`DATA_EXPORT_PREVIEW`）**不写盘、不弹框**：C5-EXPORT-04 的真机断言是
+  「预览一个外部文件都没写」。
+
+### ④ 信任层（五类，EVAL §3.14 要求"模拟/主观不许说成真实经历"）
+
+`user-confirmed` / `observed` / `subjective` / `simulated` / `unverified`，逐项写在条目上；
+账本用 `certainty` 映射，便签用 `provenance==='simulation'` 判模拟，日记与独白一律主观。
+真机 C11 钉住"模拟便签标 simulated"。
+
+### ⑤ 验证
+
+- 纯函数层 `test/export-build.test.js` **15/15**；IO 层 `test/export-io.test.js` **7/7**
+  （真实临时目录 + 真 `RagStoreIo` 之外的真 fs + 失败注入）。
+- 设备层 `scripts/verify-p3-08-export.mjs`（`npm run verify:p3-08-export`）**18/18**：
+  真实 Electron + 隔离 profile + 真实「忘记」链路（设置页→她的记忆→忘记→原生确认框自动确认）
+  后再导出，重读文件验 C5/C6/C7/C8/C9/C12 与 E1/E2/E3。
+- **反向验证（三处同时打断）**：① 已删条目不再输出墓碑；② 关掉跨来源正文清洗；
+  ③ 写盘去掉存在性预检直接覆盖 → **纯函数 3 红 / IO 4 红 / 真机 6 红**（C6/C7/C8/C12/E1/E2），
+  还原后三层全绿。
+- 全量 **1030 / 1029 过 / 0 失败 / 1 条件 skip**（基线 1008 + 本卡 22）；`electron-vite build` **退出 0**；
+  B8 空 catch 审计 **50 处全分级、exit 0**。
+
+### ⑥ 踩过的坑（都是"种子造假"型的假绿源）
+
+1. **账本条目 id 不是随手编的**：`sourceId = 'e_' + sha256('type:ref').slice(0,20)`。种子写成 `e_real` 时
+   `forget()` 走 `deleteBySource` 按 (type,ref) 重算 id 查不到 → 返回 false → UI 显示「账本状态未写入」，
+   而脚本第一版只断言"有可见反馈"，**假绿**。种子必须按真实契约算 id。
+2. **种子 profile 必须带 `ledger/migration.json`**：不写迁移标记，boot 时的旧档迁移会把种下的
+   journal/memory 再索引成 `source=journal`/`source=memory` 的副本（日志「旧数据已建索引：2 条」），
+   账本凭空多两条，UI「忘记」点到的是副本。
+3. **改了 preload 必须重新 build 再跑设备脚本**：跑的是 `out/` 产物，不是源码。第一轮"渲染页找不到
+   workbench"就是这个原因（`window.nagi.dataExport` 在旧产物里不存在）。
+4. **`mock.module('node:fs', {...realFs})` 会带进不可配置的 `constants`** → 命名导出校验失败；
+   要显式列出所需导出（含 `ReadStream`/`WriteStream`，否则 openai 包的命名导入会崩）。
+
+### ⑦ 缺口（交给红区，按纪律不碰 `src/renderer/`）
+
+**设置页缺一个「导出全部数据」按钮**。主进程、IPC、preload 全通，真机脚本走 preload 验证；
+但用户当前没有可视入口（`#btn-ledger-export` 只导账本）。红区接入只需两步：
+
+1. `index.html` 在「共同经历账本」那排按钮旁边加：`<button id="btn-data-export">导出全部记忆与数据</button>`；
+2. `main.js` 绑 `click → window.nagi.dataExport.run()`，成功显示 `已导出到 ${path}`，
+   失败把 `res.error` 原样显示（主进程已给中文可读文案，`{ok:false,reason:'exists'}` 也是中文）。
+
+预检可调 `window.nagi.dataExport.preview()` 拿到 `bundle.counts` 展示「本次将导出 N 条」。

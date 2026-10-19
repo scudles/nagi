@@ -90,6 +90,24 @@ export function todayEvents(now = Date.now()) {
   return cache.entries.slice()
 }
 
+/**
+ * 全部有流水的日期（旧→新）与条目——C5 统一导出用（CONTRACTS §15）。
+ * 与 readDay 不同：这里**不静默**。目录不存在（全新安装）返回 []；
+ * 但文件读不出来/解析失败一律抛出——导出可以失败，不能悄悄少一天。
+ */
+export function readAllJournalDays() {
+  const d = dir()
+  if (!existsSync(d)) return []
+  return readdirSync(d)
+    .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
+    .sort()
+    .map((f) => {
+      const date = f.slice(0, 10)
+      const raw = JSON.parse(readFileSync(fileOf(date), 'utf8'))
+      return { date, entries: normalizeEntries(raw && raw.entries) }
+    })
+}
+
 /** 从七天素材中撤回指定来源；缓存和文件同时更新，防止下一次防抖写回旧句。 */
 export function removeJournalEntry(entry) {
   if (!entry?.source?.type?.startsWith('journal')) return false
