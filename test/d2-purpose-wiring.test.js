@@ -101,9 +101,11 @@ test('D2-WIRE-01 main 侧按用途解析的接线点仍在（改回无用途会�
   assert.ok(/hasGroundedMemory: hasGroundedRefs\(memoryRefs\)/.test(agentSource), '可追溯口径必须走 hasGroundedRefs')
 })
 
-test('D2-WIRE-02 modelHint 仍恒为 null（等红区裁决后才接，不擅自启用）', () => {
-  assert.ok(!/modelHint:/.test(agentSource), '接线前不得传 modelHint')
-  // 纯函数备好了但不参与裁决：传 null 时不改变任何结果
+test('D2-WIRE-02 首请求 modelHint 恒 null；仅同轮候选出站前参与复核', () => {
+  const build = agentSource.slice(agentSource.indexOf('async function buildMessages'), agentSource.indexOf('async function callModelOnce'))
+  assert.ok(!/modelHint:/.test(build), '首请求不得使用上一用户轮 hint')
+  assert.match(agentSource, /stripIntentHintEvents\(stream, \(hint\) => \{[\s\S]*?hintSlot\.offer/, '同次模型输出应进复核')
+  assert.match(agentSource, /createModelHintGuard\(\{/, '候选必须经过编排复核')
   const baseline = resolveIntent({ userText: '嗯' })
   assert.equal(resolveIntent({ userText: '嗯', modelHint: null }).kind, baseline.kind)
   assert.ok(existsSync(join(root, 'src', 'core', 'agent', 'intent.js')))

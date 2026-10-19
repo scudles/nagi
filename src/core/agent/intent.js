@@ -12,10 +12,8 @@
 //   · 模型只能**建议** —— resolveIntent 的 modelHint 排在规则之后，且 confidence 仅作诊断，
 //     永远不能推翻"安全/用户明确要求/澄清规则"。
 //
-// 【当前骨架的已知缺口】模型侧建议的**传输**还没接：
-//   loop 只把情绪标签透出来，意图小字段需要 stream-normalize 多带一个字段（loop.js 本轮不许动）。
-//   因此本轮 modelHint 一律为 null，`parseIntentHint` 先作为纯函数备好并被单测覆盖，
-//   等红区同意"给 loop 加一个透传字段"后再接上（HANDOFF 已记录）。
+// 首请求的 modelHint 恒为 null；同次模型输出的候选由主进程在出站前复核。
+// 不把上一用户轮的建议写入历史或下一轮 system，也不改 loop 的事件/返回契约。
 
 /** 六意图（§5.1 定稿） */
 export const INTENT = Object.freeze({
@@ -197,8 +195,7 @@ export function intentDirective(kind) {
 /**
  * 解析模型在同一次回复里给出的意图建议（形如 `[calm|listen]`，与情绪标签同一处）。
  *
- * 为什么先做成独立纯函数：标签解析在 `stream-normalize`、透传在 `loop`，
- * 而本轮不允许改 `loop.js`。函数先备好、单测覆盖，等接线时只差一个透传字段。
+ * 兼容完整文本的诊断解析；实时流由 model-hint.js 的有界前缀解析器处理。
  *
  * @param {string} text 原始（未剥离标签的）模型输出
  * @returns {{emotion:string|null, intent:string|null, rest:string}}

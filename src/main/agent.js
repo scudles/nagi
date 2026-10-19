@@ -13,6 +13,7 @@ import { createPersonaGuard } from '../core/agent/persona-guard.js'
 import { classifyCrisis } from '../core/agent/crisis.js'
 import { composeOfflineReply } from '../core/agent/offline.js'
 import { resolveIntent, intentDirective, hasGroundedRefs } from '../core/agent/intent.js'
+import { createModelHintGuard, createTurnHintSlot, stripIntentHintEvents } from '../core/agent/model-hint.js'
 import { assembleTurnMessages, isObservationMessage } from '../core/agent/messages.js'
 import {
   GENERATION_CHANNEL,
@@ -1026,7 +1027,10 @@ async function buildMessages(userText, supportsNative, { turnId = '', crisis = f
   const system = buildSystemPrompt({ nativeTools: supportsNative, context }) +
     (facts ? '\n\n' + facts : '') + `
 
-【本轮怎么回应】${intentLine}`
+【本轮怎么回应】${intentLine}` +
+    (intent.source === 'default'
+      ? '\n【同轮意图候选】若这条输入更适合 listen / clarify / solve / reminisce / boundary，可仅在开头情绪标签内附加该建议，如 [calm|solve]；正文直接按建议意图写。没有更合适的建议时保持原情绪标签。建议不能推翻安全、用户明确要求或工具规则。'
+      : '')
   console.log('[d2] intent=' + intent.kind + ' source=' + intent.source +
     (intent.fallbackFrom ? ' fallbackFrom=' + intent.fallbackFrom : ''))
   const messages = assembleTurnMessages({ system, history, observation, userText })
@@ -1276,10 +1280,27 @@ export async function runTurn(userText, emit, turnRef = null) {
   const messages = built.messages
   // 契约 §8 B4：云端 / OpenAI 兼容 / 本地 / 占位大脑**都**在展示前过同一道护栏。
   // 原来这里是 `local && !fakeLlm`——等于云端与兼容通道裸奔，这是评审 B4 指的入口洞。
-  // createPersonaGuard 只在用户这轮触到敏感意图时才返回非空，所以普通闲聊仍然逐字流式。
+  // createPersonaGuard 只在敏感意图时有附加规则；modelHint 复核使主对话最终正文统一缓冲后出站。
   // D7：crisis 轮次额外启用危机规则（禁 liminal/独占/依赖暗示），且无论有没有敏感意图都审核。
   const baseGuard = createPersonaGuard(userText, { crisis: safetyLevel === SAFETY_LEVEL.CRISIS })
-  const guard = instrumentGuard(baseGuard)
+  // hint 在本轮当前模型调用的流前缀捕获；每步重置、消费后清空，绝不带到下一用户轮。
+  // 统一 guard 先缓冲候选，复核后才让 loop 按原事件/返回契约出站。
+  const hintEpoch = randomUUID()
+  const hintSlot = createTurnHintSlot({ turnId, epoch: hintEpoch })
+  const guard = instrumentGuard(createModelHintGuard({
+    userText,
+    crisis: safetyLevel === SAFETY_LEVEL.CRISIS,
+    hasGroundedMemory: hasGroundedRefs(built.scene.relevantMemoryRefs),
+    initialIntent: built.intent,
+    personaGuard: baseGuard,
+    consumeHint: () => hintSlot.consume(),
+    onAccepted: (intent) => {
+      if (signal.aborted || currentAbort !== controller) return
+      built.scene.userNeed = intent.kind
+      lastIntent = { ...intent, scene: built.scene }
+      console.log('[d2] final intent=' + intent.kind + ' source=' + intent.source)
+    }
+  }))
   signal.throwIfAborted()
 
   // 工具通道判定 + 情绪取回：都在 emit 这条唯一出口上记，避免再改 Agent Loop 的返回契约
@@ -1301,29 +1322,39 @@ export async function runTurn(userText, emit, turnRef = null) {
     safetyLevel
   })
 
-  const r = await runAgentLoop({
+  const rawCallModel = fakeLlm
+    ? fakeCallModel()
+    : useCloud
+      ? async ({ messages: modelMessages, tools, signal }) => cloudChatStream({ messages: modelMessages, tools, signal: signal || controller.signal })
+      : async ({ messages: modelMessages, tools, signal }) =>
+          chatStream(client, {
+            model: llm.model,
+            messages: modelMessages,
+            temperature: llm.temperature,
+            tools,
+            signal: signal || controller.signal
+          })
+  const callModel = async (args) => {
+    const step = hintSlot.beginStep()
+    const stream = await rawCallModel(args)
+    return stripIntentHintEvents(stream, (hint) => {
+      hintSlot.offer({ turnId, epoch: hintEpoch, step, hint })
+    })
+  }
+
+  let r
+  try { r = await runAgentLoop({
     messages,
     supportsNative,
     toolSchemas: TOOL_SCHEMAS,
-    callModel: fakeLlm
-      ? fakeCallModel()
-      : useCloud
-        ? async ({ messages: modelMessages, tools, signal }) => cloudChatStream({ messages: modelMessages, tools, signal: signal || controller.signal })
-        : async ({ messages: modelMessages, tools, signal }) =>
-            chatStream(client, {
-              model: llm.model,
-              messages: modelMessages,
-              temperature: llm.temperature,
-              tools,
-              signal: signal || controller.signal
-            }),
+    callModel,
     executeTool,
     confirm: ({ id }) => confirmations.request(id, signal),
     emit: turnEmit,
     signal,
     guard,
     fileRoot
-  })
+  }) } finally { hintSlot.close() }
 
   const stats = guard ? guard.stats() : { retryCount: 0, lastRule: null }
   // 这一轮真的调过工具 → 按「工具交付」通道记账（契约 §8：channel 至少覆盖四个）
