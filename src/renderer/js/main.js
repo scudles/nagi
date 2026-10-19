@@ -1,4 +1,4 @@
-import { reportRendererCatch, mergeMaintenanceState, clearRendererMaintenance, CATCH_CLASS } from './catch-report.js'
+import { reportRendererCatch, recoverRendererCatch, flushRendererHealth, mergeMaintenanceState, clearRendererMaintenance, CATCH_CLASS } from './catch-report.js'
 // src/renderer/js/main.js
 // 渲染层入口：根据 ?mode=pet|workbench 初始化布局，装配 Live2D、对话与设置页。
 //
@@ -619,7 +619,9 @@ function wireWindowButtons() {
   // 新对话：清空短期上下文（长期记忆、关系、日程都保留）
   on('btn-new-chat', async () => {
     try {
-      await window.nagi.memory.clearHistory()
+      const cleared = await window.nagi.memory.clearHistory()
+      if (!cleared?.ok) throw new Error('短期上下文清理失败')
+      recoverRendererCatch('main.clearHistory')
     } catch (__err) {
       reportRendererCatch('main.clearHistory', CATCH_CLASS.MUST_PERSIST, __err)
       ui.addToolLog('新对话未开始：短期上下文清理失败')
@@ -772,8 +774,9 @@ function wireAmbient() {
     getPrivacy: () => settings?.privacy,
     onRestyle: (e) => {
       // 她自己换了装束：落盘 + 刷新托盘菜单，并在工作台留一行痕（可解释、可追溯）
-      reportOutfit(e?.reason || 'idle')
+      const saved = reportOutfit(e?.reason || 'idle')
       if (mode === MODE.WORKBENCH) ui.addToolLog?.(`（她自己换了身：${e?.text || ''}）`)
+      return saved
     }
   })
   window.nagi.on(EVT.OUTFIT, (cmd) => {
@@ -820,13 +823,12 @@ function applyAmbientCommand(cmd) {
 }
 
 /** 把装束清单与当前项上报宿主：托盘菜单据此构建，当前项落盘（重启后还是这一身） */
-function reportOutfit(reason = '') {
+async function reportOutfit(reason = '') {
   try {
     const cfg = l2d.outfitConfig()
     const cur = l2d.currentOutfit()
-    if (!cfg || !cur.slots) return
-    window.nagi.outfit
-      .report({
+    if (!cfg || !cur.slots) return { ok: true }
+    const result = await window.nagi.outfit.report({
         looks: cfg.looks.map((l) => ({ id: l.id, name: l.name, desc: l.desc })),
         current: cur.lookId,
         name: cur.name,
@@ -834,13 +836,13 @@ function reportOutfit(reason = '') {
         describe: cur.describe,
         reason
       })
-      ?.catch?.((err) => {
-        reportRendererCatch('main.outfitReport', CATCH_CLASS.MUST_PERSIST, err)
-        if (reason === 'user' && mode === MODE.PET) ui.showBubble?.('装束保存失败', { autoHide: 2200 })
-      })
+    if (!result?.ok) throw new Error('装束保存失败')
+    recoverRendererCatch('main.outfitReport')
+    return { ok: true }
   } catch (__err) {
     reportRendererCatch('main.outfitReport', CATCH_CLASS.MUST_PERSIST, __err)
     if (reason === 'user' && mode === MODE.PET) ui.showBubble?.('装束保存失败', { autoHide: 2200 })
+    return { ok: false }
   }
 }
 
@@ -918,6 +920,7 @@ function pokeHer() {
     ?.poke()
     ?.then?.((r) => {
       if (!l2dReady || !r) return
+      recoverRendererCatch('main.poke')
       if (r.turn === 'away') l2d.playTurn('away')
       else l2d.turnToward('poke', ambient.gazeNow?.())
       // 被碰了一下，耳朵抖一下（Param78/79 是物理输入，写它耳朵会自己甩）
@@ -1128,8 +1131,8 @@ function maybeShowMonitorNotice() {
   ov.classList.remove('hidden')
   const done = async (patch) => {
     try {
-      await window.nagi.settings.set({ privacy: { noticeShown: true, ...patch } })
-      settings = await window.nagi.settings.get()
+      settings = await window.nagi.settings.set({ privacy: { noticeShown: true, ...patch } })
+      recoverRendererCatch('main.monitorNoticeSave')
       ov.classList.add('hidden')
     } catch (__err) {
       reportRendererCatch('main.monitorNoticeSave', CATCH_CLASS.MUST_PERSIST, __err)
@@ -1148,7 +1151,7 @@ async function openSettings() {
   overlay.classList.remove('hidden')
   // 每次打开都重取一次设置：托盘/另一个窗口/主进程都可能改过它，
   // 用缓存填表会让"监测于 … 授权"这类主进程写的字段停在旧值上（作者裁决 B 要显示的就是它）。
-  try { settings = await window.nagi.settings.get() } catch (__err) { reportRendererCatch('main.settingsRead', CATCH_CLASS.VISIBLE, __err) }
+  try { settings = await window.nagi.settings.get(); recoverRendererCatch('main.settingsRead') } catch (__err) { reportRendererCatch('main.settingsRead', CATCH_CLASS.VISIBLE, __err) }
   fillSettingsForm()
   refreshCalendarStatus()
   refreshMusicStatus()
@@ -1166,6 +1169,7 @@ async function refreshMaintStatus() {
   const traceBox = document.getElementById('maint-trace')
   if (!label || !window.nagi.maintenance) return
   try {
+    await flushRendererHealth()
     const state = mergeMaintenanceState(await window.nagi.maintenance.health())
     const sites = state.sites
     const bad = sites.filter((s) => s.lastClass && s.lastClass !== 'degrade')
@@ -1511,6 +1515,7 @@ async function refreshLocalLlmStatus() {
 async function refreshSecretStatus() {
   try {
     const st = await window.nagi.secrets.status()
+    recoverRendererCatch('main.secretStatus')
     const llm = st[SECRET_KEYS.LLM_API_KEY] ? '已配置' : '未配置'
     const ha = st[SECRET_KEYS.HA_TOKEN] ? '已配置' : '未配置'
     document.getElementById('set-key-status').textContent = llm
@@ -1757,6 +1762,7 @@ async function refreshCompanionStatus() {
 async function refreshModels() {
   try {
     const list = await window.nagi.models.list()
+    recoverRendererCatch('main.modelList')
     const sel = document.getElementById('set-model-path')
     if (!sel) return
     sel.innerHTML = ''
@@ -3079,7 +3085,7 @@ async function renderRelation() {
       setText('rel-mem', '读取失败')
       return null
     })
-    if (mem) setText('rel-mem', mem.length)
+    if (mem) { recoverRendererCatch('main.relationMemoryRead'); setText('rel-mem', mem.length) }
   } catch (err) {
     console.warn('[relation] 读取失败', err.message)
   }

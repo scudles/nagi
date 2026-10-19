@@ -22,6 +22,6 @@
 - 承诺 5 处：`voice.stopSession/pauseAudio/stopSessionOnCancel/abortBeforeRecord/recordingCleanup`。语音会话停止的 Promise 拒绝也被接住；录音清理分开停止录制器和媒体轨道，前一步异常不挡后一步。
 - 语义 2 处：`live2d.stopMotion`、`voice.recorderWait`。此外审计发现的非空 `recorder.stop` 失败和语音试听播放失败也改为失败返回，试听不再伪报“结束”。
 
-**可见性与验证**：复用 core 的 `CATCH_CLASS`、脱敏轨迹和健康规则；现有设置页维护区合并主进程健康快照与当前 renderer 的进程内补充快照，没有增加用户入口或 IPC 写通道。新对话、告知保存、维护清空、互动等同步请求失败在原位置反馈；后台/异步失败仅设置页可查询。Node 24 全量 972/971/0/1、构建 exit 0、真机 `verify-maintenance-ui` 12/12；`test/renderer-catch.test.js` 包含吞掉必报失败后断言变红的破坏对照。
+**批次 1 验证**：复用 core 的 `CATCH_CLASS`、脱敏轨迹和健康规则；新对话、告知保存、维护清空、互动等同步请求失败在原位置反馈。Node 24 全量 972/971/0/1、构建 exit 0、真机 `verify-maintenance-ui` 12/12；`test/renderer-catch.test.js` 包含吞掉必报失败后断言变红的破坏对照。
 
-**设备层待绿区判定**：维护 IPC 在本基线只有 `health/clear`，没有 renderer 上报入口。因此当前 renderer 补充快照属于**当前窗口内存**；切换窗口或重启后的汇总不等价于主进程 `getHealth()`。本轮遵守“只改 renderer”边界，未在主进程新建通道。绿区须核验当前窗口设置页可见性，并决定跨窗口/重启汇总是否要作为后续主进程接口卡；此项不自行标绿。
+**批次 2 待绿区设备验收**：固定白名单共 17 个不同站点，覆盖上述 77 处中的 18 个失败位置（`main.outfitReport` 同步/异步两处共用一站点）：5 持久化、5 承诺、2 语义、6 个当前操作/隐私 visible。经 `health:report-renderer` 汇入现有 `getHealth()`，落盘 `userData/renderer-health.json`；renderer 仍有当前窗口即时状态和有界补报。余下 45 个 degrade、14 个纯展示 visible 的跨窗口/重启可见性只登记 P3-07。跨窗口、重启、恢复和脱敏须由绿区真机复验；红区不自行标绿。

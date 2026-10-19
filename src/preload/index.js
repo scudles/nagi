@@ -9,6 +9,7 @@ import { RAG_IPC, RAG_EVT } from '../shared/rag-protocol.js'
 import { LLM_IPC } from '../shared/llm-protocol.js'
 import { PRESENCE_IPC, PRESENCE_EVENT } from '../shared/presence-protocol.js'
 import { NOTES_IPC, NOTES_EVENT } from '../shared/notes-protocol.js'
+import { RENDERER_HEALTH_IPC } from '../shared/renderer-health-protocol.js'
 
 const ALLOWED_EVENTS = new Set([
   PRESENCE_EVENT,
@@ -34,10 +35,11 @@ const api = {
     clear: () => ipcRenderer.invoke(PRESENCE_IPC.CLEAR)
   },
   /** 她留下的东西（BLUE-3）：只读列表 + 清除；开关走 settings */
-  /** B8：维护状态只读（失败点/健康），清空为可删操作 */
+  /** B8：维护读取/清除；renderer 上报仅走固定白名单 IPC */
   maintenance: {
     health: () => ipcRenderer.invoke(MAINTENANCE_IPC.HEALTH),
-    clear: () => ipcRenderer.invoke(MAINTENANCE_IPC.CLEAR)
+    clear: () => ipcRenderer.invoke(MAINTENANCE_IPC.CLEAR),
+    reportRenderer: (event) => ipcRenderer.invoke(RENDERER_HEALTH_IPC, event)
   },
   notes: {
     list: () => ipcRenderer.invoke(NOTES_IPC.LIST),

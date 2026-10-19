@@ -1,4 +1,4 @@
-import { reportRendererCatch, CATCH_CLASS } from './catch-report.js'
+import { reportRendererCatch, recoverRendererCatch, CATCH_CLASS } from './catch-report.js'
 // src/renderer/js/voice.js
 // 渲染层语音客户端（M5）：让她真的开口说话、也真的听得见你说话。
 //
@@ -273,15 +273,23 @@ async function playNext() {
   }
 }
 
+function stopSessionReported(sessionId, site) {
+  try {
+    Promise.resolve(window.nagi.voice.stop(sessionId))
+      .then((result) => {
+        if (!result?.ok) throw new Error('语音会话停止失败')
+        recoverRendererCatch(site)
+      })
+      .catch((err) => reportRendererCatch(site, CATCH_CLASS.PROMISE, err))
+  } catch (err) { reportRendererCatch(site, CATCH_CLASS.PROMISE, err) }
+}
+
 function finishSpeech(st) {
   st.playing = false
   l2d.clearLipTrack()
   if (speech === st) speech = null
   st.resolveFinished?.()
-  try {
-    Promise.resolve(window.nagi.voice.stop(st.sessionId))
-      .catch((err) => reportRendererCatch('voice.stopSession', CATCH_CLASS.PROMISE, err))
-  } catch (__err) { reportRendererCatch('voice.stopSession', CATCH_CLASS.PROMISE, __err) }
+  stopSessionReported(st.sessionId, 'voice.stopSession')
 }
 
 /**
@@ -355,14 +363,12 @@ function stopSpeechOnly() {
   st.playing = false
   try {
     st.audio && st.audio.pause()
+    if (st.audio) recoverRendererCatch('voice.pauseAudio')
   } catch (__err) { reportRendererCatch('voice.pauseAudio', CATCH_CLASS.PROMISE, __err) }
   releaseUrls(st)
   l2d.clearLipTrack()
   st.resolveFinished?.()
-  try {
-    Promise.resolve(window.nagi.voice.stop(st.sessionId))
-      .catch((err) => reportRendererCatch('voice.stopSessionOnCancel', CATCH_CLASS.PROMISE, err))
-  } catch (__err) { reportRendererCatch('voice.stopSessionOnCancel', CATCH_CLASS.PROMISE, __err) }
+  stopSessionReported(st.sessionId, 'voice.stopSessionOnCancel')
   return true
 }
 
@@ -425,7 +431,7 @@ export async function startRecording() {
     if (recordingPending === request) recordingPending = null
     return { ok: false, reason: '已松开麦克风' }
   }
-  try { await window.nagi.chat.abort() } catch (__err) {
+  try { await window.nagi.chat.abort(); recoverRendererCatch('voice.abortBeforeRecord') } catch (__err) {
     reportRendererCatch('voice.abortBeforeRecord', CATCH_CLASS.PROMISE, __err)
     if (!request.cancelled) notice('上一轮回复未停止，录音仍可继续')
   }
@@ -538,6 +544,7 @@ export async function stopRecording(opts = {}) {
   const heldMs = Date.now() - cur.startedAt
   try {
     await done
+    recoverRendererCatch('voice.recorderWait')
   } catch (__err) {
     reportRendererCatch('voice.recorderWait', CATCH_CLASS.SEMANTIC, __err)
     stopError = true
@@ -734,7 +741,7 @@ export function initVoice(opts = {}) {
     stopSpeaking()
     if (recordingPending) recordingPending.cancelled = true
     if (rec) {
-      try { rec.recorder.stop() } catch (__err) { reportRendererCatch('voice.recordingCleanup', CATCH_CLASS.PROMISE, __err) }
+      try { rec.recorder.stop(); recoverRendererCatch('voice.recordingCleanup') } catch (__err) { reportRendererCatch('voice.recordingCleanup', CATCH_CLASS.PROMISE, __err) }
       try { rec.stream.getTracks().forEach((t) => t.stop()) } catch (__err) {
         reportRendererCatch('voice.recordingTracks', CATCH_CLASS.PROMISE, __err)
       }

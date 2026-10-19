@@ -1,4 +1,4 @@
-import { reportRendererCatch, CATCH_CLASS } from './catch-report.js'
+import { reportRendererCatch, recoverRendererCatch, CATCH_CLASS } from './catch-report.js'
 // src/renderer/js/live2d.js
 // Live2D 加载与驱动：缩放锚点（底部对齐居中）、自动眨眼、待机动作轮换、
 // 戳一戳（TapBody）、情绪 → 表情 + 动作映射、说话口型、对话状态驱动的思考姿态。
@@ -2183,6 +2183,7 @@ export function randomMotion() {
 export function stopMotions() {
   try {
     model?.internalModel?.motionManager?.stopAllMotions()
+    if (model?.internalModel?.motionManager) recoverRendererCatch('live2d.stopMotion')
   } catch (__err) { reportRendererCatch('live2d.stopMotion', CATCH_CLASS.SEMANTIC, __err) }
 }
 

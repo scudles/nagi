@@ -1,4 +1,4 @@
-import { reportRendererCatch, CATCH_CLASS } from './catch-report.js'
+import { reportRendererCatch, recoverRendererCatch, CATCH_CLASS } from './catch-report.js'
 // src/renderer/js/ambient.js
 // 待机行为的渲染层接线：把 core/ambient.js 的决定落到模型上，并遵守隐私与静默边界。
 //
@@ -136,7 +136,12 @@ function tick() {
       plan.noteRestyle(restyle.reason)
       lastRestyle = { at: t, reason: restyle.reason, text: describeRestyleReason(restyle.reason) }
       try {
-        onRestyleCb?.(lastRestyle)
+        if (onRestyleCb) Promise.resolve(onRestyleCb(lastRestyle))
+          .then((result) => {
+            if (result?.ok === false) reportRendererCatch('ambient.restyleReport', CATCH_CLASS.MUST_PERSIST, new Error('装束记录失败'))
+            else recoverRendererCatch('ambient.restyleReport')
+          })
+          .catch((err) => reportRendererCatch('ambient.restyleReport', CATCH_CLASS.MUST_PERSIST, err))
       } catch (__err) { reportRendererCatch('ambient.restyleReport', CATCH_CLASS.MUST_PERSIST, __err) }
     }
   }
