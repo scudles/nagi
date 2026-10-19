@@ -9,6 +9,24 @@
 - **结论**：物理快进、锚点及全部合流复跑通过；仅交绿区复验，不自行标绿。
 - **缺口**：无代码/测试阻断；绿区仍需独立复验。密钥仅经评测器进程的 `NAGI_D9_API_KEY` 环境变量注入，未写入证据或仓库。
 
+## 2026-10-19 红区：modelHint 同轮裁决（待绿区独立复验）
+
+- **受测提交**：`6e429aa0641ae2ac90fa16deac14a779de31e5a4`；`loop.js` 零改动。
+- **契约断言**：首请求 hint 恒 null；同次输出候选经编排复核，改变默认意图且不合格时同轮最多重写一次；危机/用户明示覆盖模型建议；工具步、旧 turnId/epoch/step、取消和跨用户轮建议失效；未审候选不出站。§5/§8 已同步。
+- **命令退出码**：Node24 全量 1016 tests / 1015 pass / 0 fail / 1 skip，exit 0；build exit 0；B7 strict 0 越界、exit 0；8 类 modelHint + D2 接线定向 14/14，exit 0；把包装器改回旧的原始流透传后定向测试 exit 1、2 项失败，恢复后 exit 0。
+- **证据路径**：`test/model-hint.test.js`、`test/d2-purpose-wiring.test.js`；`E:\凪\.tools\modelhint-full-tests-final.tap`、`modelhint-build.log`、`modelhint-sabotage.log`；`docs/modelHint_同轮裁决时序设计_2026-10-19.md`。
+- **结论**：代码与契约已提交主线；交绿区独立复验，不自行标绿。
+- **缺口**：本轮四 provider 为归一化事件形状与原生/JSON 工具路单测，尚无四家真实模型设备层逐一复跑；绿区按契约抽验。普通主对话为候选复核改为最终正文缓冲出站，需绿区检查首字时延体验。
+
+## 2026-10-19 红区：P3-07 D5 开工边界（待绿区确认，未写码）
+
+- **受测提交**：`cc93f5e9edd703e3e317768db6cef75e2e28c8f4`（仅新增设计文件）。
+- **契约断言**：一份 expressionId 快照串联文字/mood/tone/renderer/TTS；实际音频时钟推进；特殊事件压住随机演出；renderer 45 个可降级唯一站点与 14 个纯展示 visible 站点拟经白名单、脱敏、持久化汇入现有 getHealth，settings 通道零重叠。
+- **命令退出码**：`E:\凪\.tools\verify-p3-boundary.mjs` exit 0（degrade 45 唯一站点/46 调用处；纯展示 visible 14；阶段 2 已入通道 visible 6）。设计轮无业务测试和构建变更。
+- **证据路径**：`docs/P3-07_开工边界_2026-10-19.md`；站点来源 `src/renderer/js/*` 与 `src/shared/renderer-health-protocol.js`。
+- **结论**：边界清单已交，P3-07 保持待开工，不自行标绿。
+- **缺口**：须绿区确认 IPC 名、落盘文件和站点白名单后才写码；设备层表达与跨窗可见性未实施、未验证。
+
 ## 2026-10-18 · 新版评审任务卡（三 Agent 协作）
 
 > 依据《凪_Nagi_新版评审与设计建议_2026-10-18》（提交 `d59768c`）。以下把评审 B1–B9 / C1–C5 / D2–D9 拆成任务卡，按阶段 1/2/3 分组。
@@ -32,7 +50,7 @@
 
 | ID | 归属 | 评审项 | 输入（文件:行） | 输出 | 验收标准 | 依赖契约 | 成本 | 状态 |
 |---|---|---|---|---|---|---|---|---|
-| P2-01 | 🟢+🔵 | D2 表达意图+场景化上下文 | `agent.js:791–820`；`core/rag/chunk.js`；`core/rag/recall.js`；`core/llm/openai-compatible.js:24–31` | 6 意图枚举（brief-ack/listen/clarify/solve/reminisce/boundary）+ 意图约束本轮功能；事实/表达材料分离；按模型/用途存参数 | 同一场景不同输入能跟随细节变化；技术任务不被迫哲理短句；参数按提供商保存 | §CONTRACTS §5 表达意图 | 8–14h | 🔵**首批完成**（2026-10-18）：六意图裁决 + §8 优先级 + 场景白名单 + 事实/材料分离 + system 功能指令已接；证据 D6-CLS-01/02/03/04、D6-STOP-01、D6-ANGER-01 全部钉住。待二批：activity 白名单**已接实际来源**（媒体播放态/monitor 分类/simulated，均需授权时间戳，过期或缺授权一律 null）、**按模型/用途存参数已接**（`llm.purposeParams`：chat/diary 走用途解析，缺省与改造前逐字一致）；**裁决 B 已落地**（设置页显示「监测于 <时间> 授权」，无戳不显示，真机 12/12）；modelHint 保持 null，后续实施轮先解「模型建议晚于 system 裁决」时序再接，不继承上一用户轮 hint（见 PENDING-CODEX 升级单5）。**＋🔵二批核对（`b22bfbe`，DECISIONS D64）**：① reminisce 引用门槛原为 `memoryRefs.length>0 \|\| memoryLines().length>0`——后者是历史行数、几乎恒真，门槛形同虚设，已改 `hasGroundedRefs()`（须有 `id`+`source`）；② proactive/extract 两个用途此前是**死配置**，已接 `resolveLlm(…,'proactive'/'extract')`，跨 baseURL 时如实告警并退回主客户端、**不静默换端点**；③ 防回潮 `test/d2-purpose-wiring.test.js` **6/6**（源码正则断言接线点 + `modelHint` 恒 null 锁），已做反向验证（改回旧写法立刻变红）；`test/intent.test.js` **19/19**（+2 条口径）。构建 0；意图相关合计 **52/52**。仍未做：modelHint（等红区裁决）、P3-08 导出（阶段三） |
+| P2-01 | 🟢+🔵 | D2 表达意图+场景化上下文 | `agent.js:791–820`；`core/rag/chunk.js`；`core/rag/recall.js`；`core/llm/openai-compatible.js:24–31` | 6 意图枚举（brief-ack/listen/clarify/solve/reminisce/boundary）+ 意图约束本轮功能；事实/表达材料分离；按模型/用途存参数 | 同一场景不同输入能跟随细节变化；技术任务不被迫哲理短句；参数按提供商保存 | §CONTRACTS §5 表达意图 | 8–14h | 🔵**首批完成**（2026-10-18）：六意图裁决 + §8 优先级 + 场景白名单 + 事实/材料分离 + system 功能指令已接；证据 D6-CLS-01/02/03/04、D6-STOP-01、D6-ANGER-01 全部钉住。待二批：activity 白名单**已接实际来源**（媒体播放态/monitor 分类/simulated，均需授权时间戳，过期或缺授权一律 null）、**按模型/用途存参数已接**（`llm.purposeParams`：chat/diary 走用途解析，缺省与改造前逐字一致）；**裁决 B 已落地**（设置页显示「监测于 <时间> 授权」，无戳不显示，真机 12/12）；modelHint 首请求保持 null；同次候选经编排复核/同轮重写已由红区 `6e429aa` 接入，待绿区独立复验（不继承上一用户轮）。**＋🔵二批核对（`b22bfbe`，DECISIONS D64）**：① reminisce 引用门槛原为 `memoryRefs.length>0 \|\| memoryLines().length>0`——后者是历史行数、几乎恒真，门槛形同虚设，已改 `hasGroundedRefs()`（须有 `id`+`source`）；② proactive/extract 两个用途此前是**死配置**，已接 `resolveLlm(…,'proactive'/'extract')`，跨 baseURL 时如实告警并退回主客户端、**不静默换端点**；③ 防回潮 `test/d2-purpose-wiring.test.js` **6/6**（源码正则断言接线点 + 首请求 `modelHint` 恒 null 锁；同轮接入新证据见上），已做反向验证（改回旧写法立刻变红）；`test/intent.test.js` **19/19**（+2 条口径）。构建 0；意图相关合计 **52/52**。仍未做：P3-08 导出（阶段三） |
 | P2-02 | 🟢 | D9 24 场景评测 | EVAL.md | 24 场景 + 红线；固定提供商/模型/快照；0–2 分六维 + 客观指标 | 抽 8 高频场景×2 次；红线一票否决 | EVAL.md 全套 | 4–6h首轮 | 🟢真模型 8×2 目标回复已采集、五个文字维度初评 151/160；多模态、首字时间、旧/新盲评与 D1 持久化红线未验，整卡部分完成（见 D9首轮评分记录） |
 | P2-03 | 🔴 | B6 固定钩子顺序/最终帧 | `live2d.js:584–602,1188–1225,1619–1647` | 每模型生命周期固定有序钩子表；权重交叉淡变让位；眨眼/口型所有权；值域检查 | 组合测试（情绪+眨眼+说话 / 思考+眼球 / 转身+depth）读整链终值；最终帧校验 | CONTRACTS §8 B6 | 6–10h | ✅ 已落地（固定单监听器与稳定拓扑顺序；组合假测 6/6、全量 857/858 通过且 1 skip、构建 0、真机 depth 39/39、face 10/10、pose 13/13；详情见当前状态） |
 | P2-04 | 🔵 | B8 空 catch 分类+事件轨迹 | `main/rag/store-io.js:36–40`；`reminders.js` tick | 按后果分类（可降级/需可见状态/不可静默持久化/承诺失败/语义失败）；有界脱敏事件轨迹 | 持久化失败不静默；承诺失败可重试+健康状态；轨迹脱敏可删 | — | 4–6h | 🔵**二批完成**（2026-10-18）：五类后果分类 + 有界脱敏轨迹 + 站点健康状态 + **只读 IPC + 设置页状态区**（可查/可清，可降级不打扰）；证据 B8-HEALTH/PERSIST/PROMISE/DEGRADE/SEMANTIC + 真机 `verify:maintenance` 7/7。**＋🔵收口（`999613c`，DECISIONS D62）**：**80 处空 catch 全部处置完毕**——`scripts/b8-catch-audit.mjs scan` 退出 0，其中 **30 处非 degrade 真接 `reportCatch`**（persist/journal/windows/shortcuts/reminders/delivery/rag store-io 等）；二选一纪律写进代码本身（接上报 或 带 `/* B8:<类> — 理由 */`），不维护会过期的外部台账，裁决表唯一出处 `scripts/b8-catch-table.py`、台账 `docs/b8-catch-ledger.json`；新增 `src/core/maintenance/reporter.js`（core 侧也要能出声，main 只再导出）；`test/b8-failure.test.js` **6/6** 全真失败注入 + 反向对照防恒真假绿。**仍未做**：renderer 那 ~70 处空 catch（红区负责，未动）；真机 `verify:maintenance` 本轮重跑 **12/12**。**＋🔵第三轮收口（`aa414c6`，DECISIONS D65）**：绿区把 `test/acceptance-b8-promise-failure.test.js` 放到蓝区代码上复跑**失败**——`reminders.js` 的 `tick()` 把 `onDue` 异常吞在 `try` 里，提醒确实留在列表等重试，但健康登记表什么都不知道，"承诺类失败"本该算红、设置页却显示一切正常；**返回 false（未确认送达）** 这条同等严重的路径同样静默。修法都在调度入口 `tick()` 内（不新增旁路上报点）：抛错/未确认送达都 `reportCatch('reminders.dispatch', PROMISE)` 并保留提醒供下次重试；成功送达 `maintenanceRecover`（恢复 = `lastClass` 归零 + 记 `recoveredAt`，count 不清零，"反复红过"要看得见）；调度器节拍改为"正常跑完也恢复"，避免一次偶发失败把站点永久留红。提醒正文是用户内容、不进健康快照，新增 `safeDispatchMessage()` 在调用点把正文替换成 `[提醒正文]`（`redactMessage` 只打码盘符/用户目录，这个分工写进了注释）。绿区用例**逐字纳入**蓝区回归；新增 `test/b8-promise-dispatch.test.js` **3/3**（返回 false / 连续两次抛错后成功 / 失败与恢复消息都不含正文），入口一律 `startReminderEngine`+`tick`，**不用直接调 `reportCatch` 的测试代替调度入口测试**；反向验证（删任一上报路径立刻红）已做。界面把"曾出问题但已恢复"单独说出来，不再和"从没出过问题"混为一句 |
@@ -51,7 +69,7 @@
 | P3-04 | 🔵 | C1 常驻理由三时刻 | — | 回来不审问/工作安静/交办有结果；任务卡作行动证据；工具产物可读 | 工作台不冲淡陪伴；技术/文件交付允许结构化 | — | 4–6h | 待开工 |
 | P3-05 | 🔵 | C2 冷启动 | `core/relation/familiarity.js` | 首次只做称呼偏好（可跳）/默认安静/一次可查看结果的小任务；缺称呼自然省略 | 无打卡/无登录压力；允许纠正"你误会我了" | — | 3–5h | 待开工 |
 | P3-06 | 🔵+🟢 | C3 主动开口时机 | `core/companion/budget.js`；`agent.js` saySomething | 生成前查预算、返回后重验授权/新鲜度/预算；事件 ID/epoch 失效过期候选；允许无文本低幅回应 | 关闭监测但未开勿扰时旧候选不再开口；交错测试通过 | CONTRACTS §14 | 4–6h | 🟢规格已写（CONTRACTS §14 / EVAL §3.13）；实现待开工 |
-| P3-07 | 🔴 | D5 多模态表达快照 | B5/B6 共用 | 一份轻量表达快照串联文字/mood/tone/renderer/TTS；特殊事件抑制随机演出 | 播放/停顿/结束用实际音频时钟；文字转开心语音不沿用旧担心声线 | 依赖 P1-05/P2-03 | 6–10h | 待开工；承接 renderer B8 的 45 处可降级及 14 处纯展示 visible 失败的跨窗口/重启可见性，本阶段只保留当前窗口轨迹/状态，不在 G1/G2 通道实现。 |
+| P3-07 | 🔴 | D5 多模态表达快照 | B5/B6 共用 | 一份轻量表达快照串联文字/mood/tone/renderer/TTS；特殊事件抑制随机演出 | 播放/停顿/结束用实际音频时钟；文字转开心语音不沿用旧担心声线 | 依赖 P1-05/P2-03 | 6–10h | 边界清单 `cc93f5e` 已交绿区确认，未写码、仍待开工；承接 renderer B8 的 45 处可降级及 14 处纯展示 visible 失败的跨窗口/重启可见性，本阶段只保留当前窗口轨迹/状态，不在 G1/G2 通道实现。 |
 | P3-08 | 🟢+🔵 | C5 记忆/数据导出 | P2-06 数据地图；CONTRACTS §11/§15 | 用户发起的统一导出；逐项标来源及主观/模拟/已删状态；外部副本不静默删除 | EVAL §3.14 C5-EXPORT-01..04；无导出能力前保持待验 | 依赖 P2-06 数据地图 | 待估 | 🟢规格已写（CONTRACTS §15 / EVAL §3.14）；蓝区实现待开工，EXPORT 仍待验 |
 
 > 备注：阶段成本存在共享（评审 F 注明），不可机械相加；每阶段后用同一 EVAL 场景集判断是否改善，无收益即停止扩功能。勿扰是否拦重要提醒、本地求助信息等需作者裁决项在契约中标注。

@@ -35,6 +35,24 @@
 - **结论**：合流已物理落地主线，待绿区独立复验；未自行标绿。
 - **缺口**：无代码/测试阻断；待绿区独立复验。主仓 checkout 指向蓝区且有 113 项既有工作区差异，未碰其文件；验证在代码与 main 同为 969c377 的独立检出运行。密钥只经进程环境变量注入，未进证据或仓库。
 
+### 2026-10-19 modelHint 同轮接入（待绿区独立复验）
+
+- **受测提交**：`6e429aa0641ae2ac90fa16deac14a779de31e5a4`。
+- **契约断言**：首请求 modelHint 恒 null，同次模型候选经有界开头标签、turnId/epoch/step 临时槽和编排 guard 复核；最终正文才出站；最多一次同轮重写；用户/危机规则优先；工具步及下一用户轮不继承 hint。`loop.js` 无需改：包装器包住四 provider 的统一模型流，复用 loop 既有 guard 预算和事件/结果形状。
+- **命令退出码**：Node24 全量 1016/1015/0/1、exit 0；build exit 0；B7 strict 0 越界、exit 0；定向 14/14 exit 0；反向旧透传 exit 1、2 fail，恢复后 exit 0。
+- **证据路径**：`E:\凪\.tools\modelhint-full-tests-final.tap`、`modelhint-build.log`、`modelhint-sabotage.log`；`test/model-hint.test.js` 与 `test/d2-purpose-wiring.test.js`。
+- **结论**：接入及契约已入主线，等绿区独立复验，不自行标绿。
+- **缺口**：四真实 provider 的设备层与缓冲后首字时延待绿区抽验；现有自动证据覆盖四种归一化事件形状。
+
+### 2026-10-19 P3-07 先交设计边界（待绿区确认）
+
+- **受测提交**：`cc93f5e9edd703e3e317768db6cef75e2e28c8f4`（设计文件一项）。
+- **契约断言**：主进程独占 expressionId/phase/tone 快照权威；音频 `currentTime` 驱动播放阶段；特殊事件抑制随机演出；renderer 展示降级经独立白名单 IPC、落盘与既有 getHealth 合并，settings 通道零重叠。
+- **命令退出码**：站点与边界静态核对 `E:\凪\.tools\verify-p3-boundary.mjs` exit 0（45 degrade 唯一站点、14 纯展示 visible）；本轮无 P3-07 业务代码可测。
+- **证据路径**：`docs/P3-07_开工边界_2026-10-19.md`。
+- **结论**：只交边界方案，未开工、未标绿。
+- **缺口**：绿区确认边界后再实施；真机最终帧、音频时钟与跨窗口/重启展示尚未验证。
+
 **当前在办**：阶段 1 的 P0 缺陷修复（P1-01 提醒路径、P1-02 RAG 入队、P1-03 归来泄漏、P1-06 标题授权、P1-07 危机兜底），以及阶段 2 的 P2-03 钩子顺序 / P3-07 多模态快照。**P1-06（C4）绿区规格已定稿**（CONTRACTS §6 + EVAL §3.5，D63 已裁决），红区可直接施工。
 
 **契约红线**（实现必须遵守，详见 CONTRACTS.md）：
