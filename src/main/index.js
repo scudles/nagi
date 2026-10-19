@@ -123,9 +123,19 @@ if (!gotLock) {
     // 读取设置 + 迁移：M3 之前 settings.json 里 privacy.monitorEnabled 的旧默认是 false。
     // 只要用户还没走过「首次告知」流程，就按新默认（开）初始化，最终由告知弹窗决定去留。
     // 必须在 startActivityMonitor 之前执行，否则首次升级那一次会话会读到旧值而不采集。
+    // G3：这一步落盘失败**不静默也不崩启动**——settings-store 已单点按 MUST_PERSIST 上报；
+    // 这里兜住是因为这个分支幂等（下次启动 noticeShown 仍为 false，会自然再试一次），
+    // 为一次写盘失败让整个应用起不来是不成比例的。
     const settings = loadSettings()
     if (!settings.privacy?.noticeShown && settings.privacy?.monitorEnabled === false) {
-      saveSettings({ privacy: { monitorEnabled: true } })
+      try {
+        saveSettings({ privacy: { monitorEnabled: true } })
+      } catch (err) {
+        /* B8:must-persist — 已由 settings.saveSettings 上报；此处不崩启动是因为
+           这个分支幂等（noticeShown 仍为 false，下次启动自然再试），
+           为一次写盘失败让整个应用起不来是不成比例的。 */
+        console.warn('[boot] 监测默认值初始化未落盘（下次启动重试）：', err.message)
+      }
     }
 
     // 旧数据只建立来源索引，不把模型推测升级为事实，也不把旧日记重新灌入 RAG。

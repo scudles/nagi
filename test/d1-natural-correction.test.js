@@ -169,8 +169,11 @@ test('A9 认不出槽的新事实绝不触发任何撤权', () => {
 test('A10 memorySlot：槽识别与"认不出就返回 null"', () => {
   assert.equal(memorySlot('喜欢蓝色'), 'color')
   assert.equal(memorySlot('喜欢的颜色是绿色'), 'color')
-  assert.equal(memorySlot('住在杭州'), 'city')
-  assert.equal(memorySlot('居住在上海'), 'city')
+  // city 已细分为现居/老家两个子语义（见 A13：老家不得被改现居顺手删掉）
+  assert.equal(memorySlot('住在杭州'), 'city:current')
+  assert.equal(memorySlot('居住在上海'), 'city:current')
+  assert.equal(memorySlot('我老家在北京'), 'city:home')
+  assert.equal(memorySlot('籍贯是浙江'), 'city:home')
   assert.equal(memorySlot('他叫阿伟'), 'name')
   assert.equal(memorySlot('生日是三月'), 'birthday')
   assert.equal(memorySlot('在做一款桌宠项目'), 'occupation')
@@ -178,6 +181,53 @@ test('A10 memorySlot：槽识别与"认不出就返回 null"', () => {
   for (const t of ['养猫', '做过一个项目', '最近在学吉他', '', null, '   ']) {
     assert.equal(memorySlot(t), null, `"${t}" 不该被归进任何槽`)
   }
+})
+
+/* ---- A13：老家 vs 现居（city 子语义） ---- */
+
+// 绿区纯函数探针（复跑确认过）：改现居会把"我老家在北京"一并删掉——
+// 老家和现居是两个独立事实，不是同一个值的两个版本。
+test('A13 city 子语义：老家不得被"改现居"顺手删掉', () => {
+  // ① 只有老家 + 改现居 → 老家原样活着
+  const r1 = mergeMemoryEntries([{ id: 'h1', text: '我老家在北京', at: 1 }],
+    { add: ['我住的是上海'], remove: [] }, 100)
+  assert.deepEqual(r1.removed, [], '老家与现居不同子槽，绝不互撤')
+  assert.ok(r1.entries.some((e) => e.text === '我老家在北京'), '老家必须保留')
+
+  // ② 老家与现居并存 + 改现居 → 只撤旧现居，老家保留
+  const r2 = mergeMemoryEntries([
+    { id: 'h1', text: '我老家在北京', at: 1 },
+    { id: 'c1', text: '我住在杭州', at: 2 }
+  ], { add: ['我住的是上海'], remove: [] }, 100)
+  assert.deepEqual(r2.removed, ['我住在杭州'], '只撤同子槽的旧现居')
+  assert.ok(r2.entries.some((e) => e.text === '我老家在北京'), '老家必须保留')
+  assert.ok(r2.entries.some((e) => e.text === '我住的是上海'), '新现居要落地')
+
+  // ③ 正向不回退：同为现居子槽，仍然正确撤（修子槽不许把主路径修坏）
+  const r3 = mergeMemoryEntries([{ id: 'c1', text: '我住在杭州', at: 1 }],
+    { add: ['我住的是上海'], remove: [] }, 100)
+  assert.deepEqual(r3.removed, ['我住在杭州'], '现居→现居仍必须撤权')
+
+  // ④ 反向：改老家也不得动现居
+  const r4 = mergeMemoryEntries([
+    { id: 'h1', text: '我老家在北京', at: 1 },
+    { id: 'c1', text: '我住在杭州', at: 2 }
+  ], { add: ['我老家是南京'], remove: [] }, 100)
+  assert.deepEqual(r4.removed, ['我老家在北京'], '老家→老家才撤')
+  assert.ok(r4.entries.some((e) => e.text === '我住在杭州'), '现居不得被老家更正删掉')
+
+  // ⑤ 无主语老句子 + 改现居 → 保留（固化当前真机行为，双保险）
+  const r5 = mergeMemoryEntries([{ id: 'h1', text: '老家在北京', at: 1 }],
+    { add: ['我住的是上海'], remove: [] }, 100)
+  assert.deepEqual(r5.removed, [], '无主语老家句同样保留')
+})
+
+test('A14 一句话同时含老家与现居词时归现居（错得起价更小）', () => {
+  // "我老家杭州，现居北京"的当前主张是现居。若归到 home，它会与别的老家条目
+  // 同槽而被误撤；归到 current 只会与别的现居条目同槽。这是有意识的取舍。
+  assert.equal(memorySlot('我老家杭州，现居北京'), 'city:current')
+  // 纯老家句仍然归 home，能正常被"老家→老家"撤权
+  assert.equal(memorySlot('我老家是北京'), 'city:home')
 })
 
 test('A11 抽取提示词不再要求模型逐字复现 remove（撤权主路径已确定化）', () => {

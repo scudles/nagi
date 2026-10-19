@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { mergeMemoryEntries, supersedeSameSlot } from '../core/memory.js'
 import { atomicWriteJsonSync } from '../core/persist-io.js'
 import { recordLedger, deleteLedgerSource } from './ledger.js'
+import { getSettings } from './settings-store.js'
 
 const usersFile = (name) => join(app.getPath('userData'), name)
 
@@ -59,6 +60,11 @@ function writeJsonSoon(file, data, delay = 400) {
 /* ---------------- 退出刷盘与失败可见性（B01） ---------------- */
 
 const PERSIST_FILES = ['memory.json', 'history.json', 'mood.json', 'relation.json']
+// G3：settings.json 也作为一个持久化站点纳入退出刷盘与失败报告。
+// saveSettings 是同步写的（失败即抛），正常情况下这里只是幂等重写一遍；
+// 它的价值在于：退出时若目录/权限已变为不可写，失败会和其他文件一起进
+// persist-warnings，而不是只留在 saveSettings 抛出的那一次异常里。
+const PERSIST_FILES_WITH_SETTINGS = [...PERSIST_FILES, 'settings.json']
 const WARNINGS_FILE = 'persist-warnings.json'
 const WARNINGS_KEEP = 20
 
@@ -89,11 +95,14 @@ export function flushPersist() {
       'memory.json': { version: 1, entries: memories || [] },
       'history.json': { version: 1, messages: history || [], lastAt },
       'mood.json': moodState,
-      'relation.json': relationStats
+      'relation.json': relationStats,
+      // G3：settings.json 走 settings-store 的 cache（权威在那边）。
+      // 取不到就跳过——没有 cache 说明本次进程从未读过设置，不凭空造一份。
+      'settings.json': (() => { try { return getSettings() } catch { return null } })()
     }
-    for (const name of PERSIST_FILES) {
+    for (const name of PERSIST_FILES_WITH_SETTINGS) {
       const data = snapshots[name]
-      if (data == null) continue // mood/relation 从未有过状态：不创建空文件
+      if (data == null) continue // mood/relation/settings 从未有过状态：不创建空文件
       const r = atomicWriteJsonSync(fsApi, usersFile(name), data)
       if (r.ok) written.push(name)
       else failed.push({ file: name, error: r.error })

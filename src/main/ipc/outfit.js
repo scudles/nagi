@@ -28,10 +28,17 @@ export function registerOutfitIpc() {
     const prev = setOutfitCatalog(next)
 
     // 落盘：优先记 look id；"只动了一处"没有对应预设时就记槽位表
+    // G3：落盘失败必须如实回 {ok:false}——旧实现 return {ok:true} 是"假成功"，
+    // renderer 会以为装束已记住，重启后却回到上一套。
+    // 上报点保留（B8 防回潮清单钉住了 outfit.registerOutfitIpc）；
+    // settings.saveSettings 那个站点说明"设置写不进去"，这个站点说明"装束因此没记住"。
     try {
       const value = current || (next.slots ? next.slots : '')
       if (value) saveSettings({ live2d: { outfit: value } })
-    } catch (__err) { reportCatch('outfit.registerOutfitIpc', CATCH_CLASS.MUST_PERSIST, __err) }
+    } catch (__err) {
+      reportCatch('outfit.registerOutfitIpc', CATCH_CLASS.MUST_PERSIST, __err)
+      return { ok: false, error: `装束没能保存：${__err.message}` }
+    }
     if (prev.current !== next.current || prev.looks.length !== next.looks.length) refreshTrayMenu()
     return { ok: true, current }
   })

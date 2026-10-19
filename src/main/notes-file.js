@@ -82,18 +82,36 @@ export async function pickExternalDir(owner) {
   } catch (err) {
     return { ok: false, error: `这个目录读不了：${err?.message || '未知原因'}` }
   }
-  const next = saveSettings({ presence: { notesExternalDir: dir } })
+  // G3：授权写盘失败必须如实回 {ok:false}。旧实现 return {ok:true, dir} 会让用户
+  // 以为"已授权到这个目录"，而 settings.json 根本没写——重启后授权消失，
+  // 更糟的是本次会话已经在这个目录里写便签了（权限与记忆不一致）。
+  // 上报由 settings-store 单点完成（站点 settings.saveSettings）。
+  let next
+  try {
+    next = saveSettings({ presence: { notesExternalDir: dir } })
+  } catch (err) {
+    /* B8:must-persist — 落盘失败已由 settings.saveSettings 上报；这里把"授权没保存"
+       如实回给调用方（{ok:false}），绝不说成已授权——本次会话已经在这个目录写便签了，
+       权限与记忆不一致比"保存失败"更难查。 */
+    return { ok: false, error: `授权没能保存：${err.message}` }
+  }
   syncExternalNotes()
   return { ok: true, dir, settings: next }
 }
 
 /** 撤销授权：只是不再写，不动已经写出去的文件（删除用户文件是我们不该做的事） */
 export function revokeExternalDir() {
-  const next = saveSettings({ presence: { notesExternalDir: '' } })
+  let next
+  try {
+    next = saveSettings({ presence: { notesExternalDir: '' } })
+  } catch (err) {
+    /* B8:must-persist — 撤销失败＝授权还在磁盘上，绝不能回 {ok:true} 说成已撤销。
+       已由 settings.saveSettings 上报；这里只把结果如实给调用方。 */
+    return { ok: false, error: `撤销没能保存：${err.message}` }
+  }
   syncExternalNotes()
   return { ok: true, settings: next }
 }
-
 /** 找出一张便签（只读，供写入用） */
 function findNote(noteId) {
   if (!noteId) return null

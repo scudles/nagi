@@ -311,6 +311,53 @@
   自觉取舍，若真机出现漏撤 case，应该是补词表，不是放宽判据；② **省略主语**的纠正句（"并非蓝色，是紫色"）
   不撤权，因为判据③（是用户自身 claim）不满足——绿区两 case 的 correct 都带主语，不影响验收。
 
+### 阶段2 蓝区收口批次1（2026-10-19，分支 `blue/stage2-d1-hometown-g3`，基线 `cf5e09d`）
+
+两件互不相干的小事，都不碰 `src/renderer/` 与 `loop.js`。决策见 DECISIONS D67。
+
+**① D1：city 槽细分为「老家 / 现居」**（`src/core/memory.js`）
+- D66 把 city 做成单槽，词表同时含 `老家|故乡|籍贯` 与 `住在|住的是|搬到|迁到` → 绿区探针复现存证：
+  `supersedeSameSlot([{我老家在北京},{我住在杭州}], ["我住的是上海"])` 一次删两条，老家被误删。
+  老家和现居是**两个独立事实**，不是同一个值的两个版本——同槽归并的前提在这里不成立。
+- 修法：`memorySlot` 细分 `city:current` / `city:home`（不是在判据④外加特例——子语义是数据模型的
+  一部分）。判据②「同槽」天然挡住跨子语义，判据链不动；`hasSlotKeyword` 从同一 `SLOT_RULES` 派生。
+- 子语义顺序 **current 在前、home 在后**："我老家杭州，现居北京"这类同时含两类词的句子，
+  归 home 会误撤别的老家，归 current 只会与别的现居同槽——**错得起价更小**（有意识取舍）。
+- 测试 A13（5 条）/ A14（1 条），A10 槽断言同步改。反向验证：合并回单槽 → A10/A13/A14 立刻红。
+- **给绿区**：老家 case 的真机形态（用户先说自己老家、再更正现居）请补一条，确认不误删。
+
+**② G3：settings.json 写盘静默（B8 必修，涉隐私）**（`src/main/settings-store.js` + 5 调用方 + `persist.js`）
+- 根因：`saveSettings` 先 `cache = next` 再 try 写盘，catch 只 `console.error` 后**无条件 return next**。
+  → IPC/托盘/监测授权/外部便签全"成功"，renderer 刷成新值，磁盘没写，重启恢复默认。
+  对 `privacy.noticeShown` / `monitorAuthorizedAt` / 监测开关就是**隐私假关闭**。
+  它能在 B8 审计下存活，是因为那是**带 console.error 的非空 catch**，空 catch 扫描扫不到；
+  调用方的 `try/catch + reportCatch` 也永远不会触发（这里根本不抛）——一层假防护。
+- 修法：① 落盘成功才更新 cache（失败时内存与磁盘一致）；② 单点上报 `settings.saveSettings`
+  / MUST_PERSIST；③ 向上抛。`settings.json` 同时纳入 `PERSIST_FILES`（退出刷盘 + persist-warnings）。
+  调用方只做控制流：IPC 靠 throw 自然 reject（**代码零改动**）、托盘失败不广播且菜单回滚、
+  便签授权/撤销失败回 `{ok:false}`、装束失败回 `{ok:false}`、启动初始化失败不崩（幂等可重试）。
+- 上报与抛出的错误**不含文件路径**（只带 fs code），用户设置正文不进健康快照。
+- **踩的坑**：第一版把 `windows.resizePetWindow` / `outfit.registerOutfitIpc` 的 reportCatch 当
+  "重复上报"删了 → `B8-AUDIT-01` 立刻红。那两处是 B8 **防回潮清单**钉的关键站点，已恢复。
+  双报不是 bug：「设置写不进去」和「桌宠尺寸因此没记住」是两个关注点。
+- 测试 `test/g3-settings-persist.test.js` **5/5**（mock fs 造 EACCES）：G3-A 抛错+cache 不更新+磁盘不变+上报；
+  G3-A2 脱敏（不含路径/不含设置字段）；G3-B IPC reject 且不广播、不跑后置刷新；G3-C 成功路径不回归；
+  G3-D flushPersist 纳入 settings.json + 失败进 persist-warnings + 可取回清空。
+  反向验证：换回旧静默实现 → G3-A/A2/B/D 立刻红，只有成功路径 G3-C 保持绿（应该的）。
+
+**数字**：d1 **19/19**、g3 **5/5**、B8 catch 审计退出 0（50 处全分级）、全量 **994 / 993 过 / 0 失败 /
+1 条件 skip**（基线 987 + 7）、`npm run build` 退出 0。
+
+**与红区 `red/stage2-renderer-catch` 零重叠**：红区相对共同基线 `ff95ee3` 只改 `src/renderer/*`（6 js +
+index.html）+ `test/renderer-catch.test.js` + 2 份绿区文档，与本轮 10 个文件交集为空。`loop.js` 未碰。
+
+**⚠️ 交红区的一条（本轮按纪律未动 renderer）**：`src/renderer/js/main.js` 的 `maybeShowMonitorNotice`
+（约 1129-1136 行）是「先隐藏遮罩再 await、`catch { /* ignore */ }`」。即使主进程现在 reject，
+**遮罩已隐藏且不会重显**——用户点「关闭监测」落盘失败时仍看不到"保存失败，请重试"。
+红区只需把那个 catch 改成显示 `err.message`（主进程已给中文可读文案），并按
+`settings.privacy.noticeShown` 仍为 false 重显遮罩。设置页路径（`bindSaveButton`）与托盘路径
+**已满足**"不显示已授权/可重试"，不受此影响。
+
 
 
 ---

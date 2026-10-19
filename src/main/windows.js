@@ -106,6 +106,9 @@ export function resizePetWindow(size = {}) {
     win.setBounds({ x: Math.round(right - w), y: Math.round(bottom - h), width: w, height: h })
   }
   if (size.persist !== false) {
+    // G3：saveSettings 落盘失败会抛（并已在 settings.saveSettings 单点上报）。
+    // 这里保留自己的上报点——B8 的防回潮清单钉住了 windows.resizePetWindow，
+    // 两个站点是两个关注点：「设置写不进去」和「桌宠尺寸因此没记住」，都要看得见。
     try {
       saveSettings({ live2d: { petWidth: w, petHeight: h } })
     } catch (__err) { reportCatch('windows.resizePetWindow', CATCH_CLASS.MUST_PERSIST, __err) }

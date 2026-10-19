@@ -146,6 +146,10 @@ function syncAuthorizationStamp() {
   const privacy = getSettings().privacy || {}
   const enabled = privacy.monitorEnabled !== false
   const at = Number(privacy.monitorAuthorizedAt) || 0
+  // G3：saveSettings 落盘失败会抛。这里兜住不让授权时间戳的同步崩掉监测模块——
+  // 打戳失败不影响本次会话的采集判定（内存 cache 也没被更新，与磁盘一致），
+  // 下次启动会按磁盘上的旧值重新判，不会把"没记上"当成"已授权"。
+  // 上报点保留原样（站点 index.syncAuthorizationStamp）。
   try {
     if (enabled && at <= 0) saveSettings({ privacy: { monitorAuthorizedAt: Date.now() } })
     else if (!enabled && at > 0) saveSettings({ privacy: { monitorAuthorizedAt: 0 } })

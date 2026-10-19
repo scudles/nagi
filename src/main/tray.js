@@ -115,13 +115,24 @@ function quietMenuItems() {
  * 从托盘翻隐私开关。后置动作必须与设置页保存**完全一致**
  * （见 ipc/settings.js 的 SETTINGS_SET），否则会出现「菜单勾了、行为没变」
  * 这种最难查的不一致。
+ *
+ * G3：落盘失败时**不广播 SETTINGS_CHANGED**——那会让 renderer 把开关刷成新值，
+ * 而磁盘根本没写（隐私"假关闭"）。菜单也刷新回旧勾选状态，让用户看到"没翻过去"。
+ * 上报由 settings-store 单点完成（站点 settings.saveSettings），这里只做控制流。
  */
 function setPrivacy(key, value) {
-  const next = saveSettings({ privacy: { [key]: value === true } })
-  refreshPresence()
-  refreshMonitorPrivacy()
-  refreshHaSignals()
-  broadcast(EVT.SETTINGS_CHANGED, next)
+  try {
+    const next = saveSettings({ privacy: { [key]: value === true } })
+    refreshPresence()
+    refreshMonitorPrivacy()
+    refreshHaSignals()
+    broadcast(EVT.SETTINGS_CHANGED, next)
+  } catch (err) {
+    /* B8:must-persist — 落盘失败已由 settings.saveSettings 单点上报进健康状态；
+       这里只做控制流：不广播 SETTINGS_CHANGED（否则 renderer 会把隐私开关刷成新值，
+       而磁盘根本没写＝隐私假关闭），菜单刷新回旧勾选。 */
+    console.warn('[tray] 隐私开关保存失败，菜单保持原状态：', err.message)
+  }
   refreshTrayMenu()
 }
 

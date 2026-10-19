@@ -981,3 +981,88 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
 - **已知取舍（留给后续）**：槽位词表是保守集，认不出的属性不会触发同槽撤权——这是"宁可漏撤"的代价。
   已覆盖绿区两 case 的全部原文（含"我住的是上海"与"不是蓝色是绿色"）；仍未覆盖的例如
   "我家在上海市"（无任何 city 关键词）、无主语纠正句——需要时补词表，**不是放宽判据**。
+
+## D67（2026-10-19）阶段2蓝区收口批次1：D1 city 老家/现居子槽 + G3 settings 写盘静默（分支 `blue/stage2-d1-hometown-g3`，基线 `cf5e09d`）
+
+> 两件事互不相干，合在一轮因为都小、且都不碰 `src/renderer/` 与 `loop.js`。
+> D1 那条是绿区真机转绿后**卡内自查**发现的误删；G3 是 ff95ee3a 基线即有的 B8 漏网（涉隐私）。
+
+### ① city 槽细分为「老家 / 现居」两个子语义（`src/core/memory.js`）
+
+- **问题**：D66 把 city 做成一个槽，词表同时含 `老家|故乡|籍贯` 与 `住在|住的是|搬到|迁到`。
+  于是 `supersedeSameSlot([{text:"我老家在北京"}], ["我住的是上海"])` 会**误删老家**——
+  绿区纯函数探针复现存证：`[{我老家在北京},{我住在杭州}]` + 改现居 → 一次删掉两条，
+  其中"老家在北京"根本不该撤。
+- **为什么是误删而不是漏撤**：一个人同时有老家和现居，它们是**两个独立事实**，
+  不是同一个值的两个版本。同槽归并的前提（"单值属性，新值落地旧值让位"）在这里不成立。
+- **修法：`memorySlot` 对 city 细分**（`city:current` / `city:home`），而不是在判据④外加特例。
+  理由：子语义是**数据模型的一部分**，不是判据的补丁；细分后判据②（同槽）天然挡住跨子语义，
+  判据链不用改。`hasSlotKeyword` 从同一个 `SLOT_RULES` 派生（单一出处，不会两处漂移）。
+- **子语义检查顺序 current 在前、home 在后**：一句话若同时含两类词（"我老家杭州，现居北京"），
+  它的"当前主张"是现居。归到 home 会与别的老家条目同槽而被**误撤**；归到 current 只会与别的
+  现居条目同槽——**错得起价更小**。这是有意识的取舍，不是偶然顺序。
+- **词表宁窄勿宽**：`city:current` 保持 `住的?是`（不写裸 `住的`——"我住的酒店"不是居住地陈述）。
+- **测试**：A13 五条（老家不被改现居删 / 并存时只撤旧现居 / 同为现居仍正确撤 / 反向改老家不动现居 /
+  无主语老家句保留），A14 钉住"同时含两类词归 current"。A10 的槽断言同步改成子槽名。
+  **反向验证**：把 city 合并回单槽 → **A10/A13/A14 立刻变红**；还原后 19/19。
+- **绿区探针复跑**：探针1 `[]`（不再误撤），探针2 `["我住在杭州"]`（只撤该撤的）。
+
+### ② G3：settings.json 写盘静默（`src/main/settings-store.js` + 5 个调用方 + `persist.js`）
+
+- **根因（ff95ee3a 基线即有，非本轮引入）**：`saveSettings` 先 `cache = next` 再 `try/writeFileSync`，
+  catch 里只有 `console.error`，然后**无条件 `return next`**。后果：
+  1. IPC / 托盘 / 监测授权 / 外部便签全部"正常成功"，renderer 把开关刷成新值，磁盘根本没写
+     → 重启恢复默认。对 `privacy.noticeShown` / `privacy.monitorAuthorizedAt` / 监测开关这类
+     **高敏项**，这就是"UI 显示已关闭、实际还在采"的**隐私假关闭**；
+  2. 调用方写的 `try/catch + reportCatch` **永远不会触发**（这里根本不抛错）——一层假防护；
+  3. 空 catch 扫描也扫不到——它是**带 `console.error` 的非空 catch**，这是它能在 B8 审计下
+     存活两年的原因；
+  4. `persist.js` 的 `PERSIST_FILES` 只有 memory/history/mood/relation，不含 settings.json，
+     没有第二通道。
+- **修法（三条硬规则）**：
+  1. **落盘成功才更新 cache**。失败时内存保持旧值，与磁盘一致——内存不得被当成"已经生效"，
+     否则本轮会话的行为会和重启后对不上；
+  2. **失败按 B8 单点上报**：站点 `settings.saveSettings`，`MUST_PERSIST`；
+  3. **向上抛**，让 IPC 如实回失败、托盘不广播假成功。
+  同时把 `settings.json` 纳入 `PERSIST_FILES`（退出刷盘 + 失败进 `persist-warnings`）——这是断言里
+  "settings.json 作为一个持久化站点"的落点。
+- **上报与抛出的错误都不含文件路径**（只带 fs 的 `code`）：路径是内部信息，
+  且 `redactMessage` 会打码盘符/用户目录；用户设置正文更不进健康快照。
+- **调用方（只做控制流，不改语义）**：`ipc/settings.js` 靠 throw 自然传播成 reject（**代码零改动**，
+  这正是"修根因而不是逐点打补丁"）；`tray.js` 失败时**不广播** `SETTINGS_CHANGED` 且菜单刷新回旧勾选；
+  `notes-file.js` 授权/撤销失败回 `{ok:false}`（不能说成已授权/已撤销）；
+  `ipc/outfit.js` 失败回 `{ok:false}`；`index.js` 启动初始化失败不崩（该分支幂等，下次启动自然重试）。
+- **踩到并记下的坑（重要）**：第一版把 `windows.resizePetWindow` 与 `outfit.registerOutfitIpc`
+  两处 `reportCatch` 当成"重复上报"删了 → `B8-AUDIT-01` 立刻红。那两处是 B8 **防回潮清单**
+  钉住的关键站点。已恢复。结论：**双报不是 bug**——"设置写不进去"和"桌宠尺寸因此没记住"
+  是两个关注点，两个站点都要看得见。为消重拆防回潮是买椟还珠。
+- **测试**（`test/g3-settings-persist.test.js`，新增 5 项，mock fs 造 EACCES，不 mock 任何业务逻辑）：
+  G3-A 抛错 + cache 不更新 + 磁盘不变 + 单点上报；G3-A2 健康快照与轨迹脱敏（不含路径、不含设置字段）；
+  G3-B `SETTINGS_SET` 失败时 reject 且**不广播**、不跑后置刷新；G3-C 成功路径不回归（resolve + 广播 +
+  cache 与磁盘都更新 + 健康状态回到全绿）；G3-D `flushPersist` 把 settings.json 纳入清单、失败进
+  `persist-warnings`、`consumePersistWarnings` 可取回并清空。
+  **反向验证**：把 `saveSettings` 换回旧静默实现 → **G3-A/A2/B/D 四项立刻变红**，只有 G3-C
+  （成功路径）保持绿——那正是应该的。
+
+### ③ 验证结果与边界
+
+| 项 | 结果 |
+|---|---|
+| d1-natural-correction | **19/19**（+A13/A14） |
+| g3-settings-persist | **5/5** |
+| B8 catch 审计（`scripts/b8-catch-audit.mjs scan`） | 退出 0，50 处全部已分级 |
+| 全量（Node 24.19.0 前置 PATH，关沙箱） | **994 项 / 993 过 / 0 失败 / 1 条件 skip**（基线 987 + 7） |
+| npm run build | 退出 0 |
+
+- **与红区 `red/stage2-renderer-catch` 零重叠**：红区相对共同基线 `ff95ee3` 只改
+  `src/renderer/*`（6 个 js + index.html）+ `test/renderer-catch.test.js` + 2 份绿区文档；
+  与本轮 10 个改动文件的交集为**空**。`loop.js` 未碰。
+- **未自行标绿**。G3 真机由绿区注入文件锁/只读复跑；D1 老家 case 的真机形态由绿区定。
+- **已知限制（必须披露）**：`maybeShowMonitorNotice`（`src/renderer/js/main.js:1129-1136`）的
+  `done()` 是「先 `ov.classList.add('hidden')` 再 await，`catch { /* ignore */ }`」——
+  即使主进程现在 reject，**首次告知遮罩已经隐藏、也不会重显**，用户点「关闭监测」落盘失败时
+  仍看不到"保存失败，请重试"。这是 renderer 侧缺陷，**本轮按纪律未动 `src/renderer/`**，
+  已交红区：只需把那个 `catch` 块改成把 `err.message` 显示出来（主进程已给出中文可读文案），
+  并按 `settings.privacy.noticeShown` 仍为 false 重显遮罩。设置页路径（`bindSaveButton`）不受影响——
+  它已有 catch，按钮会显示"没成功"，且不会执行 `settings = await get()`。
+  托盘路径同理：失败时不广播，菜单刷新回旧勾选，用户能看出"没翻过去"。
