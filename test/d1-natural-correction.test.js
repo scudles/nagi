@@ -52,6 +52,45 @@ test('A2 核心回归：city 真机铁证（杭州→上海）同样撤权', () 
   const r = mergeMemoryEntries(base, { add: ['已确认居住在上海'], remove: [] }, 100)
   assert.deepEqual(r.removed, ['住在杭州'])
   assert.deepEqual(r.entries.map((e) => e.text), ['已确认居住在上海'])
+
+  // 绿区 verify-d1-persistence.mjs 里 city case 的 correct **原文**是
+  // 「更正一下，我住的是上海不是杭州」。上面那组用的词是"居住"，词表认得出；
+  // 但真机这句只有"住的"——没有"居住"也没有"住在"。词表必须覆盖它，
+  // 否则单测全绿而真机照样漏撤（曾在这里差点给了假的安全感）。
+  const real = mergeMemoryEntries(base, { add: ['更正一下，我住的是上海不是杭州'], remove: [] }, 100)
+  assert.deepEqual(real.removed, ['住在杭州'], '真机 correct 原文必须触发同槽撤权')
+  assert.deepEqual(real.entries.map((e) => e.text), ['更正一下，我住的是上海不是杭州'])
+})
+
+// 绿区 color case 的 correct 原文。抽模型（temp=1.3）很可能把用户原话
+// 几乎照抄进 add——那时新文本里同时含着"蓝色"（被否掉的旧值）和"绿色"（新值）。
+// 若 lexiconValue 按第一个颜色词取值会拿到"蓝色"、与旧条目相同，
+// 判据⑤就把它当成"同一事实换说法"放过去 → 旧事实继续生效，D1 等于没修。
+const REAL_COLOR_CORRECT = '我说错了，我喜欢的不是蓝色是绿色'
+
+test('A12 真机 correct 原文（含被否定的旧值）同样撤权，不被误判成"换说法"', () => {
+  const r = mergeMemoryEntries(REAL_COLOR_BASE, { add: [REAL_COLOR_CORRECT], remove: [] }, 100)
+  assert.deepEqual([...r.removed].sort(), ['喜欢蓝色', '喜欢蓝色，已由本人确认记录'].sort(),
+    '被否定的旧值不得让判据⑤放行')
+  // 跨槽保护依旧成立
+  assert.ok(r.entries.some((e) => e.text === '住在杭州'), '城市条目不受颜色更正影响')
+
+  // 反向：真正"只是换了个说法"的仍然不撤（这条护栏不许被上面的修复带松）
+  const same = mergeMemoryEntries(REAL_COLOR_BASE, { add: ['我喜欢的颜色是蓝色'], remove: [] }, 100)
+  assert.deepEqual(same.removed, [], '蓝色→蓝色仍是同一事实，撤了就是白丢信息')
+
+  // 反向：并列陈述两个值不是"改版"，但也不是本条要护的形态——
+  // 关键是"没有否定词 + 值相同"必须不撤，"有否定词"必须撤。
+  const negated = mergeMemoryEntries(REAL_COLOR_BASE, { add: ['我并非喜欢蓝色，是紫色'], remove: [] }, 100)
+  assert.deepEqual([...negated.removed].sort(), ['喜欢蓝色', '喜欢蓝色，已由本人确认记录'].sort(),
+    '"并非X，是Y" 的 Y 才是当前主张的值')
+
+  // 已知保守边界（写下来，别让后人以为是 bug）：**省略主语**的纠正句不撤权。
+  // "并非蓝色，是紫色" 没有任何自称/谓词，判据③（是用户自身 claim）不满足。
+  // 绿区两个 case 的 correct 原文都带主语（"我说错了，我喜欢的…"/"更正一下，我住的…"），
+  // 所以不影响验收；真机若出现无主语纠正而漏撤，那是词表/判据要补，不是放宽判据③。
+  const noSubject = mergeMemoryEntries(REAL_COLOR_BASE, { add: ['并非蓝色，是紫色'], remove: [] }, 100)
+  assert.deepEqual(noSubject.removed, [], '无主语纠正句是已知保守边界：宁可漏撤，不可误删')
 })
 
 test('A3 跨槽保护：改颜色不得误删城市（绿区明确要求的第三条）', () => {

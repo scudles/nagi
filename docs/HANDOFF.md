@@ -293,15 +293,23 @@
   - `src/main/agent.js`：`syncFactsToRag` 返回 `{forgotten, failed}`，"没有这条"不算失败，
     其余进 `ragRevokeRetry`（上限 50、幂等、下次抽取自动重试）；新增 `reportRevocationGaps` 按 B8 上报。
     健康快照**只报条数与站点，不塞旧事实原文**（与 D65 对提醒正文的纪律同源）。
-- **测试**：新增 `test/d1-natural-correction.test.js` **16 项**（A 层 11 纯函数 + B 层 5 三层落盘集成，
+- **测试**：新增 `test/d1-natural-correction.test.js` **17 项**（A 层 12 纯函数 + B 层 5 三层落盘集成，
   mock electron / mock ledger 间谍 / 真 RagService，全假模型桩）。核心回归 A1/A2 与三层落盘 B1/B2
-  用的都是绿区真机铁证原文。**反向验证**：摘掉 `supersedeSameSlot` → 8 项立刻变红，还原后 16/16。
-- **数字**：全量 **986 / 985 过 / 0 失败 / 1 条件 skip**（基线 970 + 16）；`npm run build` **exit 0**。
+  用的都是绿区真机铁证原文。**反向验证**：摘掉 `supersedeSameSlot` → 8 项立刻变红，还原后 17/17。
+- **数字**：全量 **987 / 986 过 / 0 失败 / 1 条件 skip**（基线 970 + 17）；`npm run build` **exit 0**。
   既有 `memory` 13/13、`persist` 6/6、`rag` 35/35、`rag-revocation` 5/5 无退化。
+- **⚠️ 给绿区的重要提醒（自查发现，别被我的单测数字迷惑）**：第一版单测全绿时，我逐字核对了
+  `scripts/verify-d1-persistence.mjs` 的 case 原文，发现**两处会让真机照样漏撤**的缺口——
+  ① city 词表原本只有 `住在|居住`，认不出脚本里那句「我**住的是**上海」；
+  ② `lexiconValue` 取第一个颜色词，会把「不是蓝色是绿色」里被否掉的旧值当成当前值，
+  判据⑤直接放行。两处都已修（city 补 `住的?是`；lexiconValue 先剔否定词再取最后一个），
+  并新增 A12 用真机 correct 原文钉住，反向验证（回退两处 → A2/A12 立刻变红）。
+  **所以：我单测绿过不等于真机绿过，请务必按脚本原文复跑。**
 - **留给绿区**：请用 `scripts/verify-d1-persistence.mjs` 复跑两 case + D8-FACT，四层
   （memory / ledger / rag / 重启 system）旧事实全撤权且新值唯一，才转绿、阶段二才关单。
-  另请注意一处实现取向：槽位词表是**保守集**，认不出的属性不触发同槽撤权——这是"宁可漏撤，不可误删"的
-  自觉取舍，若真机出现漏撤 case，应该是补词表，不是放宽判据。
+  另请注意两处实现取向：① 槽位词表是**保守集**，认不出的属性不触发同槽撤权——这是"宁可漏撤，不可误删"的
+  自觉取舍，若真机出现漏撤 case，应该是补词表，不是放宽判据；② **省略主语**的纠正句（"并非蓝色，是紫色"）
+  不撤权，因为判据③（是用户自身 claim）不满足——绿区两 case 的 correct 都带主语，不影响验收。
 
 
 

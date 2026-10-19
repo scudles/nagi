@@ -134,7 +134,10 @@ export function applyMemoryOps(entries = [], ops = {}, now = Date.now()) {
  */
 const SLOT_RULES = [
   ['color', /(颜色|色彩|喜爱?的?色|偏爱的?色)/],
-  ['city', /(住在|居住|家住|常住|老家|住址|搬[到去来]|迁[至到徙]|城市)/],
+  // city 必须覆盖"我住的是上海"这类说法（绿区真机 correct 原文就是它）——
+  // 只有"住在|居住"会漏。`住的?是` 刻意不写成裸 `住的`：
+  // "我住的酒店"不是居住地陈述，而"我住的是上海"是。宁窄勿宽。
+  ['city', /(住在|住的?是|居住在|家住|常住|住址|老家|搬[到去来]|迁[至到徙]|城市)/],
   ['name', /(名字|姓名|昵称|名叫|叫我|他叫|我叫)/],
   ['birthday', /(生日|出生|生辰|星座)/],
   ['occupation', /(职业|工作|上班|在公司|岗位|在做|搞开发|写代码|创业)/]
@@ -186,11 +189,25 @@ const isUserClaim = (text) => USER_MARKER_RE.test(text) || PREDICATE_RE.test(tex
  * 取出值域词表槽里的"值"（颜色字）；取不出返回 null。
  * 用来区分"改版"（蓝→绿）和"同一件事换了个说法"（喜欢蓝色 / 喜欢的颜色是蓝色）——
  * 后者不是更正，撤它就是白丢信息。
+ *
+ * 两条容易漏的规则：
+ * 1. **先剔掉被否定的值**："我喜欢的不是蓝色是绿色"里"蓝色"是**被否掉的旧值**。
+ *    若按第一个匹配取值会拿到"蓝色"、与旧条目相同，整条撤权就被判据⑤误放过去——
+ *    这正是绿区 color case 的 correct 原文，漏了它 D1 等于没修。
+ * 2. **取最后一个而非第一个**：中文里主张的值通常落在句尾（"…是绿色"）。
+ *    两者叠加：否定过滤处理"不是X"，取末尾处理"更正为Y"。
  */
 function lexiconValue(text, slot) {
   if (slot !== 'color') return null
-  const m = String(text == null ? '' : text).match(/[红橙黄绿青蓝紫灰白粉金银棕黑]{1,2}色/)
-  return m ? m[0] : null
+  const s = String(text == null ? '' : text)
+  const COLOR = '[红橙黄绿青蓝紫灰白粉金银棕黑]{1,2}色'
+  const negated = new Set()
+  for (const m of s.matchAll(new RegExp('(?:不是|并非|不再是|没有|别是|而非)\\s*(' + COLOR + ')', 'g'))) {
+    negated.add(m[1])
+  }
+  const all = [...s.matchAll(new RegExp(COLOR, 'g'))].map((m) => m[0])
+  const live = all.filter((v) => !negated.has(v))
+  return (live.length ? live : all).at(-1) || null
 }
 
 /**
