@@ -26,6 +26,15 @@
 
 ## 🔴 红区交接（Codex · 契约/并发/架构实现）
 
+### 2026-10-19 modelHint 行为级接线补证（待绿区独立复验）
+
+- **受测提交**：本轮 `codex: add runTurn modelHint wiring behavior tests`（承接合流 main；`loop.js` 零改动）。
+- **契约断言**：mock provider 直接驱动真实 `runTurn`；原生工具与 JSON 兜底两路均在候选冲突时恰好两次模型调用，未审候选和 `[emotion|intent]` 标签不进 UI 事件、历史及落盘；两用户轮交错时第二轮首请求仍为默认意图，无旧 hint。
+- **命令退出码**：Node24 定向 `test/model-hint-run-turn.test.js` + `test/model-hint.test.js` 11/11、exit 0；把 `agent.js` 包装器临时换回原始流，行为测试 3 项中 2 项失败、exit 1；`finally` 恢复源码后定向复跑 exit 0。
+- **证据路径**：`test/model-hint-run-turn.test.js`、`E:\凪\.tools\modelhint-sabotage-behavior.mjs`、`modelhint-sabotage-behavior.log`、`modelhint-behavior-final.log`。
+- **结论**：绿区指出的「仅源码正则变红」缺口已由真实编排行为测试补齐；待独立复验，不自行标绿。
+- **缺口**：真 provider 设备层与首字延迟仍按原 modelHint 交接项抽验。
+
 ### 2026-10-19 阶段3 合流-1（待绿区独立复验）
 
 - **受测提交**：`345de5b063acac03e3727c240089805e5c7e6f17`（tag `stage3-convergence-1`；双亲 `main 6d794b63`、`blue f52ab864`；merge-base `969c377`）。合流前两侧改动交集仅 `docs/HANDOFF.md`、`docs/TASKS.md`；代码交集为空。`TASKS` 冲突的红、蓝两侧 P3-07/P3-08 原行均原样保留，供绿区对账；未代改蓝区状态。

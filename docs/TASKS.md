@@ -1,5 +1,14 @@
 # 凪 Nagi 待办：TASKS
 
+## 2026-10-19 红区：modelHint 行为级接线补证（待绿区独立复验）
+
+- **受测提交**：本轮 `codex: add runTurn modelHint wiring behavior tests`；`loop.js` 零改动。
+- **契约断言**：真实 `runTurn` + mock provider 走原生工具/JSON 兜底两路；hint 标签、拒绝候选不进 UI/history/落盘；冲突恰好一次重写；交错第二轮首请求不继承旧 hint。
+- **命令退出码**：Node24 新旧定向 11/11 exit 0；拆掉 `agent.js` 接线后新行为测试 2/3 失败、exit 1；源码恢复后 exit 0。
+- **证据路径**：`test/model-hint-run-turn.test.js`、`E:\凪\.tools\modelhint-sabotage-behavior.log`、`modelhint-behavior-final.log`。
+- **结论**：绿区打回的行为证据已补，交绿区独立复验，不自行标绿。
+- **缺口**：真 provider 设备层与首字延迟仍待抽验。
+
 ## 2026-10-19 红区：阶段3 合流-1（待绿区独立复验）
 
 - **受测提交**：`345de5b063acac03e3727c240089805e5c7e6f17`（tag `stage3-convergence-1`；双亲 `6d794b63`、`f52ab864`，共同祖先 `969c377`）；合流前改动交集仅 `docs/HANDOFF.md`、`docs/TASKS.md`，冲突的 P3-07/P3-08 两侧原行均保留。
