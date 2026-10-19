@@ -2,12 +2,12 @@
 
 ## 2026-10-19 红区：阶段3 合流-1（待绿区独立复验）
 
-- **受测提交**：`stage3-convergence-1`（双亲 `6d794b63`、`f52ab864`，共同祖先 `969c377`）；合流前改动交集仅 `docs/HANDOFF.md`、`docs/TASKS.md`，冲突的 P3-07/P3-08 两侧原行均保留。
+- **受测提交**：`345de5b063acac03e3727c240089805e5c7e6f17`（tag `stage3-convergence-1`；双亲 `6d794b63`、`f52ab864`，共同祖先 `969c377`）；合流前改动交集仅 `docs/HANDOFF.md`、`docs/TASKS.md`，冲突的 P3-07/P3-08 两侧原行均保留。
 - **契约断言**：非交集的蓝区 23 文件与 `f52ab864`、红区 8 文件与 `6d794b63` 去 BOM/CRLF 后逐字一致；代码零交集；分支与证据目录保留。
-- **命令退出码**：Node24 全量 1046/1045/0/1 exit 0；build 0；B7 strict 0 越界、core 127、B8 scan 50 已分级，均 exit 0；modelHint 8/8、健康真机 19/19，均 exit 0；导出真机断言 18/18，原评测器在断言后清理临时目录 EPERM、exit 1，独立副本只补 1 秒清理等待后 18/18 exit 0。
-- **证据路径**：`E:\凪\.tools\stage3-overlap-audit.json`、`stage3-merge-tests.tap`、`stage3-merge-build.log`、`stage3-merge-b7strict.log`、`stage3-merge-b7core.log`、`stage3-merge-b8.log`、`stage3-merge-hint.log`、`stage3-merge-health.log`、`stage3-merge-export.log`、`stage3-merge-export-local2.log`。
+- **命令退出码**：Node24 全量 1046/1045/0/1 exit 0；build 0；B7 strict 0 越界、core 127、B8 scan 50 已分级，均 exit 0；modelHint 8/8、健康真机 19/19，均 exit 0；导出真机 18/18、exit 0。原评测器在断言后清理临时目录 EPERM，合流锚点后单独补关窗等待并复跑原命令。
+- **证据路径**：`E:\凪\.tools\stage3-overlap-audit.json`、`stage3-merge-tests.tap`、`stage3-merge-build.log`、`stage3-merge-b7strict.log`、`stage3-merge-b7core.log`、`stage3-merge-b8.log`、`stage3-merge-hint.log`、`stage3-merge-health.log`、`stage3-merge-export-final.log`。
 - **结论**：合流代码及断言通过，待绿区独立复验，未自行标绿。
-- **缺口**：原导出评测器清理竞态需在合流锚点后单独修复并重跑原命令；主仓脏工作区未碰。
+- **缺口**：待绿区独立复验；主仓脏工作区未碰。评测器修补不在合流锚点树中。
 
 ## 2026-10-19 红区：阶段 2 物理合流（待绿区独立复验）
 

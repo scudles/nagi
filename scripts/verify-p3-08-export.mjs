@@ -221,6 +221,7 @@ try {
     console.log(logs.split('\n').slice(-25).join('\n'))
   }
   try { child.kill() } catch { /* 已退出 */ }
+  await sleep(1000) // Windows may still hold the isolated profile during Electron shutdown.
   rmSync(profile, { recursive: true, force: true })
   rmSync(exportDir, { recursive: true, force: true })
   process.exit(failed.length ? 1 : 0)

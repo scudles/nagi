@@ -28,12 +28,12 @@
 
 ### 2026-10-19 阶段3 合流-1（待绿区独立复验）
 
-- **受测提交**：`stage3-convergence-1`（双亲 `main 6d794b63`、`blue f52ab864`；merge-base `969c377`）。合流前两侧改动交集仅 `docs/HANDOFF.md`、`docs/TASKS.md`；代码交集为空。`TASKS` 冲突的红、蓝两侧 P3-07/P3-08 原行均原样保留，供绿区对账；未代改蓝区状态。
+- **受测提交**：`345de5b063acac03e3727c240089805e5c7e6f17`（tag `stage3-convergence-1`；双亲 `main 6d794b63`、`blue f52ab864`；merge-base `969c377`）。合流前两侧改动交集仅 `docs/HANDOFF.md`、`docs/TASKS.md`；代码交集为空。`TASKS` 冲突的红、蓝两侧 P3-07/P3-08 原行均原样保留，供绿区对账；未代改蓝区状态。
 - **契约断言**：蓝区独占的 23 个文件按去 BOM/CRLF 后与 `f52ab864` 一致；红区独占的 8 个文件与 `6d794b63` 一致；无代码冲突或语义取舍。合流提交是双亲，保留全部分支及证据目录。
-- **命令退出码**：Node24 全量 1046/1045/0/1、exit 0；build exit 0；B7 strict 0 越界、exit 0；B7 core 127、exit 0；B8 scan 50 已分级、exit 0；modelHint 8/8、exit 0；renderer 健康真机 19/19、exit 0；P3-08 真机产品断言 18/18。原蓝区评测器退出 1 发生在断言后立即清理临时 profile 的 Windows EPERM；仅在独立副本增加关窗后 1 秒清理等待，18/18、exit 0。
-- **证据路径**：`E:\凪\.tools\stage3-overlap-audit.json`、`stage3-byte-verify.mjs`、`stage3-merge-tests.tap`、`stage3-merge-build.log`、`stage3-merge-b7strict.log`、`stage3-merge-b7core.log`、`stage3-merge-b8.log`、`stage3-merge-hint.log`、`stage3-merge-health.log`、`stage3-merge-export.log`、`stage3-merge-export-local2.log`。
+- **命令退出码**：Node24 全量 1046/1045/0/1、exit 0；build exit 0；B7 strict 0 越界、exit 0；B7 core 127、exit 0；B8 scan 50 已分级、exit 0；modelHint 8/8、exit 0；renderer 健康真机 19/19、exit 0；P3-08 真机 18/18、exit 0。原蓝区评测器曾在断言后立即清理临时 profile 导致 Windows EPERM；合流锚点后单独补 1 秒关窗等待，原命令复跑通过。
+- **证据路径**：`E:\凪\.tools\stage3-overlap-audit.json`、`stage3-byte-verify.mjs`、`stage3-merge-tests.tap`、`stage3-merge-build.log`、`stage3-merge-b7strict.log`、`stage3-merge-b7core.log`、`stage3-merge-b8.log`、`stage3-merge-hint.log`、`stage3-merge-health.log`、`stage3-merge-export-final.log`。
 - **结论**：合流树和产品断言通过；交绿区独立复验，不自行标绿。
-- **缺口**：原 `verify-p3-08-export.mjs` 清理竞态须单独修后复跑原命令；本轮暂不把蓝区文件修入合流锚点。主仓脏工作区未修改。
+- **缺口**：绿区独立复验；主仓脏工作区未修改。评测器清理修补不在合流锚点树中，锚点的蓝区文件逐字节核对仍成立。
 
 ### 2026-10-19 阶段 2 物理合流复核（待绿区独立复验）
 
