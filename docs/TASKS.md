@@ -1,5 +1,14 @@
 # 凪 Nagi 待办：TASKS
 
+## 2026-10-19 红区：阶段 2 物理合流（待绿区独立复验）
+
+- **受测提交**：`969c37786e5f8c57e73bf304b11fac51fb1d1798`；本地 `main` 已由 `853ea9a` 快进至该提交，锚点 annotated tag `stage2-convergence-969c377`（message `stage2 convergence 969c377`）。蓝区 `b2e63bf1` 是其祖先；`settings-store.js`、`ipc/settings.js`、`loop.js`、`src/core/**` 共 110 个文件与蓝区逐字节一致，无冲突。
+- **契约断言**：三线阶段 2 代码以 969c377 为唯一合流树；不重放、不删阶段 2 分支和证据；蓝区脏工作区未覆盖。
+- **命令退出码**：Node24 `node --experimental-test-module-mocks --test` = 0（1008/1007/0/1）；`electron-vite.cmd build` = 0；`audit-b7-boundary.mjs --strict` = 0（0 越界）；健康 IPC 真机 = 0（19/19）；D1 旧证据 judge = 0（12/12）。
+- **证据路径**：`E:\\凪\\.tools\\stage2-main-{tests.tap,build.log,b7.log,health.log,d1-judge.log}`；健康真机新证据 `E:\\凪\\红区验收_969c377\\docs\\verify\\stage2-red2-health-ipc-real.json`。
+- **结论**：物理快进、锚点与无密钥验证通过；仅交绿区复验，不自行标绿。
+- **缺口**：当前进程未注入 `NAGI_D9_API_KEY`，D1 真模型评测器未能本轮重新执行；12/12 是绿区此前 969c377 真机证据的重新判定，不冒充新真机。待环境变量注入后在同一合流树补跑 `verify-d1-persistence-red2.mjs` 与 judge。
+
 ## 2026-10-18 · 新版评审任务卡（三 Agent 协作）
 
 > 依据《凪_Nagi_新版评审与设计建议_2026-10-18》（提交 `d59768c`）。以下把评审 B1–B9 / C1–C5 / D2–D9 拆成任务卡，按阶段 1/2/3 分组。

@@ -26,6 +26,15 @@
 
 ## 🔴 红区交接（Codex · 契约/并发/架构实现）
 
+### 2026-10-19 阶段 2 物理合流复核（待绿区独立复验）
+
+- **受测提交**：`969c37786e5f8c57e73bf304b11fac51fb1d1798`；`main` 从 `853ea9a` 快进，tag `stage2-convergence-969c377` 指向该提交。`b2e63bf1` 在祖先链深度 3；蓝区阶段 2 无遗漏。逐字节核对 110 个受保护文件零差异，故选快进，无冲突和语义取舍。
+- **契约断言**：`settings-store.js`、`ipc/settings.js`、`loop.js`、`src/core/**` 与蓝区 HEAD 一致；三线提交在同一祖先链；现存分支与证据目录保留。
+- **命令退出码**：全量 Node24 1008 tests / 1007 pass / 0 fail / 1 skip，exit 0；build exit 0；B7 strict 0 越界、exit 0；renderer 健康真机 19/19、exit 0；D1 旧证据 judge 12/12、exit 0。
+- **证据路径**：`E:\\凪\\.tools\\stage2-main-*.log` 与 `stage2-main-tests.tap`；`E:\\凪\\红区验收_969c377\\docs\\verify\\stage2-red2-health-ipc-real.json`。
+- **结论**：合流已物理落地主线，待绿区独立复验；未自行标绿。
+- **缺口**：当前未注入 `NAGI_D9_API_KEY`，本轮无法重新运行 D1 真模型；旧证据 judge 不是新真机。主仓 checkout 指向蓝区且有 113 项既有工作区差异，未碰其文件；验证在代码与 main 同为 969c377 的独立检出运行。
+
 **当前在办**：阶段 1 的 P0 缺陷修复（P1-01 提醒路径、P1-02 RAG 入队、P1-03 归来泄漏、P1-06 标题授权、P1-07 危机兜底），以及阶段 2 的 P2-03 钩子顺序 / P3-07 多模态快照。**P1-06（C4）绿区规格已定稿**（CONTRACTS §6 + EVAL §3.5，D63 已裁决），红区可直接施工。
 
 **契约红线**（实现必须遵守，详见 CONTRACTS.md）：
