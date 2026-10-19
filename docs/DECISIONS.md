@@ -875,3 +875,88 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
   交付给绿区后，由绿区在蓝区代码上**独立复验**，再决定阶段二是否关单。
 - **仍未做（不标完成）**：`modelHint` 等红区裁决；renderer ~70 处空 catch 归红区；C5-EXPORT-01 → 阶段三 P3-08；
   `core/` 全量剩余 134 处边界依赖待排期；承诺簿忘口径待绿区实测；`verify:local-llm` 的 3 项需真机装 Ollama 后才算证据。
+
+## D66（2026-10-19）D1 红线修复：自然语言事实纠错的同属性槽确定性撤权（分支 `blue/stage2-d1-fix`，基线 `ff95ee3a`）
+
+> 起因：绿区在独立集成分支 `green/stage2-integration` 对 `ff95ee3a` 做完全部独立验收，阶段二只剩 D1 一条红线阻断关单。
+> 真机现象（两 case 一致：颜色 蓝→绿、城市 杭州→上海）：自然语言纠正后凪**口头答对**，但 `memory.json` 旧条目与新事实并存、
+> `ledger/entries.jsonl` 旧 claim `deletedAt=null`、`rag/pending.jsonl` 旧事实仍在、重启后 system「你记得的关于他的事」
+> 仍注入旧事实——触发 EVAL §0「删除后复述」。证据：`docs/verify/绿区-D1事实纠错持久化复核_2026-10-19_ff95ee3a.md`、
+> `docs/绿区阶段2关单结论_2026-10-19_ff95ee3a.md`（绿区工作树）。**本轮不自行标绿**，转绿与否由绿区复跑决定。
+
+### ① 根因与选型
+
+- **根因**：自然对话写记忆的唯一通道是后台抽取 `extractMemoriesAsync`。撤权原先只有一条路——抽模型在 `remove` 里
+  **逐字复现**旧条目（`mergeMemoryEntries` 按去空白精确匹配）。真机 temp=1.3 下模型被纠正时只 `add` 新事实、
+  不复现旧文本，于是整条撤权链（删 memory.json + `deleteLedgerSource` + RAG `forgetText`）一条都不触发。
+- **选型：契约选项 b**（`mergeMemoryEntries` 支持同槽归并），**不是 a**（主对话识别更正意图再构造确定性 op）。
+  理由：b 是**确定性**的、不依赖对用户措辞的意图识别——用户说"我说错了"、"不是…是…"、"更正一下"哪种都能修掉根因；
+  a 则要先判意图，判不出就退回原状，红线仍可能复现。模型 `remove` 保留为**补充路径**，不再是唯一路径。
+
+### ② 同属性槽撤权（`src/core/memory.js`，纯函数层）
+
+- **只收单值属性**：`SLOT_RULES` 依次为 color / city / name / birthday / occupation——这些在同一时刻只有一个值，
+  新值落地时旧值必须让位。**宠物、爱好清单这类可多值属性故意不收**：否则"养猫"会被"养狗"误撤，
+  等于用一条新红线换掉旧红线。
+- **值域词表只给颜色**：旧记忆常省略属性词（"喜欢蓝色"不写"喜欢的颜色是蓝色"），只靠关键词认不出它与
+  "喜欢的颜色是绿色"同槽。城市这类开放值域硬编码必然漏，**宁可不认也不瞎猜**。
+- **`supersedeSameSlot` 五条判据全部满足才撤**（`mergeMemoryEntries` 接入，与模型 remove 并行为两个删来源）：
+  ① 新事实能归槽（认不出就绝不做撤权）；② 旧条目同槽且文本不同；③ 旧条目是**关于用户自己的 claim**
+  （挡掉"桌宠是蓝色的"这类只是沾了值域词的无关条目）；④ 两条共享**同一个**谓词，或双方都有显式属性词
+  （挡掉"我穿蓝色衣服"被"我喜欢红色"顺手删掉）；⑤ 值确实变了（`lexiconValue` 取颜色字，
+  "喜欢蓝色" vs "喜欢的颜色是蓝色"是同一事实的两种说法，撤它就是白丢信息）。
+- **`PREDICATE_RE` 刻意不含"是/有"这类万能字**——万能字会让任意两条中文 claim 都算"共享谓词"，判据④形同虚设。
+- 设计取向一句话：**宁可漏撤，不可误删**。漏撤只是没修干净（绿区复跑会发现）；误删是删掉用户真记忆，
+  属于制造新红线。
+- 抽取提示词 `MEMORY_EXTRACT_PROMPT` 同步改口：`remove` 从"必须与已有记忆原文完全一致"改为"尽量逐字照抄；
+  拿不准就留空数组"，并明确告知"即使你不输出 remove，系统也会按属性把被取代的旧条目确定性作废——
+  所以 remove 只是补充，漏了不会让旧事实继续生效"。
+
+### ③ 撤权链三条腿的落地与不静默
+
+- **memory.json 腿**（`persist.js` `mergeMemoryOps`）：旧同槽条目确定性移除，不再与新事实并列。
+- **账本腿**：对每个被撤条目按 `memory-manual` / `memory-model` / `memory` 三种来源逐个试 `deleteLedgerSource`
+  （一条 claim 可能以任一种登记过）。**任一成功即算撤权**；三种都没成功 → 记入 `ledgerRevocationFailed` 如实上交。
+  `deleteBySource` 对"查无此条"与"写入失败"都返回 false，**这里不猜是哪种**——旧 claim 没撤权是必须可见的失败。
+- **RAG 腿**（`agent.js` `syncFactsToRag` 改为返回 `{forgotten, failed}`）：`forgetText` 按 `contentHash` 精确匹配，
+  写 `revoked.json` 并重写 pending。**"没有这条"不算失败**（那条事实本来就没进过档案）；其余失败进
+  `ragRevokeRetry` 重试队列（上限 50，幂等，下次抽取自动带上）。
+- **缺口上报**（`reportRevocationGaps`）：账本腿缺 → `agent.extractMemories.ledger`（MUST_PERSIST）；
+  档案腿缺 → `agent.extractMemories.rag`（MUST_PERSIST）。**只报条数与站点，不把旧事实原文塞进健康快照**——
+  那是用户内容，与 D65 对提醒正文的纪律同源。
+- **持久撤销凭据是 `revoked.json`，不是 `chunks.jsonl` 的墓碑行**：`compact` → `rewriteAll` 只留活行，
+  会把墓碑行一并压实。断言可审计性时要盯 `revoked.json`，别盯墓碑行（本轮测试就踩了这个坑）。
+- 抽模型本身失败仍静默——那是"没记上新东西"，不是"旧事实没撤干净"，两者不能混。
+
+### ④ 测试（`test/d1-natural-correction.test.js`，新增 16 项）
+
+- **A 层 11 项纯函数**（假模型桩，不依赖真模型）：A1/A2 是**核心回归**——假抽取只 `add` 不 `remove`
+  （精确复现真机 temp=1.3）时，同槽旧事实仍确定性撤权；两条都用绿区真机铁证原文
+  （`喜欢蓝色` / `喜欢蓝色，已由本人确认记录` / `住在杭州` + 真机 ops `{add:['喜欢的颜色是绿色，已本人更正'], remove:[]}`）。
+  A3 是**跨槽保护**：改颜色不得误删城市，且反向改城市也不得误删颜色。A5–A7 是护栏（同值换说法不撤 /
+  非用户自身条目不撤 / 同值域不同事不撤）。A8 守住"模型 remove 仍是有效补充路径"。A10 锁"认不出就返回 null"。
+  A11 用源码正则钉住提示词已改口。
+- **B 层 5 项三层落盘集成**：mock electron（含 `safeStorage` 桩）+ mock ledger 间谍（忠实模仿 `deleteBySource`
+  语义：只对真正入过账的来源返回 true）+ 真 `RagService` / `RagStoreIo` / `makeFactChunk`。
+  B1 验 memory/账本/RAG 三处全部落地；B2 验**未建索引**时 pending 旧事实不复活（对应真机隔离 profile 状态）；
+  B3 验已建索引时旧 chunk 不再可召回 + `revoked.json` 可审计 + 重启不复活；
+  B4 注入账本全失败，验 `ledgerRevocationFailed` 如实列出、**不因为 memory.json 写成了就报喜**。
+- **踩过并记下的坑**：`freshProfile()` 首行必须 `flushPersist()` 清防抖定时器，并逐条 `removeMemory` 清模块级
+  `memories` 缓存——不清会跨用例泄漏，导致**假绿假红**。`chunkById` 查不到返回 `null`（不是 `undefined`），
+  且墓碑行的原 chunk 仍可读——判"不得复活"要用 `hasId`。
+- **反向验证（用户明确要求）**：临时把 `supersedeSameSlot` 改成 `return []`（模拟同槽归并被摘掉）→
+  **8 项立刻变红**（A1/A2/A4/A8/B1/B2/B4/B5），用户点名的核心回归与三层落盘全在里面；还原后 16/16 全绿。
+- **既有回归无退化**：`memory` 13/13、`persist` 6/6、`rag` 35/35、`rag-revocation` 5/5。
+
+### ⑤ 验证结果与边界
+
+- 全量（Node 24.19.0 前置 PATH，`--experimental-test-module-mocks`）：**986 项 / 985 过 / 0 失败 / 1 条件 skip**
+  （基线 970 + 本轮新增 16 = 986，1 skip 仍是 `pose-guard`/`redform` 的模型档案条件跳过，非新增）。
+- `npm run build`：**退出 0**。
+- **未碰**：`src/renderer/`（红区本轮并行改）、`loop.js`、记忆系统整体结构（无一次大搬移）；
+  只动撤权链相关文件 `src/core/memory.js`、`src/main/persist.js`、`src/main/agent.js` + 新增测试文件。
+- **不自跑真模型**（key 不经手）。绿区用 `scripts/verify-d1-persistence.mjs` 复跑两 case + D8-FACT，
+  四层（memory / ledger / rag / 重启 system）旧事实全撤权且新值唯一，才转绿、阶段二才关单。
+- **已知取舍（留给后续）**：槽位词表是保守集，认不出的属性不会触发同槽撤权——这是"宁可漏撤"的代价；
+  城市等开放值域没有做值域词表，所以"我住在杭州"→"我现在住上海"能撤（靠 `住在` 关键词），
+  但若用户换成"我家在上海市"这类不含任何关键词的说法，需要补词表而非放宽判据。

@@ -13,7 +13,7 @@ import { reportCatch, CATCH_CLASS } from './maintenance.js'
 import * as fsApi from 'node:fs'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { mergeMemoryEntries } from '../core/memory.js'
+import { mergeMemoryEntries, supersedeSameSlot } from '../core/memory.js'
 import { atomicWriteJsonSync } from '../core/persist-io.js'
 import { recordLedger, deleteLedgerSource } from './ledger.js'
 
@@ -193,7 +193,18 @@ export function removeMemory({ id, text } = {}, { updateLedger = true } = {}) {
 /**
  * 合并模型抽取出的增删指令。
  * 按「内容变化」判断写盘：满额淘汰后数量不变，内容确实变了也必须落盘（D01 修复）。
- * @returns {{before:number, after:number, added:string[], removed:string[]}}
+ *
+ * D1：`removed` 现在有两个来源——模型显式作废的旧记忆，以及**同属性槽被新事实
+ * 取代**的旧记忆（见 core/memory.js `supersedeSameSlot`）。后者是撤权主路径：
+ * 抽模型在 temp=1.3 下被纠正时只 add 不复现旧文本，原先整条撤权链就不触发，
+ * 旧事实留在 live 记忆里、重启后照样进 system（EVAL §0"删除后复述"红线）。
+ *
+ * 撤权必须**三条都落地**才算数：memory.json 条目移除、账本旧 claim `deletedAt` 非空、
+ * RAG 旧 chunk 进 revoked。任一条没落地，`ledgerRevocationFailed` 就如实列出，
+ * 调用方按 B8 上报——**绝不因为 memory.json 写成了就声称已更正**。
+ *
+ * @returns {{before:number, after:number, added:string[], removed:string[],
+ *   superseded:string[], ledgerRevocationFailed:string[]}}
  */
 export function mergeMemoryOps(ops, now = Date.now(), provenance = {}) {
   loadMemories()
@@ -202,8 +213,19 @@ export function mergeMemoryOps(ops, now = Date.now(), provenance = {}) {
   memories = r.entries.map((entry) => r.added.includes(entry.text)
     ? { ...entry, provenance: 'model-extracted' } : entry)
 
+  const ledgerRevocationFailed = []
   for (const entry of before.filter((item) => r.removed.includes(item.text))) {
-    for (const type of ['memory-manual', 'memory-model', 'memory']) deleteLedgerSource(type, entry.id)
+    // 账本里这条claim可能以三种来源登记过（手动 / 抽取 / 早期格式），逐个试
+    let revoked = false
+    for (const type of ['memory-manual', 'memory-model', 'memory']) {
+      if (deleteLedgerSource(type, entry.id)) revoked = true
+    }
+    if (!revoked) {
+      // deleteLedgerSource 对"查无此条"与"写入失败"都返回 false。这里不猜是哪种，
+      // 如实记下来交上层按 B8 上报——旧claim没撤权是必须可见的失败。
+      ledgerRevocationFailed.push(entry.text)
+      console.warn('[memory] 旧事实未能在账本中撤权：', entry.text)
+    }
   }
 
   for (const entry of memories.filter((item) => r.added.includes(item.text))) {
@@ -212,7 +234,14 @@ export function mergeMemoryOps(ops, now = Date.now(), provenance = {}) {
       certainty: 'unverified', meta: { memoryId: entry.id, derivedFromUserText: String(provenance.userText || '') } })
   }
   if (r.changed) persistMemories()
-  return { before: before.length, after: memories.length, added: r.added, removed: r.removed }
+  return {
+    before: before.length,
+    after: memories.length,
+    added: r.added,
+    removed: r.removed,
+    superseded: supersedeSameSlot(before, ops?.add || []),
+    ledgerRevocationFailed
+  }
 }
 
 /* ---------------- 情绪状态（S4：跨重启延续） ---------------- */

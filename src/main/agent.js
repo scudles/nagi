@@ -1051,8 +1051,12 @@ async function callModelOnce({ client, llm, useCloud, messages, temperature = 0.
 
 /**
  * 长期记忆抽取（fire-and-forget）：一轮对话结束后，让模型判断有没有"值得以后还记得的事"，
- * 输出增删指令合并进 memory.json。异步且不阻塞回复；任何失败都静默（不能因为她记笔记失败
- * 而影响对话）。太短的寒暄直接跳过，省一次调用。
+ * 输出增删指令合并进 memory.json。异步且不阻塞回复（不能因为她记笔记失败而影响对话）。
+ * 太短的寒暄直接跳过，省一次调用。
+ *
+ * D1：**撤权不静默**。旧事实被取代时，memory.json / 账本 / RAG 三条腿都必须落地；
+ * 哪条没落地就按 B8 上报进健康状态（RAG 腿还会在下次抽取自动重试）。
+ * 抽模型本身失败仍然静默——那是"没记上新东西"，不是"旧事实没撤干净"。
  */
 function extractMemoriesAsync({ client, llm, useCloud, userText, assistantText, turnRef }) {
   const u = String(userText || '').trim()
@@ -1083,21 +1087,82 @@ function extractMemoriesAsync({ client, llm, useCloud, userText, assistantText, 
       }
       if (!ops.add.length && !ops.remove.length) return
       const r = mergeMemoryOps(ops, Date.now(), { userText: u })
+      if (r.superseded?.length) {
+        console.log('[memory] 同属性槽旧事实已被新事实取代（不依赖模型逐字复现）：', r.superseded.join(' / '))
+      }
       console.log('[memory] 记忆更新：', r.before, '→', r.after, ops.add.length ? '新增 ' + ops.add.join(' / ') : '')
       // 同步一份进向量档案：memory.json 只在「条数不多」时全量注入提示词，
       // 攒多了就注不下去了；向量侧靠语义检索，条数不是问题。
-      syncFactsToRag(r.added, r.removed)
+      const rag = syncFactsToRag(r.added, r.removed)
+      // D1：撤权三条腿（memory.json / 账本 / RAG）缺一不可。哪条没落地就按 B8 上报，
+      // 让设置页健康状态看得见、可重试；同时绝不对外声称"已更正/已删除"——
+      // "说划掉实际没划"正是本轮要消灭的红线。
+      reportRevocationGaps(r, rag)
     })
     .catch((err) => console.warn('[memory] 抽取失败（忽略）：', err.message))
 }
 
-/** 记忆增删 → 向量档案同步（失败静默，档案落不下不影响对话） */
+/**
+ * D1：RAG 撤权没成功的旧事实，下次抽取时重试。
+ * 幂等：已经撤销掉的再撤一次只会返回"没有这条"，不会二次伤害。
+ * 设上限，避免磁盘长期故障时无限堆积。
+ */
+const RAG_REVOKE_RETRY_CAP = 50
+const ragRevokeRetry = new Set()
+
+/**
+ * 记忆增删 → 向量档案同步。
+ * @returns {{forgotten:string[], failed:{text:string,error:string}[]}}
+ *   "没有这条"不算失败——那条事实本来就没进过档案，没什么可忘的。
+ */
 function syncFactsToRag(added, removed) {
+  const failed = []
+  const forgotten = []
+  // 上一次没撤成功的旧事实并进来一起重试
+  const targets = [...new Set([...(removed || []), ...ragRevokeRetry])].filter(Boolean)
   try {
     const rag = getRag()
     for (const t of added || []) if (t) rag.ingestFact({ text: t })
-    for (const t of removed || []) if (t) rag.forgetText(t)
-  } catch (__err) { reportCatch('agent.syncFactsToRag', CATCH_CLASS.MUST_PERSIST, __err) }
+    for (const t of targets) {
+      const r = rag.forgetText(t)
+      if (r && r.ok) {
+        forgotten.push(t)
+        ragRevokeRetry.delete(t)
+      } else if (r && r.error && r.error !== '没有这条') {
+        failed.push({ text: t, error: r.error })
+        if (ragRevokeRetry.size < RAG_REVOKE_RETRY_CAP) ragRevokeRetry.add(t)
+      } else {
+        ragRevokeRetry.delete(t) // 没有这条 / 空结果：无需再撤
+      }
+    }
+  } catch (err) {
+    reportCatch('agent.syncFactsToRag', CATCH_CLASS.MUST_PERSIST, err)
+    for (const t of targets) {
+      failed.push({ text: t, error: err && err.message ? err.message : String(err) })
+      if (ragRevokeRetry.size < RAG_REVOKE_RETRY_CAP) ragRevokeRetry.add(t)
+    }
+  }
+  return { forgotten, failed }
+}
+
+/**
+ * D1：撤权缺腿上报。只报**条数与站点**，不把旧事实原文塞进健康快照——
+ * 那是用户内容，和 B8 对提醒正文的纪律同一条（见 D65）。
+ */
+function reportRevocationGaps(mergeResult, ragResult) {
+  const ledgerGap = (mergeResult?.ledgerRevocationFailed || []).length
+  const ragGap = (ragResult?.failed || []).length
+  if (!ledgerGap && !ragGap) return
+  if (ledgerGap) {
+    reportCatch('agent.extractMemories.ledger', CATCH_CLASS.MUST_PERSIST,
+      new Error(`旧事实未在账本中撤权（${ledgerGap} 条；可能从未入账，也可能写入失败）`))
+  }
+  if (ragGap) {
+    reportCatch('agent.extractMemories.rag', CATCH_CLASS.MUST_PERSIST,
+      new Error(`旧事实未从记忆档案撤权（${ragGap} 条），下次抽取自动重试`))
+  }
+  console.warn('[memory] 撤权未完全落地（已按 B8 上报，RAG 腿下次重试）：',
+    '账本 ' + ledgerGap + ' 条 / 档案 ' + ragGap + ' 条')
 }
 
 function trimHistory(messages) {

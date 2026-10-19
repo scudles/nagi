@@ -276,6 +276,33 @@
 1. P2-01 的"参数按提供商保存"是**旧有能力**（`llmProfiles`），我这次只补了"按用途"；对账时别把前者算成本轮成果。
 2. B8 的 117 处空 catch，我**刻意没有批量套壳**：那属于大搬移，且多数是可选探针（真降级）。真要全覆盖，建议单开一张"逐模块审计"卡，按模块分批，而不是在 B8 里一次性改完。
 
+### 阶段2 蓝区第四轮（2026-10-19，D1 红线修复：自然语言事实纠错的同属性槽确定性撤权）
+
+**分支 `blue/stage2-d1-fix`，基线 `ff95ee3a`。决策见 [DECISIONS](DECISIONS.md) D66。本轮不自行标绿。**
+
+- **为什么修**：绿区在 `green/stage2-integration` 上对 `ff95ee3a` 做独立验收，阶段二只剩 D1 一条红线。
+  真机两 case（蓝→绿、杭州→上海）口头答对，但 memory/ledger/rag/重启 system 四层旧事实全活着。
+  根因是撤权只靠抽模型逐字复现 `remove`，而 temp=1.3 下模型被纠正时只 `add` 不复现旧文本。
+- **选型**：契约选项 **b**（`mergeMemoryEntries` 同槽归并），不用 a（意图识别后再构造 op）。
+  b 是确定性的、不依赖用户怎么表达；模型 `remove` 保留为补充路径。
+- **改了什么**（只动撤权链，未碰 `src/renderer/`、`loop.js`、记忆系统整体结构）：
+  - `src/core/memory.js`：新增 `memorySlot` / `supersedeSameSlot` + 五条判据 + 槽位词表；
+    `MEMORY_EXTRACT_PROMPT` 改口（`remove` 从"必须逐字"改为"尽量照抄，拿不准留空"，并说明系统会按属性确定性作废）。
+  - `src/main/persist.js`：`mergeMemoryOps` 三来源逐个试 `deleteLedgerSource`，任一成功即算撤权；
+    三种都没成功 → `ledgerRevocationFailed` 如实上交（不猜"查无此条"还是"写入失败"）。
+  - `src/main/agent.js`：`syncFactsToRag` 返回 `{forgotten, failed}`，"没有这条"不算失败，
+    其余进 `ragRevokeRetry`（上限 50、幂等、下次抽取自动重试）；新增 `reportRevocationGaps` 按 B8 上报。
+    健康快照**只报条数与站点，不塞旧事实原文**（与 D65 对提醒正文的纪律同源）。
+- **测试**：新增 `test/d1-natural-correction.test.js` **16 项**（A 层 11 纯函数 + B 层 5 三层落盘集成，
+  mock electron / mock ledger 间谍 / 真 RagService，全假模型桩）。核心回归 A1/A2 与三层落盘 B1/B2
+  用的都是绿区真机铁证原文。**反向验证**：摘掉 `supersedeSameSlot` → 8 项立刻变红，还原后 16/16。
+- **数字**：全量 **986 / 985 过 / 0 失败 / 1 条件 skip**（基线 970 + 16）；`npm run build` **exit 0**。
+  既有 `memory` 13/13、`persist` 6/6、`rag` 35/35、`rag-revocation` 5/5 无退化。
+- **留给绿区**：请用 `scripts/verify-d1-persistence.mjs` 复跑两 case + D8-FACT，四层
+  （memory / ledger / rag / 重启 system）旧事实全撤权且新值唯一，才转绿、阶段二才关单。
+  另请注意一处实现取向：槽位词表是**保守集**，认不出的属性不触发同槽撤权——这是"宁可漏撤，不可误删"的
+  自觉取舍，若真机出现漏撤 case，应该是补词表，不是放宽判据。
+
 
 
 ---
