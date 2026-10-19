@@ -408,6 +408,42 @@ E1/E2（同日二次导出失败且原文件一字节不动）覆盖。
 
 ---
 
+### 阶段3 core 边界迁移第一批（2026-10-19，分支 `blue/stage3-p3-08-export`）
+
+**受测提交**：本块所在提交。**契约**：B7 core 边界（`audit:b7:core` / `audit:b7:gate`）——core 不读全局时钟/随机、不碰 fs。
+
+**分批清单**：`docs/b7-core-batches.md`（127 处剩余 → 8 批，逐文件标 now/rng/crypto/fs 与风险）。
+
+**本轮做完的是批 1（8 处）**：`signals/{calendar,foreground,music,players}.js` 6 处 +
+`export/build.js` 2 处（本分支自己新欠的债，一并清掉）。做法：新增 `src/core/clock.js` 的
+`requireNow(now, site)`，签名去掉 `now = Date.now()` 默认值，缺依赖当场抛
+`TypeError: <site> 缺少注入依赖：now`。
+
+**为什么这批零语义风险**：所有调用点本来都显式传了 `now`，默认值是死重量；既有测试
+**一行没改**即全绿（calendar 3/3、foreground 8/8、music-signal 8/8、players 7/7、export 15/7）。
+
+**命令与退出码**
+| 命令 | 结果 |
+|---|---|
+| `node --test test/b7-batch1-now-injection.test.js` | **8/8** |
+| `node scripts/audit-b7-boundary.mjs --strict`（门禁 8→14 文件） | **0 处越界，exit 0** |
+| `node scripts/audit-b7-boundary.mjs --scope=core` | **135 → 127 处**（-8） |
+| 全量 `node --experimental-test-module-mocks --test`（关沙箱） | **1038 项 / 1037 过 / 0 失败 / 1 条件 skip** |
+| `electron-vite.cmd build` | **exit 0** |
+
+**证据路径**：`test/b7-batch1-now-injection.test.js`、`src/core/clock.js`、
+`docs/b7-core-batches.md`、`docs/b7-boundary-core-report.json`、DECISIONS **D69**。
+
+**反向验证**：把 `musicContext` 的默认值放回去并绕过 `requireNow` → **B7-1-04 与 B7-1-08 立刻变红**，还原后 8/8。
+
+**结论**：批 1 完成，**未自行标 ✅**；门禁已扩到本批文件（回潮即红）。
+
+**下一批建议**：批 2 `signals/ha-consent.js`（5 处，fs+crypto+隐私授权，**必须单独一批**）→
+批 3 `rag/chunk.js`+`rag/recall.js`（8 处，纯计算）。`loop.js` 按纪律不动；`face/*` 四处
+先评估再决定是硬迁还是行内 `B7:allow` 豁免（逐帧热路径）。
+
+---
+
 ## 🟢 绿区交接（豆包 · 规格/评测/对账）
 
 **已完成的绿区规格草稿**（写入 CONTRACTS.md / EVAL.md）：

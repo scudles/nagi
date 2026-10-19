@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-18T14:22:22.745Z",
+  "generatedAt": "2026-10-19T10:32:38.455Z",
   "mode": "strict",
   "scope": "B7 已迁移的五个 store 与 core/store 端口：这里的越界依赖必须归零，否则视为回潮",
   "gate": true,

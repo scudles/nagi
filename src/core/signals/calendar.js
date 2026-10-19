@@ -1,4 +1,6 @@
 // RFC 5545 的有限只读子集：单次 VEVENT。无法可靠解释的事件直接跳过并计数。
+import { requireNow } from '../clock.js'
+
 const unescapeText = (s) => String(s || '').replace(/\\[nN]/g, '\n').replace(/\\([,;\\])/g, '$1')
 
 function zonedDate(parts, zone) {
@@ -34,7 +36,8 @@ function parseDate(prop) {
   return { at, allDay }
 }
 
-export function parseCalendar(text, now = Date.now()) {
+export function parseCalendar(text, now) {
+  const at = requireNow(now, 'parseCalendar')
   if (typeof text !== 'string' || !/^BEGIN:VCALENDAR\s*$/mi.test(text)) throw new Error('不是有效的 iCalendar 文件')
   const lines = text.replace(/\r\n?/g, '\n').replace(/\n[ \t]/g, '').split('\n')
   const raw = []
@@ -59,7 +62,7 @@ export function parseCalendar(text, now = Date.now()) {
     if (!start || (item.DTEND && !end)) { unsupported++; continue }
     const title = unescapeText(item.SUMMARY?.value).trim().slice(0, 160)
     if (!title) { unsupported++; continue }
-    if (end && end.at < now || (!end && start.at < now)) continue
+    if (end && end.at < at || (!end && start.at < at)) continue
     events.push({ id: String(item.UID?.value || `${start.at}:${title}`).slice(0, 160), title,
       startsAt: start.at, endsAt: end?.at || null, allDay: start.allDay })
   }
@@ -67,8 +70,9 @@ export function parseCalendar(text, now = Date.now()) {
   return { events, total: raw.length, unsupported }
 }
 
-export function calendarContext(events, now = Date.now()) {
-  const until = now + 48 * 3600000
-  return events.filter((e) => e.startsAt >= now && e.startsAt <= until).slice(0, 3).map((e) =>
+export function calendarContext(events, now) {
+  const at = requireNow(now, 'calendarContext')
+  const until = at + 48 * 3600000
+  return events.filter((e) => e.startsAt >= at && e.startsAt <= until).slice(0, 3).map((e) =>
     `用户授权的日历计划（不是已经发生的共同经历）：${new Date(e.startsAt).toLocaleString('zh-CN')} ${e.title}`)
 }

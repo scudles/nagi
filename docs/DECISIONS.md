@@ -1150,3 +1150,65 @@ D37 修完后全量回归，`verify:turns` A/C 与 `verify:face` H、`verify:pos
    失败把 `res.error` 原样显示（主进程已给中文可读文案，`{ok:false,reason:'exists'}` 也是中文）。
 
 预检可调 `window.nagi.dataExport.preview()` 拿到 `bundle.counts` 展示「本次将导出 N 条」。
+
+---
+
+## D69（2026-10-19）core 边界存量迁移第一批：signals 纯函数层 + 导出组装层（分支 `blue/stage3-p3-08-export`，基线 `969c377`）
+
+**背景**：B7 `--scope=core` 报全 core 135 处（阶段2 基线 133 + 本分支新增的 `core/export/build.js` 自带 2 处）。
+不一次大搬移，先做一批"内聚、低风险、能把做法定成模板"的。
+
+### ① 分批清单（`docs/b7-core-batches.md`）
+
+按"目录聚类 + 依赖类型"把 127 处剩余拆成 8 批：批 1 signals 纯函数（8 处，本轮）/ 批 2 ha-consent（5 处，
+隐私+fs，单列）/ 批 3 rag（8 处）/ 批 4 tools（17 处）/ 批 5 presence（33 处，最大）/ 批 6 core 顶层（17 处）/
+批 7 三个 store 相邻（22 处）/ 批 8 voice·face·monitor·emotion·llm·agent（19 处，`loop.js` 按纪律不动）。
+每批都标了处数、类型（now/rng/crypto/fs/路径）与风险理由。
+
+### ② 本轮做法：把"默认值"换成一个会抛的入口
+
+新增 `src/core/clock.js` 的 `requireNow(now, site)`：非有限数一律 `TypeError: <site> 缺少注入依赖：now`。
+
+**为什么不是"保留默认值但从参数取"**：`now = Date.now()` 这类默认值把"core 不读全局时钟"这条纪律
+变成了**可选的**——忘传的调用点不报错，只在某个分支上悄悄变非确定，测试再也无法用固定时间断言。
+缺就当场抛，问题在第一次跑到时暴露。
+
+**这一批为什么零风险**：所有调用点（5 个 store + main 的 signals 层 + 全部既有测试）本来都显式传了
+`now`，默认值是**死重量**。改完既有测试**一行没改**即全绿（calendar 3/3、foreground 8/8、
+music-signal 8/8、players 7/7、export 15+7）——这是"只删噪音、没动语义"的直接证据。
+
+顺带清掉 `core/export/build.js` 自己的 2 处（`buildExportBundle` 默认 now 与 `exportedAt` 的兜底）：
+**新代码不给自己留债**。
+
+### ③ 两个刻意的例外（不是漏做）
+
+- `foregroundContext`：`enabled === false` 与"无样本"两条短路**在 requireNow 之前**返回。
+  这两条判定是确定性的，不需要"现在"；先抛会让"关掉开关时传不传 now 都无所谓"这条既有行为退化。
+- `buildFallbackObservation` 返回的是**待归一化的原始观测**（`{available, sessions}`），注入的 `at`
+  落在每条 session 的 `updatedAt` 上，不是顶层 `observedAt`。测试按真实契约断言，不按想象断言。
+
+### ④ 门禁
+
+`MIGRATED_GATE` 加 6 个文件（`clock.js` + signals 四个 + `export/build.js`）：
+`node scripts/audit-b7-boundary.mjs --strict` → **0 处越界，exit 0**（门禁从 8 个文件扩到 14 个）。
+
+### ⑤ 验证
+
+- 防回潮 `test/b7-batch1-now-injection.test.js` **8/8**：① 缺 now（undefined/null/NaN/字符串）必抛
+  TypeError 且报错带位置；② 同一 now + 同一输入两次调用逐字相同；③ 输出时间字段等于注入值；
+  ④ **源码级反向锁**——这 5 个文件里不许再出现 `= Date.now()`（含注释行排除）。
+- **反向验证**：把 `musicContext` 的默认值放回去并绕过 requireNow → **B7-1-04 与 B7-1-08 立刻变红**，
+  还原后 8/8。
+- 全量（Node 24.19.0 前置 PATH，**关沙箱**）：**1038 项 / 1037 过 / 0 失败 / 1 条件 skip**；`build` **退出 0**。
+- 家底：`--scope=core` **135 → 127**（-8，与批 1 清单逐条对得上）。
+
+### ⑥ 剩下那批的坑（写下来省下一轮的时间）
+
+- `promises/book.js` 是**唯一四类齐全**（fs + crypto + random + clock）的文件，且写盘关乎承诺簿完整性，
+  必须单独一批 + `c5-promise*` 全套回归。
+- `presence/imperfection.js` 的随机是**语义本身**（"不完美"就是随机迟到/打错字），不能换成常量注入，
+  要设计"可复现序列"的 rng 注入。
+- `face/*` 四处时钟在逐帧热路径，注入会穿透到每个参数写入点；很可能正确做法是
+  `/* B7:allow:globalClock — 逐帧缓存的失效判定 */` 而不是硬迁。
+- `core/memory.js` 那 2 处（`mergeMemoryEntries/applyMemoryOps` 的默认 now）与 D66 撤权链相关，
+  改必传时要一并查 `main/persist.js` 的调用点，否则会写成"记忆写了、时间戳 undefined"。

@@ -9,6 +9,8 @@
 //   ③ 非 SMTC 播放器（网易云桌面端等）由 players.js 兜底，观测带 source 标记，
 //      措辞注明来源与状态未知，不把窗口标题冒充成权威播放状态。
 
+import { requireNow } from '../clock.js'
+
 const STATUS_RANK = { playing: 0, paused: 1, stopped: 2, unknown: 3 }
 
 const KNOWN_STATUS = new Set(['playing', 'paused', 'stopped'])
@@ -105,12 +107,13 @@ export function pickActiveSession(sessions) {
  *   - 旧（兼容测试与历史调用点）：{ available: true, app, title, artist, playbackStatus }
  * 不可用时：{ available: false, reason: 'no-session' | 'error' }
  */
-export function normalizeMediaObservation(raw, at = Date.now()) {
+export function normalizeMediaObservation(raw, at) {
+  const observedAt = requireNow(at, 'normalizeMediaObservation')
   if (!raw || raw.available !== true) {
-    return { available: false, reason: String(raw?.reason || 'no-session'), observedAt: at }
+    return { available: false, reason: String(raw?.reason || 'no-session'), observedAt }
   }
   const sessions = Array.isArray(raw.sessions) ? raw.sessions : [raw]
-  if (sessions.length === 0) return { available: false, reason: 'no-session', observedAt: at }
+  if (sessions.length === 0) return { available: false, reason: 'no-session', observedAt }
   const picked = pickActiveSession(sessions)
   // 落选的会话（2026-10-18）：用户常常一边看视频一边听歌，旧实现只报一条，
   // 另一个媒体对模型完全不可见。带上有内容的其他会话，措辞层再决定怎么并列陈述。
@@ -123,16 +126,17 @@ export function normalizeMediaObservation(raw, at = Date.now()) {
       artist: clip(s.artist, 120),
       playbackStatus: normalizeStatus(s.playbackStatus)
     }))
-  return { available: true, ...picked, sessionCount: sessions.length, others, observedAt: at }
+  return { available: true, ...picked, sessionCount: sessions.length, others, observedAt }
 }
 
 /**
  * 「此刻」附注：她知道的媒体状态。任何异常/缺字段都不抛错，最坏返回空数组。
  * 播放中保留「不能推断用户心情」护栏（既有契约，有测试断言）。
  */
-export function musicContext(observation, now = Date.now()) {
-  if (!observation || !Number.isFinite(now - observation.observedAt)) return []
-  if (now - observation.observedAt > 120000) return []
+export function musicContext(observation, now) {
+  const at = requireNow(now, 'musicContext')
+  if (!observation || !Number.isFinite(at - observation.observedAt)) return []
+  if (at - observation.observedAt > 120000) return []
 
   if (!observation.available) {
     if (observation.reason === 'error') return [] // 探针失败：宁可不说，不编造

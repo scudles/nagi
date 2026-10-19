@@ -7,6 +7,7 @@
 // 诚实边界：标题无法区分播放中与暂停，播放状态一律标 unknown，措辞注明来源。
 // 纯逻辑、可单测；进程白名单可经 settings.signals.extraPlayerProcesses 追加。
 import { pickActiveSession } from './music.js'
+import { requireNow } from '../clock.js'
 
 /** 默认白名单：进程名 → 展示名。进程名大小写不敏感匹配 */
 export const DEFAULT_PLAYER_PROCESSES = [
@@ -65,7 +66,8 @@ export function playerDisplayName(processName, processes = DEFAULT_PLAYER_PROCES
  * 纵深防御：这里再次按白名单过滤进程（探针脚本已过滤过一道）。
  * windows: [{ process, title }]
  */
-export function buildFallbackObservation(windows = [], at = Date.now(), { processes = DEFAULT_PLAYER_PROCESSES } = {}) {
+export function buildFallbackObservation(windows = [], at, { processes = DEFAULT_PLAYER_PROCESSES } = {}) {
+  const observedAt = requireNow(at, 'buildFallbackObservation')
   const sessions = []
   for (const w of Array.isArray(windows) ? windows : []) {
     const known = processes.find((p) => p.process.toLowerCase() === String(w?.process || '').toLowerCase())

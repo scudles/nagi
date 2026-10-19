@@ -18,6 +18,8 @@
 //
 // 纯逻辑，无 IO / 无 Electron 依赖，可 node --test。
 
+import { requireNow } from '../clock.js'
+
 export const EXPORT_SCHEMA_VERSION = 1
 
 /** 信任层（契约 §15.1 五层） */
@@ -406,7 +408,8 @@ export function exportHistoryItem(message) {
  *   history  对话历史数组
  * @param {number} now 导出时间（注入）
  */
-export function buildExportBundle(sources = {}, now = Date.now()) {
+export function buildExportBundle(sources = {}, now) {
+  const exportedAt = requireNow(now, 'buildExportBundle')
   const ledger = Array.isArray(sources.ledger) ? sources.ledger : []
   const deletedEntries = ledger.filter((e) => e && e.deletedAt)
   const deletedIds = new Set(deletedEntries.map((e) => e.id))
@@ -444,7 +447,7 @@ export function buildExportBundle(sources = {}, now = Date.now()) {
 
   return {
     schemaVersion: EXPORT_SCHEMA_VERSION,
-    exportedAt: Number.isFinite(now) ? now : Date.now(),
+    exportedAt,
     generator: 'nagi',
     notice: EXPORT_NOTICE,
     trustLayers: { ...TRUST_LABELS },
