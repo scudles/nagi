@@ -49,6 +49,15 @@
 
 ## 当前状态（先读）
 
+- **2026-10-19 补证（非代码改动）：`verify:local-llm` 真机 44/44 全过，纠正「未安装 Ollama」的错归因**（分支 `blue/stage3-p3-08-export`，受测提交 `c70a37e`，DECISIONS **D71**）
+  - **受测提交**：`c70a37e`，工作区无源码改动（`git diff HEAD --stat` 为空，仅 `tools/live2d-viewer/` 未跟踪临时 png）。**本轮零代码改动**。
+  - **纠正内容**：本机**有**便携版 Ollama —— `E:\凪\.tools\ollama\`（27G）：`runtime/ollama.exe` v0.34.0 + `models/` 24G（`qwen2.5:latest`、`qwen3:4b`、`qwen3:4b-instruct`、`qwen3:8b`、`qwen3.5:4b`、`qwen3.5:9b-q4_K_M`）。真正缺的是 `~/.ollama/models` 不存在（只有 ssh key），默认模型目录是空的。启动须带 `OLLAMA_MODELS='E:\凪\.tools\ollama\models'`。
+  - **契约断言**：脚本自带 44 项 M6 真机验收（EVAL 无 M6-* 编号，脚本即口径）；含真实流式回复、真实 `file_list` 工具往返、`model-missing`/`offline` 状态、RAG/日记/记忆/账本/年鉴/身世链路、兼容提供商往返与 Key 不落盘、敏感告别先审后显、文件/日历/音乐授权撤销。
+  - **命令与退出码**：`electron-vite build`（Node 24.19.0）**退出 0**；`NAGI_RENDERER_SANDBOX=0 node scripts/verify-local-llm.mjs` → **44 ✔ / 0 ✘，退出 0**。前置 `GET /api/tags` 6 模型、`POST /v1/chat/completions`（qwen2.5）返回「你好」。
+  - **证据路径**：`/e/凪/.tools/local-llm-verify-2026-10-19.log`（46 行，44 ✔ / 0 ✘）；隔离 userData `%TEMP%\nagi-local-llm-zA8Zci`；决策 D71。
+  - **结论**：`verify:local-llm` 此前「三项缺设备」的暂缓项**就此消解**；其中「模拟日历事件经可信 IPC 只读可见」通过，正是 D69/B7 注入式 `new CalendarSnapshot({io, now})` 的真实路径行为证据。
+  - **缺口**：① 交绿区独立复验，**蓝区不自行标 ✅**；② 未覆盖 `benchmark-local-llm`（B03 人格质量边界集）——本轮只证接口与链路可用，**不代表模型人格质量达标**；③ Ollama 是本会话手动起的后台服务，用户重启机器后需重起（口径已写入 D71）。
+
 - **2026-10-18 阶段2 蓝区四项收口（本轮，分支 `blue/stage2-c5`，基线 `853ea9a`）**：按 **C5 → B8 → B7 → D2** 顺序交付完毕，均为**渐进改动**、未碰 `loop.js`、未写任何 API key、未改绿区评测文档。
   - **提交链**：C5 `bc458da` → B8 `999613c` → B7 `f120ff9` → D2 `b22bfbe`。决策条目 D61(C5) / D62(B8) / D63(B7) / D64(D2)，见 [DECISIONS](DECISIONS.md)。
   - **C5**（忘全链路）：进程级遗忘表 `core/memory/forget-guard.js` 拦住异步抽取的迟回复活；承诺簿 §11.4 边界（sourceIds/linkStatus、关联提醒保留+提示可一并取消、已结束降级最小履约记录、取消走 `cancelLinkedPromise`）+ IPC `promise:cancel-linked`/`promise:remove`。`c5-bg02` 5/5、`c5-promise` 8/8、隔离复跑相关 43/43。
@@ -57,6 +66,9 @@
   - **D2**（意图核对）：reminisce 引用门槛改 `hasGroundedRefs()`（旧判定含恒真的历史行数，门槛形同虚设）；proactive/extract 两个用途接线（跨 baseURL 时告警不静默换端点）；`d2-purpose-wiring` 6/6 + `intent` 19/19，已做反向变红验证。
   - **真机回归**：`verify:reminder` **14/14**、`verify:title-outbound` **7/7**、`verify:crisis-offline` **11/11**、`verify:maintenance` **12/12**、B7 改过的 `scripts/verify-stage10-lifecycle.mjs` **10/10**。
   - **`verify:local-llm` 5/7（如实标注；2026-10-19 复跑并**纠正**归因）**：三项失败**全部是缺设备**——本机未安装 Ollama（`ollama` 不在 PATH、`AppData\Local\Programs\Ollama` 与 `Program Files\Ollama` 均无 `ollama.exe`、`127.0.0.1:11434` 连接被拒）：①「主进程探测本机已安装模型」②「本机缺少所选模型时给出明确状态」都需要服务在跑；③ 中断在脚本第 113 行 `waitForFunction` 等设置页 `#set-local-llm-status` 出现「已就绪」（报 `Timeout 10000ms exceeded`），同样要真服务。**此前把 ③ 记成「`persona.js:143` 无台词铁律与老脚本期望冲突」是错的**——那条 `[selftest] ✘ pet.poke 返回台词：「null」` 只是应用自带自检打到控制台的噪音，`scripts/verify-local-llm.mjs` 里**没有任何 poke/台词断言**（已 grep 证实），别再顺着这个错因去改 persona。三条路径的文件均不在本批提交内；B7 对该脚本的改动只是把 `new CalendarSnapshot(profile)` 换成注入式 `new CalendarSnapshot({io, now})`，而复跑中「模拟日历事件经可信 IPC 只读可见」**通过**，正是这条注入构造在真实路径上的行为证据。**蓝区未擅自改脚本**，装 Ollama 后可直接复跑取证。
+    > **已消解（2026-10-19 18:51，见 D71）**：本条「本机未安装 Ollama」的**归因是错的**——本机有便携版 Ollama
+    > （`E:\凪\.tools\ollama\`，含 6 个模型），只是没起服务且没设 `OLLAMA_MODELS`。真机复跑 **44/44 全过**。
+    > 原文保留作为历史记录（当时观测属实、推断有误），以 D71 为准。
   - **暂缓项（均不标完成）**：`modelHint` 恒 null 等红区裁决；renderer ~70 处空 catch 交红区；C5-EXPORT-01 → 阶段3 P3-08；承诺簿忘口径待绿区实测；`core/` 剩余 134 处边界依赖待排期；提醒管理界面「提示用户自行检查 / 一并取消」UI 接线（IPC 已就绪）。
 
 - **2026-10-19 阶段2 蓝区第三轮收口（分支 `blue/stage2-c5-fix`，基线 `1b39654`）**：起因是**绿区把 B8 验收用例放到蓝区代码上复跑失败**，加上 C5 取消失败语义与界面入口缺失。按 **B8 → C5 语义 → C5 界面 → 交付证据** 顺序修完，均**渐进改动**、未碰 `loop.js`、未写任何 API key、未改绿区评测文档、**未自行把 TASKS/EVAL 标 ✅**（等绿区在蓝区代码上独立复验后再决定阶段二是否关单）。
@@ -65,8 +77,8 @@
   - **C5 语义**：`cancelLinkedPromise` 原顺序「先标记承诺取消+清正文 → 再取消提醒本体」且忽略 `{ok:false}`。反转为「**先提醒本体、后承诺簿**」：失败不动承诺簿、`retryable:true` 可重试；写盘失败内存回滚 + 如实报半完成；已结束记录指向删除入口。`c5-promise-cancel-failure` **5/5**、既有 `c5-promise` **8/8** 不退化；换回旧实现 4/5 立刻红。
   - **C5 界面**：preload/renderer 补 `cancelLinked`/`remove`；遗忘结果 note +「去『她的日程』处理」跳转；按 `linkStatus` 分流按钮（`detached`→「一并取消」、其余→「取消提醒」、已结束→「删除」）。两个真 bug：note 必须写在 `refreshLedger()` 之后、操作结果不能在重渲染开头清空。新增 `npm run verify:c5-promise-ui` **18/18**（真机 + 实际界面调用链 + 真 EPERM 注入）。
   - **全量测试（可靠可写环境，两次一致）**：`node --experimental-test-module-mocks --test` → **970 项 / 969 过 / 0 失败 / 1 条件 skip**。沙箱内 `test/rag-revocation.test.js` 有 5 项报 `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]`（count 51–53 撞阈值 50），系清理临时目录撞上 WorkBuddy 批量删除守卫的环境噪音，**单独复跑 5/5 全过**。结论是**全量通过**，不是"只有定向用例通过"。
-  - **其余实测**：`verify:maintenance` 12/12、`verify:reminder` 14/14、`verify:c5-promise-ui` 18/18、B7 改过的 `verify-stage10-lifecycle` **10/10**、`verify:local-llm` **5/7**（三项全缺 Ollama，见上）、`d2-purpose-wiring` 6/6、`llm-purpose-params` 7/7、`intent` 19/19、`npm run build` 退出 0。D2 另补了**实跑**行为证据（`resolveLlm` 按用途真实解析 + `hasGroundedRefs` 三种否一种是 + `modelHint` 恒 null）。
-  - **暂缓项（均不标完成）**：`modelHint` 恒 null 等红区裁决；renderer ~70 处空 catch 交红区；C5-EXPORT-01 → 阶段3 P3-08；`core/` 剩余 134 处边界依赖待排期；承诺簿忘口径待绿区实测；`verify:local-llm` 三项需真机装 Ollama 后才算证据。
+  - **其余实测**：`verify:maintenance` 12/12、`verify:reminder` 14/14、`verify:c5-promise-ui` 18/18、B7 改过的 `verify-stage10-lifecycle` **10/10**、`verify:local-llm` **5/7**（三项全缺 Ollama，见上；**已由 D71 复核为 44/44**）、`d2-purpose-wiring` 6/6、`llm-purpose-params` 7/7、`intent` 19/19、`npm run build` 退出 0。D2 另补了**实跑**行为证据（`resolveLlm` 按用途真实解析 + `hasGroundedRefs` 三种否一种是 + `modelHint` 恒 null）。
+  - **暂缓项（均不标完成）**：`modelHint` 恒 null 等红区裁决；renderer ~70 处空 catch 交红区；C5-EXPORT-01 → 阶段3 P3-08；`core/` 剩余 134 处边界依赖待排期；承诺簿忘口径待绿区实测；`verify:local-llm` 三项需真机装 Ollama 后才算证据（**已消解，D71：44/44 全过**）。
 
 - **2026-10-18 阶段2 蓝区收口（带暂缓项，提交 `be8a960` 之后一轮）**：三张卡（P2-01 D2 / P2-04 B8 / P2-06 C5）按「首批 → 二批 → 裁决 B」分三轮交付，均未超范围。
   - **收口证据（Node 24.19.0）**：`npm test` **919 项 / 918 通过 / 0 失败 / 1 skip，exit 0**；`npm run build` **exit 0**；真机 `verify:maintenance` **12/12**、`verify:title-outbound` **7/7**、`verify:crisis-offline` **11/11**、`verify:reminder` **14/14**。

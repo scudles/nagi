@@ -1253,3 +1253,64 @@ C1/C2 的每一条（回来不审问、默认安静、称呼偏好、小任务�
   "形象被遮挡比例上限"）就写不出 EVAL 断言，功能做完也无法判定达标。
 
 **下一步**：等绿区补 CONTRACTS 章节 + EVAL 断言编号；两张卡都属"入口与小流程"，预估各 1 个提交。
+
+## D71（2026-10-19）纠错：本机**有** Ollama，`verify:local-llm` 真机 **44/44** 全过（非代码改动，纯取证）
+
+> 起因：作者问「工作文件夹里没有 ollama 吗」。此前 D65 与本轮多份文档把 `verify:local-llm` 的失败
+> 归因为「本机未安装 Ollama」。**这个归因是错的**，本轮更正并补上完整证据。
+
+**错在哪**：判断依据只有三条——`ollama` 不在 PATH、两个常见安装目录无 `ollama.exe`、`11434` 连接被拒。
+三条单独看都成立，合起来却推不出「未安装」：**便携版不在 PATH、不在默认安装目录、没起服务**，
+与「未安装」在观测上完全同形。而 `docs/M6_端侧模型实测_2026-10-16.md` 第 29 行本来就记着
+`verify:local-llm` **23/23 通过**（脚本当时的项数），即这套设备早就跑通过——查一圈文档就能否掉这个结论。
+
+**真实位置与内容**（`E:/凪/.tools/ollama/`，27G）
+
+| 项 | 内容 |
+|---|---|
+| `runtime/ollama.exe` | v0.34.0（解压自同目录 `ollama-windows-amd64-v0.34.0.zip`，1.47G 源包仍在） |
+| `models/` | 24G，`manifests/registry.ollama.ai/library/` 下 6 个：`qwen2.5:latest`、`qwen3:4b`、`qwen3:4b-instruct`、`qwen3:8b`、`qwen3.5:4b`、`qwen3.5:9b-q4_K_M` |
+| `sha256sum-v0.34.0.txt` | 校验清单 |
+
+**真正的缺失项是模型目录**：`~/.ollama/` 下只有 `id_ed25519{,.pub}`，**没有 `models/`**。
+直接 `ollama serve` 会去 `~/.ollama/models` 找，于是 24G 权重一个都看不见——这才是"像没装"的主因。
+
+**启动口径（已实测，任何人复跑都用这条）**
+
+```bash
+cd /e/凪/.tools/ollama/runtime
+OLLAMA_MODELS='E:/凪/.tools/ollama/models' OLLAMA_HOST=127.0.0.1:11434 ./ollama.exe serve
+```
+
+**本轮实测证据（2026-10-19 18:50–18:51）**
+
+| 项 | 命令 / 观测 | 结果 |
+|---|---|---|
+| 服务可见模型 | `GET /api/tags` | 6 个，含 `qwen2.5:latest` |
+| 真实推理 | `POST /v1/chat/completions`，model=`qwen2.5` | 返回「你好」，35 prompt + 2 completion tokens |
+| 构建 | `electron-vite build`（Node 24.19.0） | **退出 0**，产物 `out/renderer/assets/index-PY7tCqtN.js` 等更新 |
+| **真机验收** | `NAGI_RENDERER_SANDBOX=0 node scripts/verify-local-llm.mjs` | **44/44 通过，0 失败，退出 0** |
+
+受测提交 `c70a37e`（分支 `blue/stage3-p3-08-export`），工作区无源码改动（`git diff HEAD --stat` 为空，
+仅 `tools/live2d-viewer/` 有未跟踪临时 png）。证据日志 `/e/凪/.tools/local-llm-verify-2026-10-19.log`
+（44 行 `✔` / 0 行 `✘`）。隔离 userData：`%TEMP%\nagi-local-llm-zA8Zci`。
+
+**这一轮为什么值钱**（此前从未拿到过的证据）
+
+- 真实模型**流式回复**：「你好，我是你的朋友，Nagi。」
+- 真实模型**调用工具并接收结果**：`file_list` → `. 下 1 项：m6-proof.txt (17B)`。
+- **无云端 Key 也能走本地通道**，且本地通道**拒绝远端地址**（`invalid-url`）。
+- 模型缺失 → `model-missing`、服务不可达 → `offline` 两种状态都明确。
+- 本地回复进 RAG 流水（`pending=4`）、日记素材、记忆档案（标为心里话）、**可追溯经历账本**、
+  双人年鉴与身世碎片解锁、设置页编辑与主动搭话预算、只陪着阻止搭话——全链路打通。
+- 兼容提供商往返：切云端表单切换、切回本地配置自动恢复、**设置文件不含云端 Key**。
+- 敏感告别**先审后显并重试**，重试只附加约束、不携带被拒候选。
+- 文件/日历/音乐三类授权可独立撤销，普通设置接口不能扩大目录授权。
+- **`模拟日历事件经可信 IPC 只读可见` 通过**——即 D69/B7 把 `new CalendarSnapshot(profile)` 换成
+  注入式 `new CalendarSnapshot({io, now})` 在真实路径上的行为证据，这条此前一直缺。
+
+**纪律说明**：本轮**未改任何代码、未改脚本、未改默认值**。D65 里那句「未安装 Ollama」作为历史记录保留原文
+（当时观测属实、推断有误），不改写；以本条的更正为准。结论交绿区独立复验，**蓝区不自行标 ✅**。
+
+**顺带纠正检索口径**：以后判「某工具在不在本机」，除了 PATH 与默认安装目录，
+还要查 `E:\凪\.tools\`（本项目所有便携工具都放这儿：`node24/`、`ollama/`、`npm/`、`isogit-runtime/`）。

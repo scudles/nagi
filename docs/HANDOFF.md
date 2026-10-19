@@ -488,6 +488,47 @@ E1/E2（同日二次导出失败且原文件一字节不动）覆盖。
 
 ---
 
+### 补证（2026-10-19 18:51，分支 `blue/stage3-p3-08-export`，受测提交 `c70a37e`）：本机**有** Ollama，`verify:local-llm` **44/44**
+
+**先认错**：我之前三次写「`verify:local-llm` 三项失败是缺设备（本机未安装 Ollama）」，**这是错的**。
+判断只看了 `ollama` 是否在 PATH、两个默认安装目录、`11434` 是否连通——便携版不注册 PATH、
+不在默认目录、没起服务，**观测结果与"未安装"完全同形**，我把"没看见"当成了"不存在"。
+更打脸的是 `docs/M6_端侧模型实测_2026-10-16.md` 第 29 行本来就写着这套 `verify:local-llm` **23/23 通过**，
+查一圈文档就能否掉这个结论。
+
+**实际有什么**：`E:\凪\.tools\ollama\`，27G。
+`runtime/ollama.exe` v0.34.0（同目录还留着 1.47G 的源 zip）+ `models/` 24G，6 个模型：
+`qwen2.5:latest`、`qwen3:4b`、`qwen3:4b-instruct`、`qwen3:8b`、`qwen3.5:4b`、`qwen3.5:9b-q4_K_M`。
+
+**为什么像没有**：`~/.ollama/` 下只有 `id_ed25519{,.pub}`，**没有 `models/` 目录**。
+默认模型目录是空的，直接 `ollama serve` 于是一个模型都列不出来。
+
+**复跑口径**（照抄即可）：
+
+```bash
+cd /e/凪/.tools/ollama/runtime
+OLLAMA_MODELS='E:\凪\.tools\ollama\models' OLLAMA_HOST=127.0.0.1:11434 ./ollama.exe serve
+# 另开一个终端
+cd E:/凪/凪_交接包_2026-10-16/02_工程源码_nagi
+NAGI_RENDERER_SANDBOX=0 node scripts/verify-local-llm.mjs
+```
+
+**结果（六要素）**
+
+| 项 | 内容 |
+|---|---|
+| 受测提交 | `c70a37e`；工作区无源码改动（`git diff HEAD --stat` 为空），本轮**零代码改动** |
+| 契约断言 | 脚本自带 44 项 M6 真机验收（EVAL 里无 `M6-*` 编号，脚本即口径） |
+| 命令与退出码 | `electron-vite build` → 0；`NAGI_RENDERER_SANDBOX=0 node scripts/verify-local-llm.mjs` → **44 ✔ / 0 ✘，退出 0** |
+| 证据路径 | `/e/凪/.tools/local-llm-verify-2026-10-19.log`（44 ✔ / 0 ✘）；userData `%TEMP%\nagi-local-llm-zA8Zci`；**DECISIONS D71** |
+| 结论 | 暂缓项消解，全链路真机通过；`模拟日历事件经可信 IPC 只读可见` 通过 = D69/B7 注入构造的行为证据 |
+| 缺口 | ① 待绿区独立复验，**蓝区不标 ✅**；② **只证接口与链路，不证模型人格质量**（B03 `benchmark-local-llm` 边界集未跑）；③ 服务是本会话手动起的，机器重启后要按上面命令重起 |
+
+**顺带纠正一条检索习惯**：判「某工具在不在本机」，除了 PATH 和默认安装目录，**必须查 `E:\凪\.tools\`**
+——本项目所有便携工具都在这儿（`node24/`、`ollama/`、`npm/`、`isogit-runtime/`）。
+
+---
+
 ## 🟢 绿区交接（豆包 · 规格/评测/对账）
 
 **已完成的绿区规格草稿**（写入 CONTRACTS.md / EVAL.md）：
